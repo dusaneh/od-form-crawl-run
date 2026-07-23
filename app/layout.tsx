@@ -23,9 +23,9 @@ export async function generateMetadata(): Promise<Metadata> {
     requestHeaders.get("x-forwarded-proto") ??
     (host.startsWith("localhost") ? "http" : "https");
   const origin = `${protocol}://${host}`;
-  const title = "FormWeave — Form Automation Control Plane";
+  const title = "FormWeave — Public Form Crawler";
   const description =
-    "Discover, certify, and safely run dynamic public-service intake forms.";
+    "Crawl public forms, extract observed controls, capture evidence, and export structured reports without entering or submitting data.";
 
   return {
     metadataBase: new URL(origin),

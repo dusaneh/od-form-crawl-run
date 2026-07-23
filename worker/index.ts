@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { handleRunApi } from "./run-api";
 
 interface Env {
   ASSETS: Fetcher;
@@ -39,6 +40,15 @@ const worker = {
           return result.response();
         },
       }, allowedWidths);
+    }
+
+    if (url.pathname.startsWith("/api/runs")) {
+      const result = await handleRunApi(request, env);
+      if (result instanceof Response) return result;
+      if (result) {
+        ctx.waitUntil(result.background);
+        return result.response;
+      }
     }
 
     return handler.fetch(request, env, ctx);

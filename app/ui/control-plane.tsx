@@ -1,34 +1,10 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { makeDemoRun } from "../lib/demo-run";
 import type { FlowEdge, FlowNode, FormRun, RunStatus } from "../lib/models";
 
-const fallbackRun = makeDemoRun();
 const tabs = ["Flow map", "Field contract", "Evidence", "Diagnostics"] as const;
 type Tab = (typeof tabs)[number];
-
-const fieldRows = [
-  ["first_name", "text", "required", "identity"],
-  ["date_of_birth", "date", "sensitive", "identity"],
-  ["household_size", "select", "3 options", "household"],
-  ["veteran_status", "radio", "2 options", "household"],
-  ["annual_income", "currency", "sensitive", "income"],
-  ["benefits_received", "checkbox[]", "6 options", "income"],
-  ["dependent_age", "number", "conditional", "children"],
-  ["other_housing_need", "text", "companion field", "household"],
-];
-
-const diagnostics = [
-  ["locator_unresolved", "A declared field locator did not resolve."],
-  ["type_mismatch", "The live control type differs from its contract."],
-  ["actuation_unverified", "A write could not be read back exactly."],
-  ["advance_no_navigation", "The advance action produced no state fingerprint change."],
-  ["validation_blocked", "The form’s own validation prevented progress."],
-  ["drift_fingerprint", "DOM-derived facts no longer match the trusted form."],
-  ["captcha_handoff", "Interactive verification requires a human."],
-  ["ambiguous_advance", "More than one plausible forward action was found."],
-];
 
 function shortHost(url: string) {
   try {
@@ -43,6 +19,7 @@ function statusLabel(status: RunStatus) {
     running: "Crawling",
     paused: "Paused",
     awaiting_review: "Needs review",
+    completed: "Complete",
     certified: "Certified",
     failed: "Failed",
   }[status];
@@ -61,13 +38,7 @@ function relativeTime(value: string) {
 
 function Sidebar() {
   const [expanded, setExpanded] = useState(false);
-  const nav = [
-    ["⌁", "Runs"],
-    ["◇", "Forms"],
-    ["⌘", "Scripts"],
-    ["▦", "Evidence"],
-    ["◌", "Review"],
-  ];
+  const nav = [["⌁", "Runs"]];
 
   return (
     <aside className={`sidebar ${expanded ? "sidebar-expanded" : ""}`}>
@@ -85,19 +56,12 @@ function Sidebar() {
               {icon}
             </span>
             <span className="nav-label">{label}</span>
-            {label === "Review" && <span className="nav-count">2</span>}
           </button>
         ))}
       </nav>
       <div className="sidebar-bottom">
-        <button className="nav-item">
-          <span className="nav-glyph" aria-hidden="true">
-            ?
-          </span>
-          <span className="nav-label">Help</span>
-        </button>
-        <div className="avatar" title="Maya Chen">
-          MC
+        <div className="avatar" title="FormWeave crawler">
+          FW
         </div>
       </div>
     </aside>
@@ -131,10 +95,10 @@ function StatCard({
 
 function ProgressRail({ progress }: { progress: number }) {
   const stages = [
-    ["Discover", 16],
-    ["Map fields", 38],
-    ["Probe branches", 74],
-    ["Certify", 92],
+    ["Queue", 8],
+    ["Fetch pages", 58],
+    ["Extract fields", 84],
+    ["Store evidence", 100],
   ] as const;
 
   return (
@@ -216,9 +180,12 @@ function FlowGraph({
 }) {
   return (
     <div className="graph-scroll">
-      <div className="graph-canvas">
-        <div className="lane-label primary">Primary path</div>
-        <div className="lane-label branch">Observed variants</div>
+      <div
+        className="graph-canvas"
+        style={{ width: `${Math.max(900, 70 + run.nodes.length * 224)}px` }}
+      >
+        <div className="lane-label primary">Fetched pages</div>
+        <div className="lane-label branch">Discovered targets</div>
         <div className="graph-grid" />
         {run.edges.map((edge) => (
           <GraphEdge key={edge.id} edge={edge} nodes={run.nodes} />
@@ -250,39 +217,24 @@ function FlowGraph({
 function EvidencePreview({ node }: { node: FlowNode }) {
   return (
     <div className={`evidence-preview evidence-${node.id}`}>
-      <div className="mock-browser-bar">
-        <i />
-        <i />
-        <i />
-        <span>secure intake form</span>
-      </div>
-      <div className="mock-form">
-        <div className="mock-form-copy">
-          <span className="mock-kicker">HOUSING SUPPORT</span>
+      {node.evidenceAvailable && node.evidence ? (
+        // The evidence route is private and cannot be delegated to the public image optimizer.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          className="evidence-image"
+          src={node.evidence}
+          alt={`Captured public page for ${node.title}`}
+          loading="lazy"
+        />
+      ) : (
+        <div className="evidence-empty">
+          <span>NO CAPTURE</span>
           <strong>{node.title}</strong>
-          <span className="mock-line wide" />
-          <span className="mock-line medium" />
+          <small>{node.sourceUrl ? shortHost(node.sourceUrl) : "Waiting for crawler"}</small>
         </div>
-        <div className="mock-fields">
-          <span />
-          <span />
-          <span className="short" />
-        </div>
-        {node.sensitiveMasks > 0 && (
-          <>
-            <div className="mask mask-one">MASKED</div>
-            <div className="mask mask-two">MASKED</div>
-          </>
-        )}
-        {node.id === "captcha" && (
-          <div className="captcha-box">
-            <span>☑</span>
-            Human verification
-          </div>
-        )}
-      </div>
+      )}
       <span className="evidence-watermark">
-        SYNTHETIC · {node.sensitiveMasks} MASKS
+        {node.evidenceAvailable ? "REAL CAPTURE · NO VALUES ENTERED" : "EVIDENCE UNAVAILABLE"}
       </span>
     </div>
   );
@@ -293,15 +245,14 @@ function Inspector({ node }: { node: FlowNode }) {
     <aside className="inspector">
       <div className="inspector-heading">
         <div>
-          <span className={`eyebrow node-tone-${node.status}`}>STATE {node.step}</span>
+          <span className={`eyebrow node-tone-${node.status}`}>PAGE {node.step}</span>
           <h3>{node.title}</h3>
         </div>
-        <button aria-label="More state options">•••</button>
       </div>
       <EvidencePreview node={node} />
       <div className="evidence-caption">
-        <span>Pre-advance evidence</span>
-        <span>{node.sensitiveMasks} masks applied</span>
+        <span>Read-only public-page evidence</span>
+        <span>{node.screenshotProvider ?? "No provider"}</span>
       </div>
       <div className="inspector-metrics">
         <div>
@@ -309,16 +260,16 @@ function Inspector({ node }: { node: FlowNode }) {
           <code>{node.fingerprint}</code>
         </div>
         <div>
-          <span>Fields declared</span>
+          <span>Fields observed</span>
           <strong>{node.fields}</strong>
         </div>
         <div>
-          <span>Dynamic variants</span>
-          <strong>{node.branches}</strong>
+          <span>Forms observed</span>
+          <strong>{node.forms ?? 0}</strong>
         </div>
         <div>
-          <span>Write contract</span>
-          <strong>{node.status === "queued" ? "Pending" : "Verified"}</strong>
+          <span>HTTP result</span>
+          <strong>{node.httpStatus || (node.status === "queued" ? "Pending" : "Failed")}</strong>
         </div>
       </div>
       <div className="inspector-notes">
@@ -337,24 +288,29 @@ function Inspector({ node }: { node: FlowNode }) {
   );
 }
 
-function FieldsPanel() {
+function FieldsPanel({ run }: { run: FormRun }) {
+  const fields = run.contract ?? [];
+  const visibleFields = fields.filter((field) => !field.hidden);
+  const required = visibleFields.filter((field) => field.required).length;
+  const sensitive = visibleFields.filter((field) => field.sensitive).length;
+
   return (
     <div className="contract-panel">
       <div className="contract-summary">
         <div>
-          <span>DECLARED CONTRACT</span>
-          <strong>43 fields</strong>
-          <small>Any subset accepted at runtime</small>
+          <span>OBSERVED CONTRACT</span>
+          <strong>{visibleFields.length} fields</strong>
+          <small>Extracted from fetched HTML</small>
         </div>
         <div>
-          <span>DYNAMIC EXPANSIONS</span>
-          <strong>10 fields</strong>
-          <small>All with trigger lineage</small>
+          <span>REQUIRED</span>
+          <strong>{required} fields</strong>
+          <small>Native required or aria-required</small>
         </div>
         <div>
-          <span>SENSITIVE</span>
-          <strong>18 fields</strong>
-          <small>Mask-required evidence</small>
+          <span>POTENTIALLY SENSITIVE</span>
+          <strong>{sensitive} fields</strong>
+          <small>Detected from type, name, and label</small>
         </div>
       </div>
       <div className="field-table-wrap">
@@ -368,20 +324,29 @@ function FieldsPanel() {
             </tr>
           </thead>
           <tbody>
-            {fieldRows.map((row) => (
-              <tr key={row[0]}>
+            {visibleFields.map((field, index) => (
+              <tr key={`${field.originState}-${field.key}-${index}`}>
                 <td>
-                  <code>{row[0]}</code>
+                  <code>{field.key}</code>
                 </td>
-                <td>{row[1]}</td>
+                <td>{field.control}</td>
                 <td>
-                  <span className={`field-pill ${row[2].replaceAll(" ", "-")}`}>
-                    {row[2]}
+                  <span className={`field-pill ${field.required ? "required" : ""}`}>
+                    {field.required ? "required" : "optional"}
                   </span>
+                  {field.sensitive && <span className="field-pill sensitive">sensitive</span>}
+                  {field.options > 0 && <span className="field-pill">{field.options} options</span>}
                 </td>
-                <td>{row[3]}</td>
+                <td>{field.originState}</td>
               </tr>
             ))}
+            {!visibleFields.length && (
+              <tr>
+                <td colSpan={4} className="empty-table-cell">
+                  No visible form fields were found in the fetched HTML.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -398,11 +363,12 @@ function EvidencePanel({ nodes }: { nodes: FlowNode[] }) {
           <div>
             <strong>{node.title}</strong>
             <span>
-              {node.sensitiveMasks} masks · {node.fingerprint}
+              {node.evidenceAvailable ? "captured" : "unavailable"} · {node.fingerprint}
             </span>
           </div>
         </article>
       ))}
+      {!nodes.length && <p className="empty-panel-copy">Evidence will appear after a page is fetched.</p>}
     </div>
   );
 }
@@ -410,23 +376,10 @@ function EvidencePanel({ nodes }: { nodes: FlowNode[] }) {
 function DiagnosticsPanel({ run }: { run: FormRun }) {
   return (
     <div className="diagnostics-panel">
-      <div className="diagnostic-list">
-        <div className="section-title">
-          <span>Closed reason codes</span>
-          <span>{diagnostics.length}</span>
-        </div>
-        {diagnostics.map(([code, text]) => (
-          <div className="diagnostic-row" key={code}>
-            <code>{code}</code>
-            <span>{text}</span>
-            <i>0</i>
-          </div>
-        ))}
-      </div>
       <div className="findings-list">
         <div className="section-title">
-          <span>Latest structured findings</span>
-          <span>Live</span>
+          <span>Structured crawl findings</span>
+          <span>{run.findings.length}</span>
         </div>
         {run.findings.map((finding) => (
           <article className={`finding ${finding.tone}`} key={finding.id}>
@@ -447,45 +400,24 @@ function DiagnosticsPanel({ run }: { run: FormRun }) {
             <time>{finding.time}</time>
           </article>
         ))}
+        {!run.findings.length && (
+          <p className="empty-panel-copy">No findings have been recorded yet.</p>
+        )}
       </div>
     </div>
   );
 }
 
 function Queue({ runs, onSelect }: { runs: FormRun[]; onSelect: (run: FormRun) => void }) {
-  const samples =
-    runs.length > 1
-      ? runs.slice(0, 5)
-      : [
-          ...runs,
-          makeDemoRun({
-            id: "run_shelter_031",
-            name: "HomeFirst Coordinated Entry",
-            targetUrl: "https://homefirst.example/get-help",
-            status: "certified",
-            stage: "Runtime ready",
-            progress: 100,
-            updatedAt: "2026-07-23T02:48:00.000Z",
-          }),
-          makeDemoRun({
-            id: "run_drift_018",
-            name: "County Rapid Rehousing",
-            targetUrl: "https://county.example/rehousing/apply",
-            status: "awaiting_review",
-            stage: "Fingerprint drift",
-            progress: 62,
-            updatedAt: "2026-07-22T22:32:00.000Z",
-          }),
-        ];
+  const samples = runs.slice(0, 8);
 
   return (
     <section className="queue-card">
       <div className="queue-header">
         <div>
           <h2>Run queue</h2>
-          <p>Every crawl, dry run, and runtime execution in one audit trail.</p>
+          <p>Every real crawl in one audit trail.</p>
         </div>
-        <button className="text-button">View all <span>→</span></button>
       </div>
       <div className="queue-table-wrap">
         <table className="queue-table">
@@ -531,6 +463,13 @@ function Queue({ runs, onSelect }: { runs: FormRun[]; onSelect: (run: FormRun) =
                 <td><button aria-label={`Open ${run.name}`}>›</button></td>
               </tr>
             ))}
+            {!samples.length && (
+              <tr>
+                <td colSpan={6} className="empty-table-cell">
+                  No real crawls yet. Launch one to populate this audit trail.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -549,17 +488,14 @@ function LaunchModal({
   onLaunch: (urls: string[], mode: "crawl" | "dry_run") => Promise<void>;
   busy: boolean;
 }) {
-  const [urls, setUrls] = useState(
-    "https://apply.example.org/housing-intake\nhttps://apply.example.org/benefits"
-  );
-  const [mode, setMode] = useState<"crawl" | "dry_run">("crawl");
+  const [urls, setUrls] = useState("");
 
   if (!open) return null;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     const values = urls.split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean);
-    await onLaunch(values, mode);
+    await onLaunch(values, "crawl");
   }
 
   return (
@@ -573,9 +509,9 @@ function LaunchModal({
       >
         <div className="launch-heading">
           <div>
-            <span className="eyebrow">NEW ISOLATED SESSION</span>
-            <h2 id="launch-title">Launch form discovery</h2>
-            <p>One URL per line. Each target gets an isolated, resumable browser context.</p>
+            <span className="eyebrow">NEW READ-ONLY CRAWL</span>
+            <h2 id="launch-title">Fetch and map public forms</h2>
+            <p>One URL per line. FormWeave fetches the actual page and stores crawl evidence.</p>
           </div>
           <button onClick={onClose} aria-label="Close launch dialog">×</button>
         </div>
@@ -585,37 +521,17 @@ function LaunchModal({
             <textarea
               value={urls}
               onChange={(event) => setUrls(event.target.value)}
+              placeholder={"https://example.gov/apply\nhttps://example.org/intake"}
               spellCheck={false}
               required
             />
-            <small>Up to 12 HTTP or HTTPS URLs in one batch</small>
+            <small>Up to 12 public HTTP or HTTPS URLs; private-network targets are blocked</small>
           </label>
-          <fieldset>
-            <legend>Run mode</legend>
-            <button
-              type="button"
-              className={mode === "crawl" ? "selected" : ""}
-              onClick={() => setMode("crawl")}
-            >
-              <span>⌁</span>
-              <strong>Crawl + map</strong>
-              <small>Discover states, probe branches, generate contracts.</small>
-            </button>
-            <button
-              type="button"
-              className={mode === "dry_run" ? "selected" : ""}
-              onClick={() => setMode("dry_run")}
-            >
-              <span>◌</span>
-              <strong>Verified dry run</strong>
-              <small>Replay known scripts without advancing the final submit.</small>
-            </button>
-          </fieldset>
           <div className="safety-callout">
             <span>✓</span>
             <div>
-              <strong>Synthetic data is enforced</strong>
-              <p>Final submit cannot be reached until the run is certified and a named operator records live approval.</p>
+              <strong>Read-only by construction</strong>
+              <p>No fields are filled and no form is submitted. Use only public, non-tokenized URLs; screenshots use a fresh unauthenticated capture.</p>
             </div>
           </div>
           <div className="launch-actions">
@@ -623,7 +539,7 @@ function LaunchModal({
               Cancel
             </button>
             <button type="submit" className="primary-button" disabled={busy}>
-              {busy ? "Starting…" : "Launch session"} <span>→</span>
+              {busy ? "Starting…" : "Launch crawl"} <span>→</span>
             </button>
           </div>
         </form>
@@ -633,19 +549,21 @@ function LaunchModal({
 }
 
 export function ControlPlane() {
-  const [runs, setRuns] = useState<FormRun[]>([fallbackRun]);
-  const [activeRun, setActiveRun] = useState<FormRun>(fallbackRun);
-  const [selectedNode, setSelectedNode] = useState("household");
+  const [runs, setRuns] = useState<FormRun[]>([]);
+  const [activeRun, setActiveRun] = useState<FormRun | null>(null);
+  const [selectedNode, setSelectedNode] = useState("");
   const [activeTab, setActiveTab] = useState<Tab>("Flow map");
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [toast, setToast] = useState("");
-  const [apiState, setApiState] = useState<"connecting" | "online" | "demo">(
+  const [apiState, setApiState] = useState<"connecting" | "online" | "offline">(
     "connecting"
   );
 
   const node = useMemo(
-    () => activeRun.nodes.find((item) => item.id === selectedNode) ?? activeRun.nodes[0],
+    () =>
+      activeRun?.nodes.find((item) => item.id === selectedNode) ??
+      activeRun?.nodes[0],
     [activeRun, selectedNode]
   );
 
@@ -656,15 +574,17 @@ export function ControlPlane() {
         const response = await fetch("/api/runs", { cache: "no-store" });
         if (!response.ok) throw new Error("API unavailable");
         const data = (await response.json()) as { runs: FormRun[] };
-        if (disposed || !data.runs.length) return;
+        if (disposed) return;
         setRuns(data.runs);
         setApiState("online");
         setActiveRun((current) => {
-          const refreshed = data.runs.find((item) => item.id === current.id);
-          return refreshed ?? data.runs[0];
+          const refreshed = current
+            ? data.runs.find((item) => item.id === current.id)
+            : undefined;
+          return refreshed ?? data.runs[0] ?? null;
         });
       } catch {
-        if (!disposed) setApiState("demo");
+        if (!disposed) setApiState("offline");
       }
     }
     loadRuns();
@@ -703,7 +623,8 @@ export function ControlPlane() {
     }
   }
 
-  async function runAction(action: "pause" | "resume" | "request_review") {
+  async function runAction(action: "request_review") {
+    if (!activeRun) return;
     try {
       const response = await fetch(`/api/runs/${activeRun.id}`, {
         method: "PATCH",
@@ -712,18 +633,10 @@ export function ControlPlane() {
       });
       const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error ?? "Action failed.");
-      const optimisticStatus =
-        action === "pause" ? "paused" : action === "resume" ? "running" : "awaiting_review";
-      const updated = { ...activeRun, status: optimisticStatus as RunStatus };
+      const updated = { ...activeRun, status: "awaiting_review" as RunStatus };
       setActiveRun(updated);
       setRuns((current) => current.map((run) => (run.id === updated.id ? updated : run)));
-      setToast(
-        action === "pause"
-          ? "Run paused at the last verified checkpoint."
-          : action === "resume"
-            ? "Run resumed."
-            : "Review requested."
-      );
+      setToast("Review requested.");
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Action failed.");
     }
@@ -739,6 +652,13 @@ export function ControlPlane() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  const runningCount = runs.filter((run) => run.status === "running").length;
+  const completedCount = runs.filter(
+    (run) => run.status === "completed" || run.status === "certified"
+  ).length;
+  const reviewCount = runs.filter((run) => run.status === "awaiting_review").length;
+  const failedCount = runs.filter((run) => run.status === "failed").length;
+
   return (
     <div className="app-shell">
       <Sidebar />
@@ -752,15 +672,11 @@ export function ControlPlane() {
             <div className={`environment-pill ${apiState}`}>
               <span />
               {apiState === "online"
-                ? "Sandbox API online"
+                ? "Crawler API online"
                 : apiState === "connecting"
                   ? "Connecting"
-                  : "Demo dataset"}
+                  : "Crawler API unavailable"}
             </div>
-            <button className="icon-button" aria-label="Notifications">
-              <span>•</span>
-              ♢
-            </button>
             <button className="primary-button" onClick={() => setLaunchOpen(true)}>
               <span className="plus">+</span> New crawl
             </button>
@@ -768,12 +684,13 @@ export function ControlPlane() {
         </header>
 
         <section className="stats-grid" aria-label="Run summary">
-          <StatCard label="Active sessions" value="03" detail="2 crawling · 1 paused" tone="green" />
-          <StatCard label="Runtime ready" value="12" detail="+3 this week" tone="blue" />
-          <StatCard label="Needs review" value="02" detail="1 CAPTCHA handoff" tone="amber" />
-          <StatCard label="Drift detected" value="01" detail="Structure changed" tone="red" />
+          <StatCard label="Active crawls" value={String(runningCount).padStart(2, "0")} detail="Fetching public targets" tone="green" />
+          <StatCard label="Completed" value={String(completedCount).padStart(2, "0")} detail="Reports available" tone="blue" />
+          <StatCard label="Needs review" value={String(reviewCount).padStart(2, "0")} detail="Operator requested" tone="amber" />
+          <StatCard label="Failed" value={String(failedCount).padStart(2, "0")} detail="Actionable diagnostics" tone="red" />
         </section>
 
+        {activeRun ? (
         <section className="run-card">
           <div className="run-header">
             <div className="run-title-row">
@@ -792,23 +709,26 @@ export function ControlPlane() {
                   <span>·</span>
                   <code>{activeRun.id}</code>
                   <span>·</span>
-                  <span>{activeRun.urls.length} targets</span>
+                  <span>
+                    {activeRun.stats?.pagesFetched ?? activeRun.nodes.length} pages · {activeRun.urls.length} seeds
+                  </span>
                 </div>
               </div>
             </div>
             <div className="run-actions">
-              <button
-                className="secondary-button"
-                onClick={() =>
-                  runAction(activeRun.status === "paused" ? "resume" : "pause")
-                }
-              >
-                {activeRun.status === "paused" ? "▶ Resume" : "Ⅱ Pause"}
-              </button>
-              <button className="secondary-button" onClick={() => runAction("request_review")}>
-                Send to review
-              </button>
-              <button className="more-button" aria-label="More run actions">•••</button>
+              {activeRun.reportAvailable && (
+                <a
+                  className="secondary-button button-link"
+                  href={`/api/runs/${encodeURIComponent(activeRun.id)}/report`}
+                >
+                  Download report
+                </a>
+              )}
+              {activeRun.status === "completed" && (
+                <button className="secondary-button" onClick={() => runAction("request_review")}>
+                  Send to review
+                </button>
+              )}
             </div>
           </div>
           <div className="run-progress">
@@ -819,10 +739,10 @@ export function ControlPlane() {
             <ProgressRail progress={activeRun.progress} />
           </div>
           <div className="trust-strip">
-            <div><span>✓</span> Synthetic data only</div>
-            <div><span>✓</span> Verify every write</div>
-            <div><span>✓</span> Evidence masking active</div>
-            <div className="locked"><span>⌕</span> Submit gate locked</div>
+            <div><span>✓</span> Real public-page fetch</div>
+            <div><span>✓</span> No form values entered</div>
+            <div><span>✓</span> Evidence stored privately</div>
+            <div className="locked"><span>⌕</span> Form submission disabled</div>
           </div>
 
           <div className="workspace-tabs" role="tablist">
@@ -835,7 +755,7 @@ export function ControlPlane() {
                 onClick={() => setActiveTab(tab)}
               >
                 {tab}
-                {tab === "Diagnostics" && <span>2</span>}
+                {tab === "Diagnostics" && <span>{activeRun.findings.length}</span>}
               </button>
             ))}
           </div>
@@ -847,13 +767,12 @@ export function ControlPlane() {
                   <div className="graph-toolbar">
                     <div>
                       <span className="graph-live-dot" />
-                      Live state graph
-                      <small>{activeRun.nodes.length} states · 3 variants</small>
+                      Observed page graph
+                      <small>{activeRun.nodes.length} pages · {activeRun.edges.length} links</small>
                     </div>
                     <div>
-                      <span><i className="verified" /> Verified</span>
+                      <span><i className="verified" /> Fetched</span>
                       <span><i className="observed" /> Review</span>
-                      <button aria-label="Fit graph">⊡</button>
                     </div>
                   </div>
                   <FlowGraph
@@ -865,16 +784,26 @@ export function ControlPlane() {
                 {node && <Inspector node={node} />}
               </>
             )}
-            {activeTab === "Field contract" && <FieldsPanel />}
+            {activeTab === "Field contract" && <FieldsPanel run={activeRun} />}
             {activeTab === "Evidence" && <EvidencePanel nodes={activeRun.nodes} />}
             {activeTab === "Diagnostics" && <DiagnosticsPanel run={activeRun} />}
           </div>
         </section>
+        ) : (
+          <section className="empty-run-card">
+            <span className="eyebrow">NO REAL CRAWLS YET</span>
+            <h2>Start with a public form URL</h2>
+            <p>FormWeave will fetch the page, extract its actual controls, capture evidence, and produce a downloadable report.</p>
+            <button className="primary-button" onClick={() => setLaunchOpen(true)}>
+              <span className="plus">+</span> Launch first crawl
+            </button>
+          </section>
+        )}
 
         <Queue runs={runs} onSelect={chooseRun} />
         <footer className="app-footer">
           <span>FORMWEAVE CONTROL PLANE</span>
-          <span>Executor contract v2.4 · Fingerprints use DOM facts only</span>
+          <span>Read-only crawler v1 · Fingerprints use fetched form facts</span>
         </footer>
       </main>
 

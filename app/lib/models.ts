@@ -2,6 +2,7 @@ export type RunStatus =
   | "running"
   | "paused"
   | "awaiting_review"
+  | "completed"
   | "certified"
   | "failed";
 
@@ -34,6 +35,15 @@ export type FlowNode = {
   x: number;
   y: number;
   evidence: string;
+  evidenceAvailable?: boolean;
+  sourceUrl?: string;
+  pageTitle?: string;
+  httpStatus?: number;
+  durationMs?: number;
+  forms?: number;
+  fieldDetails?: FieldContract[];
+  formActions?: string[];
+  screenshotProvider?: string;
   sensitiveMasks: number;
   notes: string[];
 };
@@ -56,6 +66,30 @@ export type Finding = {
   time: string;
 };
 
+export type FieldContract = {
+  key: string;
+  label: string;
+  control: string;
+  required: boolean;
+  sensitive: boolean;
+  hidden: boolean;
+  options: number;
+  selector: string;
+  originState: string;
+  originUrl: string;
+};
+
+export type CrawlStats = {
+  pagesAttempted: number;
+  pagesFetched: number;
+  formsFound: number;
+  fieldsFound: number;
+  screenshotsCaptured: number;
+  bytesFetched: number;
+  startedAt: string;
+  finishedAt?: string;
+};
+
 export type FormRun = {
   id: string;
   name: string;
@@ -68,6 +102,9 @@ export type FormRun = {
   nodes: FlowNode[];
   edges: FlowEdge[];
   findings: Finding[];
+  contract?: FieldContract[];
+  stats?: CrawlStats;
+  reportAvailable?: boolean;
   synthetic: boolean;
   liveApproved: boolean;
   createdAt: string;

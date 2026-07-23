@@ -1,98 +1,58 @@
-# vinext-starter
+# FormWeave
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+FormWeave is a read-only crawler and evidence control plane for public web
+forms. A crawl fetches the submitted URL, follows a bounded set of same-origin
+form-related links, extracts the controls returned in HTML, stores screenshot
+evidence, and produces a downloadable JSON report.
 
-## Prerequisites
+## What a crawl does
 
-- Node.js `>=22.13.0`
+- validates public HTTP/HTTPS targets and rejects private-network,
+  credential-bearing, and tokenized URLs
+- fetches up to 12 pages with timeouts, byte limits, redirects, and an explicit
+  crawler user agent
+- discovers one level of same-origin form/intake/application links
+- extracts forms, actions, input types, labels, selectors, required flags,
+  option counts, and potentially sensitive field indicators
+- fingerprints observed form facts so later crawls can be compared
+- captures a fresh unauthenticated screenshot without entering values
+- persists run state in D1 and screenshot/report artifacts in R2
+- records truthful completion and failure findings; progress comes from crawl
+  work rather than a timer
 
-## Quick Start
+The crawler never fills a field and never submits a form.
+
+## Current execution boundary
+
+Field extraction uses the HTML returned to the crawler. Screenshot evidence is
+browser-rendered through the public Thum.io URL API and stored privately in R2.
+Pages containing client-side scripts are explicitly flagged for review because
+script-driven conditional states are not certified by this runtime.
+
+Do not crawl private, authenticated, personalized, or tokenized URLs.
+
+## Local development
+
+Requirements: Node.js 22.13 or newer.
 
 ```bash
 npm install
 npm run dev
-npm run build
 ```
 
-This starter does not use `wrangler.jsonc`.
+The local app uses simulated D1 and R2 bindings declared by `vite.config.ts`.
 
-## Included Shape
+## Validation
 
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```bash
+npm test
+npm run lint
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+`npm test` builds the production worker and runs parser, fingerprint, target
+validation, and crawl-output tests.
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+## Production storage
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
-
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
-
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
-
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
-
-## Useful Commands
-
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-## Learn More
-
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+`.openai/hosting.json` declares the logical `DB` and `EVIDENCE` bindings.
+Production deployment wiring is owned by Sites.
