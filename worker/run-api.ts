@@ -23,7 +23,7 @@ type RunRow = {
   updated_at: string;
 };
 
-let schemaReady: Promise<void> | undefined;
+let schemaReady = false;
 
 function json(value: unknown, init: ResponseInit = {}) {
   const headers = new Headers(init.headers);
@@ -41,9 +41,9 @@ function parseJson<T>(value: string, fallback: T): T {
 }
 
 async function ensureSchema(env: RunApiEnv) {
-  schemaReady ??= (async () => {
-    await env.DB.batch([
-      env.DB.prepare(`
+  if (schemaReady) return;
+  await env.DB.batch([
+    env.DB.prepare(`
         CREATE TABLE IF NOT EXISTS form_runs (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
@@ -60,8 +60,8 @@ async function ensureSchema(env: RunApiEnv) {
           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
-      `),
-      env.DB.prepare(`
+    `),
+    env.DB.prepare(`
         CREATE TABLE IF NOT EXISTS run_events (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           run_id TEXT NOT NULL,
@@ -71,16 +71,15 @@ async function ensureSchema(env: RunApiEnv) {
           evidence_key TEXT,
           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
-      `),
-      env.DB.prepare(
-        "CREATE INDEX IF NOT EXISTS run_events_run_id_idx ON run_events (run_id)"
-      ),
-      env.DB.prepare(
-        "CREATE INDEX IF NOT EXISTS form_runs_created_at_idx ON form_runs (created_at DESC)"
-      ),
-    ]);
-  })();
-  await schemaReady;
+    `),
+    env.DB.prepare(
+      "CREATE INDEX IF NOT EXISTS run_events_run_id_idx ON run_events (run_id)"
+    ),
+    env.DB.prepare(
+      "CREATE INDEX IF NOT EXISTS form_runs_created_at_idx ON form_runs (created_at DESC)"
+    ),
+  ]);
+  schemaReady = true;
 }
 
 function toRun(row: RunRow): FormRun {

@@ -569,9 +569,17 @@ export function ControlPlane() {
 
   useEffect(() => {
     let disposed = false;
+    let loading = false;
     async function loadRuns() {
+      if (loading) return;
+      loading = true;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 8_000);
       try {
-        const response = await fetch("/api/runs", { cache: "no-store" });
+        const response = await fetch("/api/runs", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
         if (!response.ok) throw new Error("API unavailable");
         const data = (await response.json()) as { runs: FormRun[] };
         if (disposed) return;
@@ -585,6 +593,9 @@ export function ControlPlane() {
         });
       } catch {
         if (!disposed) setApiState("offline");
+      } finally {
+        window.clearTimeout(timeout);
+        loading = false;
       }
     }
     loadRuns();
