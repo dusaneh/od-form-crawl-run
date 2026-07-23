@@ -7,6 +7,14 @@ screenshot evidence, and produces a complete JSON report.
 
 The crawler never fills a field and never submits a form.
 
+## Feature tracking
+
+- `FEATURES.md` is the canonical dot-notated requirements list.
+- `FEATURE_STATUS.md` records what is built, partial, or not built, with
+  verification evidence and the next implementation priorities.
+
+Both files must be updated alongside relevant product changes.
+
 ## Run everything locally
 
 Requirements: Node.js 22.13 or newer.
