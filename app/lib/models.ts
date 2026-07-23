@@ -90,6 +90,73 @@ export type CrawlStats = {
   finishedAt?: string;
 };
 
+export type CrawlReportPage = {
+  requestedUrl: string;
+  finalUrl: string;
+  title: string;
+  heading: string;
+  httpStatus: number;
+  contentType: string;
+  durationMs: number;
+  bytesFetched: number;
+  fingerprint: string;
+  forms: number;
+  fields: Omit<FieldContract, "originState" | "originUrl">[];
+  formActions: string[];
+  links: { url: string; text: string }[];
+  hasScripts: boolean;
+  screenshotContentType?: string;
+  screenshotProvider?: string;
+  htmlArtifact?: string;
+  screenshotArtifact?: string;
+  error?: string;
+};
+
+export type InferredField = {
+  label: string;
+  control: string;
+  required: boolean;
+  sensitive: boolean;
+  confidence: "high" | "medium" | "low";
+  evidence: string;
+  originUrl: string;
+};
+
+export type CrawlAnalysis = {
+  status: "completed" | "skipped" | "failed";
+  model: string;
+  summary: string;
+  pagePurpose: string;
+  visibleForms: string[];
+  inferredFields: InferredField[];
+  keyFindings: {
+    tone: "success" | "warning" | "danger" | "info";
+    title: string;
+    detail: string;
+  }[];
+  limitations: string[];
+  completedAt?: string;
+  error?: string;
+};
+
+export type CrawlReport = {
+  id: string;
+  generatedAt: string;
+  targets: string[];
+  stats: CrawlStats;
+  pages: CrawlReportPage[];
+  contract: FieldContract[];
+  findings: Finding[];
+  analysis?: CrawlAnalysis;
+  artifacts?: {
+    runDirectory: string;
+    report: string;
+    events: string;
+    pagesDirectory: string;
+    evidenceDirectory: string;
+  };
+};
+
 export type FormRun = {
   id: string;
   name: string;
@@ -105,6 +172,8 @@ export type FormRun = {
   contract?: FieldContract[];
   stats?: CrawlStats;
   reportAvailable?: boolean;
+  analysisStatus?: CrawlAnalysis["status"] | "pending";
+  artifacts?: CrawlReport["artifacts"];
   synthetic: boolean;
   liveApproved: boolean;
   createdAt: string;

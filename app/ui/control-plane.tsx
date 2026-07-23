@@ -1,10 +1,36 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { FlowEdge, FlowNode, FormRun, RunStatus } from "../lib/models";
+import type {
+  CrawlReport,
+  FlowEdge,
+  FlowNode,
+  FormRun,
+  RunStatus,
+} from "../lib/models";
 
-const tabs = ["Flow map", "Field contract", "Evidence", "Diagnostics"] as const;
+const tabs = ["Report", "Flow map", "Field contract", "Evidence", "Diagnostics"] as const;
 type Tab = (typeof tabs)[number];
+
+type RuntimeStatus = {
+  status: "online";
+  runtime: "local-filesystem";
+  storageRoot: string;
+  openai: {
+    configured: boolean;
+    keySource: string;
+    model: string;
+  };
+  activeCrawls: number;
+};
+
+function apiUrl(path: string) {
+  if (typeof window === "undefined") return path;
+  if (["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+    return `http://127.0.0.1:8787${path}`;
+  }
+  return path;
+}
 
 function shortHost(url: string) {
   try {
@@ -222,7 +248,7 @@ function EvidencePreview({ node }: { node: FlowNode }) {
         // eslint-disable-next-line @next/next/no-img-element
         <img
           className="evidence-image"
-          src={node.evidence}
+          src={apiUrl(node.evidence)}
           alt={`Captured public page for ${node.title}`}
           loading="lazy"
         />
@@ -289,10 +315,13 @@ function Inspector({ node }: { node: FlowNode }) {
 }
 
 function FieldsPanel({ run }: { run: FormRun }) {
+  const [showHidden, setShowHidden] = useState(false);
   const fields = run.contract ?? [];
   const visibleFields = fields.filter((field) => !field.hidden);
+  const displayedFields = showHidden ? fields : visibleFields;
   const required = visibleFields.filter((field) => field.required).length;
   const sensitive = visibleFields.filter((field) => field.sensitive).length;
+  const hidden = fields.length - visibleFields.length;
 
   return (
     <div className="contract-panel">
@@ -312,37 +341,58 @@ function FieldsPanel({ run }: { run: FormRun }) {
           <strong>{sensitive} fields</strong>
           <small>Detected from type, name, and label</small>
         </div>
+        <div>
+          <span>HIDDEN / SYSTEM</span>
+          <strong>{hidden} controls</strong>
+          <small>Preserved in the report, hidden here by default</small>
+        </div>
       </div>
+      {hidden > 0 && (
+        <div className="contract-toolbar">
+          <span>
+            Showing {displayedFields.length} of {fields.length} extracted controls
+          </span>
+          <button onClick={() => setShowHidden((value) => !value)}>
+            {showHidden ? "Hide system controls" : `Show ${hidden} hidden controls`}
+          </button>
+        </div>
+      )}
       <div className="field-table-wrap">
         <table className="field-table">
           <thead>
             <tr>
+              <th>Observed label</th>
+              <th>Control</th>
               <th>Semantic key</th>
-              <th>Raw control</th>
               <th>Contract</th>
-              <th>Origin state</th>
+              <th>Origin</th>
             </tr>
           </thead>
           <tbody>
-            {visibleFields.map((field, index) => (
+            {displayedFields.map((field, index) => (
               <tr key={`${field.originState}-${field.key}-${index}`}>
+                <td className="field-label-cell">{field.label || "Unlabelled control"}</td>
+                <td>{field.control}</td>
                 <td>
                   <code>{field.key}</code>
                 </td>
-                <td>{field.control}</td>
                 <td>
                   <span className={`field-pill ${field.required ? "required" : ""}`}>
                     {field.required ? "required" : "optional"}
                   </span>
                   {field.sensitive && <span className="field-pill sensitive">sensitive</span>}
+                  {field.hidden && <span className="field-pill hidden">hidden</span>}
                   {field.options > 0 && <span className="field-pill">{field.options} options</span>}
                 </td>
-                <td>{field.originState}</td>
+                <td>
+                  <span className="origin-cell">{field.originState}</span>
+                  <small>{shortHost(field.originUrl)}</small>
+                </td>
               </tr>
             ))}
-            {!visibleFields.length && (
+            {!displayedFields.length && (
               <tr>
-                <td colSpan={4} className="empty-table-cell">
+                <td colSpan={5} className="empty-table-cell">
                   No visible form fields were found in the fetched HTML.
                 </td>
               </tr>
@@ -350,6 +400,223 @@ function FieldsPanel({ run }: { run: FormRun }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1_000) return `${bytes} B`;
+  if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(1)} KB`;
+  return `${(bytes / 1_000_000).toFixed(2)} MB`;
+}
+
+function ReportPanel({
+  run,
+  report,
+  loading,
+  error,
+}: {
+  run: FormRun;
+  report: CrawlReport | null;
+  loading: boolean;
+  error: string;
+}) {
+  if (loading) {
+    return (
+      <div className="report-empty">
+        <span className="report-spinner" />
+        <strong>Loading the local report</strong>
+        <p>The screen is reading the same report.json file stored on disk.</p>
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="report-empty report-error">
+        <strong>Report unavailable</strong>
+        <p>{error}</p>
+      </div>
+    );
+  }
+  if (!report) {
+    return (
+      <div className="report-empty">
+        <strong>{run.status === "running" ? "Crawl still running" : "No report yet"}</strong>
+        <p>
+          {run.status === "running"
+            ? `${run.stage}. This view will populate automatically.`
+            : "The run has not produced a local report artifact."}
+        </p>
+      </div>
+    );
+  }
+
+  const analysis = report.analysis;
+  const visibleFields = report.contract.filter((field) => !field.hidden);
+  const hiddenFields = report.contract.length - visibleFields.length;
+  const localScreenshots = report.pages.filter((page) => page.screenshotArtifact).length;
+
+  return (
+    <div className="report-panel">
+      <section className="report-hero">
+        <div>
+          <span className="eyebrow">LOCAL REPORT · {report.id}</span>
+          <h3>
+            {analysis?.summary ||
+              `${report.stats.pagesFetched} pages and ${report.stats.fieldsFound} visible fields captured.`}
+          </h3>
+          <p>
+            {analysis?.pagePurpose ||
+              "Deterministic HTML extraction with locally persisted evidence and logs."}
+          </p>
+        </div>
+        <div className={`analysis-chip ${analysis?.status ?? "pending"}`}>
+          <span />
+          {analysis?.status === "completed"
+            ? `AI analyzed · ${analysis.model}`
+            : analysis?.status === "failed"
+              ? "AI analysis failed"
+              : analysis?.status === "skipped"
+                ? "AI analysis skipped"
+                : "AI analysis pending"}
+        </div>
+      </section>
+
+      <section className="report-metrics" aria-label="Report totals">
+        <div><span>Pages fetched</span><strong>{report.stats.pagesFetched}</strong><small>{report.stats.pagesAttempted} attempted</small></div>
+        <div><span>Forms found</span><strong>{report.stats.formsFound}</strong><small>Across returned HTML</small></div>
+        <div><span>Visible fields</span><strong>{report.stats.fieldsFound}</strong><small>{hiddenFields} hidden controls retained</small></div>
+        <div>
+          <span>Screenshots local</span>
+          <strong>{localScreenshots}</strong>
+          <small>{report.stats.screenshotsCaptured} reported by source crawl</small>
+        </div>
+        <div><span>Bytes fetched</span><strong>{formatBytes(report.stats.bytesFetched)}</strong><small>Raw page response bytes</small></div>
+      </section>
+
+      <section className="report-section">
+        <div className="section-title">
+          <span>Crawled pages</span>
+          <span>{report.pages.length}</span>
+        </div>
+        <div className="page-report-list">
+          {report.pages.map((page, index) => (
+            <article key={`${page.finalUrl}-${index}`}>
+              <div className="page-report-index">{String(index + 1).padStart(2, "0")}</div>
+              <div className="page-report-main">
+                <strong>{page.heading || page.title || shortHost(page.finalUrl)}</strong>
+                <a href={page.finalUrl} target="_blank" rel="noreferrer">{page.finalUrl}</a>
+                <div>
+                  <span>HTTP {page.httpStatus || "failed"}</span>
+                  <span>{page.forms} forms</span>
+                  <span>{page.fields.filter((field) => !field.hidden).length} visible fields</span>
+                  <span>{formatBytes(page.bytesFetched)}</span>
+                  <span>{page.durationMs} ms</span>
+                </div>
+              </div>
+              <div className="page-report-artifacts">
+                <span className={page.htmlArtifact ? "available" : ""}>HTML</span>
+                <span className={page.screenshotArtifact ? "available" : ""}>PNG</span>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {analysis?.visibleForms?.length ? (
+        <section className="report-section">
+          <div className="section-title">
+            <span>AI form inventory</span>
+            <span>{analysis.visibleForms.length}</span>
+          </div>
+          <div className="form-inventory">
+            {analysis.visibleForms.map((form) => <span key={form}>{form}</span>)}
+          </div>
+        </section>
+      ) : null}
+
+      {analysis?.inferredFields?.length ? (
+        <section className="report-section">
+          <div className="section-title">
+            <span>Screenshot-inferred controls</span>
+            <span>{analysis.inferredFields.length}</span>
+          </div>
+          <p className="section-explainer">
+            These are deliberately separate from the {visibleFields.length} DOM-observed fields.
+          </p>
+          <div className="field-table-wrap">
+            <table className="field-table">
+              <thead>
+                <tr>
+                  <th>Label</th>
+                  <th>Control</th>
+                  <th>Confidence</th>
+                  <th>Evidence</th>
+                  <th>Origin</th>
+                </tr>
+              </thead>
+              <tbody>
+                {analysis.inferredFields.map((field, index) => (
+                  <tr key={`${field.originUrl}-${field.label}-${index}`}>
+                    <td className="field-label-cell">{field.label}</td>
+                    <td>{field.control}</td>
+                    <td><span className={`confidence-pill ${field.confidence}`}>{field.confidence}</span></td>
+                    <td>{field.evidence}</td>
+                    <td>{shortHost(field.originUrl)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
+      <section className="report-section">
+        <div className="section-title">
+          <span>Findings</span>
+          <span>{report.findings.length}</span>
+        </div>
+        <div className="report-findings">
+          {report.findings.map((finding) => (
+            <article className={`finding ${finding.tone}`} key={finding.id}>
+              <div className="finding-icon">
+                {finding.tone === "success" ? "✓" : finding.tone === "warning" ? "!" : finding.tone === "danger" ? "×" : "i"}
+              </div>
+              <div>
+                <code>{finding.code}</code>
+                <strong>{finding.title}</strong>
+                <p>{finding.detail}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {analysis?.limitations?.length ? (
+        <section className="report-section limitations-section">
+          <div className="section-title">
+            <span>Known limitations</span>
+            <span>{analysis.limitations.length}</span>
+          </div>
+          {analysis.limitations.map((limitation) => <p key={limitation}>{limitation}</p>)}
+        </section>
+      ) : null}
+
+      {report.artifacts && (
+        <section className="report-section artifact-section">
+          <div className="section-title">
+            <span>Local artifacts</span>
+            <span>ON DISK</span>
+          </div>
+          <dl>
+            <div><dt>Run directory</dt><dd><code>{report.artifacts.runDirectory}</code></dd></div>
+            <div><dt>Report</dt><dd><code>{report.artifacts.report}</code></dd></div>
+            <div><dt>Event log</dt><dd><code>{report.artifacts.events}</code></dd></div>
+            <div><dt>Returned HTML</dt><dd><code>{report.artifacts.pagesDirectory}</code></dd></div>
+            <div><dt>Screenshots</dt><dd><code>{report.artifacts.evidenceDirectory}</code></dd></div>
+          </dl>
+        </section>
+      )}
     </div>
   );
 }
@@ -552,7 +819,11 @@ export function ControlPlane() {
   const [runs, setRuns] = useState<FormRun[]>([]);
   const [activeRun, setActiveRun] = useState<FormRun | null>(null);
   const [selectedNode, setSelectedNode] = useState("");
-  const [activeTab, setActiveTab] = useState<Tab>("Flow map");
+  const [activeTab, setActiveTab] = useState<Tab>("Report");
+  const [report, setReport] = useState<CrawlReport | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState("");
+  const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [toast, setToast] = useState("");
@@ -576,10 +847,19 @@ export function ControlPlane() {
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 8_000);
       try {
-        const response = await fetch("/api/runs", {
-          cache: "no-store",
-          signal: controller.signal,
-        });
+        const [response, healthResponse] = await Promise.all([
+          fetch(apiUrl("/api/runs"), {
+            cache: "no-store",
+            signal: controller.signal,
+          }),
+          fetch(apiUrl("/api/health"), {
+            cache: "no-store",
+            signal: controller.signal,
+          }).catch(() => null),
+        ]);
+        if (healthResponse?.ok) {
+          setRuntime((await healthResponse.json()) as RuntimeStatus);
+        }
         if (!response.ok) throw new Error("API unavailable");
         const data = (await response.json()) as { runs: FormRun[] };
         if (disposed) return;
@@ -607,6 +887,41 @@ export function ControlPlane() {
   }, []);
 
   useEffect(() => {
+    let disposed = false;
+    const runId = activeRun?.id;
+    if (!runId || !activeRun.reportAvailable) {
+      return;
+    }
+
+    async function loadReport() {
+      setReportLoading(true);
+      setReportError("");
+      try {
+        const response = await fetch(
+          apiUrl(`/api/runs/${encodeURIComponent(runId)}/report`),
+          { cache: "no-store" }
+        );
+        if (!response.ok) throw new Error(`Report API returned ${response.status}.`);
+        const data = (await response.json()) as CrawlReport;
+        if (!disposed) setReport(data);
+      } catch (error) {
+        if (!disposed) {
+          setReportError(
+            error instanceof Error ? error.message : "Unable to read the local report."
+          );
+        }
+      } finally {
+        if (!disposed) setReportLoading(false);
+      }
+    }
+
+    loadReport();
+    return () => {
+      disposed = true;
+    };
+  }, [activeRun?.id, activeRun?.reportAvailable, activeRun?.updatedAt]);
+
+  useEffect(() => {
     if (!toast) return;
     const timeout = window.setTimeout(() => setToast(""), 3600);
     return () => window.clearTimeout(timeout);
@@ -615,7 +930,7 @@ export function ControlPlane() {
   async function launch(urls: string[], mode: "crawl" | "dry_run") {
     setLaunching(true);
     try {
-      const response = await fetch("/api/runs", {
+      const response = await fetch(apiUrl("/api/runs"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ urls, mode }),
@@ -624,6 +939,8 @@ export function ControlPlane() {
       if (!response.ok || !data.run) throw new Error(data.error ?? "Unable to launch.");
       setRuns((current) => [data.run!, ...current]);
       setActiveRun(data.run);
+      setActiveTab("Report");
+      setReport(null);
       setSelectedNode(data.run.nodes[0]?.id ?? "welcome");
       setLaunchOpen(false);
       setToast(`${mode === "dry_run" ? "Dry run" : "Crawl"} launched for ${urls.length} target${urls.length === 1 ? "" : "s"}.`);
@@ -637,7 +954,7 @@ export function ControlPlane() {
   async function runAction(action: "request_review") {
     if (!activeRun) return;
     try {
-      const response = await fetch(`/api/runs/${activeRun.id}`, {
+      const response = await fetch(apiUrl(`/api/runs/${activeRun.id}`), {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action }),
@@ -655,6 +972,9 @@ export function ControlPlane() {
 
   function chooseRun(run: FormRun) {
     setActiveRun(run);
+    setReport(null);
+    setReportError("");
+    setActiveTab("Report");
     setSelectedNode(
       run.nodes.find((item) => item.status === "active")?.id ??
         run.nodes[0]?.id ??
@@ -683,7 +1003,9 @@ export function ControlPlane() {
             <div className={`environment-pill ${apiState}`}>
               <span />
               {apiState === "online"
-                ? "Crawler API online"
+                ? runtime?.runtime === "local-filesystem"
+                  ? `Local crawler · ${runtime.openai.configured ? "AI ready" : "AI key missing"}`
+                  : "Crawler API online"
                 : apiState === "connecting"
                   ? "Connecting"
                   : "Crawler API unavailable"}
@@ -730,9 +1052,17 @@ export function ControlPlane() {
               {activeRun.reportAvailable && (
                 <a
                   className="secondary-button button-link"
-                  href={`/api/runs/${encodeURIComponent(activeRun.id)}/report`}
+                  href={apiUrl(`/api/runs/${encodeURIComponent(activeRun.id)}/report?download=1`)}
                 >
                   Download report
+                </a>
+              )}
+              {runtime?.runtime === "local-filesystem" && (
+                <a
+                  className="secondary-button button-link"
+                  href={apiUrl(`/api/runs/${encodeURIComponent(activeRun.id)}/logs?download=1`)}
+                >
+                  Download logs
                 </a>
               )}
               {activeRun.status === "completed" && (
@@ -752,7 +1082,7 @@ export function ControlPlane() {
           <div className="trust-strip">
             <div><span>✓</span> Real public-page fetch</div>
             <div><span>✓</span> No form values entered</div>
-            <div><span>✓</span> Evidence stored privately</div>
+            <div><span>✓</span> {runtime ? "Artifacts stored locally" : "Evidence stored privately"}</div>
             <div className="locked"><span>⌕</span> Form submission disabled</div>
           </div>
 
@@ -766,12 +1096,23 @@ export function ControlPlane() {
                 onClick={() => setActiveTab(tab)}
               >
                 {tab}
+                {tab === "Report" && activeRun.stats && (
+                  <span>{activeRun.stats.fieldsFound}</span>
+                )}
                 {tab === "Diagnostics" && <span>{activeRun.findings.length}</span>}
               </button>
             ))}
           </div>
 
           <div className={`workspace workspace-${activeTab.toLowerCase().replaceAll(" ", "-")}`}>
+            {activeTab === "Report" && (
+              <ReportPanel
+                run={activeRun}
+                report={report}
+                loading={reportLoading}
+                error={reportError}
+              />
+            )}
             {activeTab === "Flow map" && (
               <>
                 <div className="graph-panel">
@@ -814,7 +1155,11 @@ export function ControlPlane() {
         <Queue runs={runs} onSelect={chooseRun} />
         <footer className="app-footer">
           <span>FORMWEAVE CONTROL PLANE</span>
-          <span>Read-only crawler v1 · Fingerprints use fetched form facts</span>
+          <span>
+            {runtime
+              ? `Local storage · ${runtime.storageRoot} · ${runtime.openai.model}`
+              : "Read-only crawler v1 · Fingerprints use fetched form facts"}
+          </span>
         </footer>
       </main>
 

@@ -219,8 +219,9 @@ async function executeCrawl(
       generatedAt: finishedAt,
       targets: urls,
       stats,
-      pages: output.pages.map(({ screenshot, ...page }) => {
+      pages: output.pages.map(({ screenshot, html, ...page }) => {
         void screenshot;
+        void html;
         return page;
       }),
       contract: output.contract,

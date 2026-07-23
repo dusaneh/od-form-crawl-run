@@ -28,6 +28,7 @@ export type CrawlPage = ParsedPage & {
   durationMs: number;
   bytesFetched: number;
   fingerprint: string;
+  html?: string;
   screenshot?: Uint8Array;
   screenshotContentType?: string;
   screenshotProvider?: string;
@@ -427,6 +428,7 @@ export async function crawlPage(url: string): Promise<CrawlPage> {
       durationMs: Date.now() - started,
       bytesFetched: buffer.byteLength,
       fingerprint: fingerprintPage(parsed),
+      html,
     };
 
     try {
