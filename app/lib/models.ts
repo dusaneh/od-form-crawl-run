@@ -44,6 +44,7 @@ export type FlowNode = {
   fieldDetails?: FieldContract[];
   formActions?: string[];
   screenshotProvider?: string;
+  stateEvidence?: StateEvidence[];
   sensitiveMasks: number;
   notes: string[];
 };
@@ -79,6 +80,11 @@ export type FieldContract = {
   originUrl: string;
   frameUrl?: string;
   rendered?: boolean;
+  testValue?: string;
+  testValues?: string[];
+  testValueSource?: "llm" | "deterministic" | "unavailable";
+  entryStatus?: "entered" | "skipped" | "failed";
+  entryError?: string;
 };
 
 export type CrawlStats = {
@@ -93,6 +99,12 @@ export type CrawlStats = {
   blockedWriteRequests?: number;
   allowedReadLikeRequests?: number;
   captchaPages?: number;
+  statesCaptured?: number;
+  fieldsEntered?: number;
+  entryFailures?: number;
+  branchStates?: number;
+  submissionsAttempted?: number;
+  submissionsSucceeded?: number;
   startedAt: string;
   finishedAt?: string;
 };
@@ -119,6 +131,7 @@ export type CrawlReportPage = {
   rendered?: boolean;
   renderEngine?: string;
   browserMode?: BrowserMode;
+  executionMode?: ExecutionMode;
   frameCount?: number;
   shadowRootCount?: number;
   blockedWriteRequests?: number;
@@ -127,10 +140,16 @@ export type CrawlReportPage = {
   captchaDetected?: boolean;
   unresolvedGate?: string;
   stateExaminations?: number;
+  stateEvidence?: StateEvidence[];
+  fieldsEntered?: number;
+  entryFailures?: number;
+  branchStates?: number;
+  finalSubmission?: "blocked" | "submitted" | "not_found" | "not_requested";
   error?: string;
 };
 
 export type BrowserMode = "headless" | "headful";
+export type ExecutionMode = "dry_run" | "live";
 
 export type TraversalSettings = {
   version: number;
@@ -148,6 +167,12 @@ export type TraversalSettings = {
   stableWindowMs: number;
   maxStateWaitMs: number;
   maxActionsPerPage: number;
+  enterTestValues: boolean;
+  exerciseBranches: boolean;
+  advanceFormSteps: boolean;
+  maxFormStates: number;
+  maxBranchOptionsPerControl: number;
+  agentInstructions: string;
   updatedAt?: string;
 };
 
@@ -158,14 +183,54 @@ export type TraversalAction = {
     | "optional_offer"
     | "optional_auth"
     | "safe_disclosure"
-    | "intro_advance";
+    | "intro_advance"
+    | "field_entry"
+    | "branch_probe"
+    | "form_advance"
+    | "final_submit"
+    | "final_submit_blocked";
   label: string;
   strategy: string;
   beforeFingerprint: string;
   afterFingerprint: string;
   changed: boolean;
   timestamp: string;
+  fieldKey?: string;
+  testValue?: string;
+  stateId?: string;
+  classification?: "deterministic" | "conditional" | "human_review";
+  rationale?: string;
   error?: string;
+};
+
+export type StateEvidence = {
+  id: string;
+  sequence: number;
+  kind:
+    | "initial"
+    | "populated"
+    | "branch"
+    | "pre_advance"
+    | "post_advance"
+    | "blocked_final"
+    | "submitted";
+  label: string;
+  url: string;
+  title: string;
+  fingerprint: string;
+  capturedAt: string;
+  fieldsVisible: number;
+  values: {
+    fieldKey: string;
+    label: string;
+    value: string;
+    source: "llm" | "deterministic";
+  }[];
+  evidence?: string;
+  evidenceAvailable?: boolean;
+  screenshotArtifact?: string;
+  screenshotContentType?: string;
+  screenshotProvider?: string;
 };
 
 export type InferredField = {
@@ -176,6 +241,7 @@ export type InferredField = {
   confidence: "high" | "medium" | "low";
   evidence: string;
   originUrl: string;
+  defaultTestValue: string;
 };
 
 export type CrawlAnalysis = {
@@ -204,6 +270,7 @@ export type CrawlReport = {
   contract: FieldContract[];
   findings: Finding[];
   browserMode?: BrowserMode;
+  executionMode?: ExecutionMode;
   renderEngine?: string;
   traversalSettings?: TraversalSettings;
   analysis?: CrawlAnalysis;
@@ -224,7 +291,7 @@ export type FormRun = {
   status: RunStatus;
   stage: string;
   progress: number;
-  mode: "crawl" | "dry_run" | "live";
+  mode: ExecutionMode | "crawl";
   browserMode?: BrowserMode;
   traversalSettings?: TraversalSettings;
   nodes: FlowNode[];

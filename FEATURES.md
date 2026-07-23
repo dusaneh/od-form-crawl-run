@@ -38,8 +38,27 @@ additional numeric segment identifies a sub-requirement of its parent.
 - `F1.3.2` A discovered page is represented in the run graph and final report.
 - `F1.3.3` Same-origin iframe documents and open shadow roots are included in
   rendered-DOM extraction with their origin recorded.
-- `F1.3.4` Bounded conditional and multi-step state exploration may actuate
-  safe non-submit controls, but must never enter user values or submit a form.
+- `F1.3.4` The crawler performs bounded conditional and multi-step form
+  exploration by entering obviously synthetic test values and advancing as
+  far as possible.
+- `F1.3.4.1` Fields are exercised in DOM order with generated values that
+  satisfy native type, required, length, range, pattern, and option
+  constraints when practical.
+- `F1.3.4.2` Selects, radio groups, checkboxes, and switches are actuated
+  across a bounded set of safe alternatives so validation and branching logic
+  can be observed.
+- `F1.3.4.3` Newly revealed conditional controls are rediscovered and
+  populated before the crawler attempts to advance.
+- `F1.3.4.4` Every attempted field entry records the field identity, proposed
+  value, planner source, outcome, state fingerprints, and any locator or
+  validation failure.
+- `F1.3.4.5` Explicit intermediate Next, Continue, Review, and equivalent
+  actions may be activated to reach later form states.
+- `F1.3.4.6` Validation and autosave requests caused by an authorized
+  synthetic interaction may reach the target even in Dry Run mode.
+- `F1.3.4.7` Every observed field exposes a default or test value in the
+  machine-readable contract; controls requiring human review are explicitly
+  identified instead of silently exercised.
 - `F1.4` The crawler extracts observed form structure from page content.
 - `F1.4.1` Forms and form actions are recorded.
 - `F1.4.2` Controls include label, semantic key, raw control type, selector,
@@ -79,9 +98,14 @@ additional numeric segment identifies a sub-requirement of its parent.
   made unconditional replay steps.
 - `F1.6.10` CAPTCHA or human-verification gates are detected, captured, and
   handed to a person; FormWeave does not click, solve, or bypass them.
-- `F1.6.11` Same-origin fetch/XHR POST requests may be allowed only when a
-  narrow endpoint classifier identifies framework rendering or initialization
-  behavior and form-submit guards remain active.
+- `F1.6.11` Same-origin fetch/XHR POST requests may be allowed when a narrow
+  endpoint classifier identifies framework rendering or initialization, or
+  during a short interaction-scoped window for field validation, autosave, or
+  an authorized intermediate advance.
+- `F1.6.11.1` Autonomous writes outside classified initialization or an
+  active interaction window remain blocked and logged.
+- `F1.6.11.2` An explicitly approved Live final-submit window is scoped to the
+  resolved final form-action origin; unrelated origins remain blocked.
 
 ## F2. Evidence and provenance
 
@@ -99,6 +123,12 @@ additional numeric segment identifies a sub-requirement of its parent.
   must not depend on a third-party screenshot service.
 - `F2.2.6` Every available screenshot preview in the UI opens the full local
   evidence image when clicked.
+- `F2.2.7` The crawler captures a screenshot after values have been entered in
+  each populated or branch state and before it moves forward.
+- `F2.2.8` State evidence records the entered synthetic values, state kind,
+  sequence, URL, fingerprint, timestamp, and local screenshot artifact.
+- `F2.2.9` Initial, populated, branch, pre-advance, post-advance,
+  blocked-final, and submitted states remain distinguishable.
 - `F2.3` Every crawl produces a complete machine-readable JSON report.
 - `F2.3.1` The report includes targets, timestamps, aggregate statistics,
   per-page facts, the full field contract, findings, analysis, and artifact
@@ -151,6 +181,20 @@ additional numeric segment identifies a sub-requirement of its parent.
 - `F3.12.3` Reports expose automatic-action, state-examination, allowed
   initialization, and blocked-write counts plus the per-action fingerprint
   audit trail.
+- `F3.12.4` Settings expose bounded field entry, branch exercise,
+  intermediate advancement, state-evidence, and branch-option controls.
+- `F3.12.5` Settings contain editable natural-language instructions for the
+  traversal planner and explain which safety decisions remain deterministic.
+- `F3.13` The new-crawl UI provides a Dry Run/Live execution-mode switch.
+- `F3.13.1` Dry Run is the default; it enters synthetic values, exercises
+  branches, permits validation/autosave side effects, advances intermediate
+  steps, captures the completed state, and never activates the final submit
+  control.
+- `F3.13.2` Live mode performs the same traversal and may activate the final
+  submit control only after an explicit approval checkbox and typed
+  confirmation.
+- `F3.13.3` Run status, report facts, findings, actions, and UI trust copy
+  truthfully identify the selected execution mode and final-submit outcome.
 
 ## F4. Local-first operation and ownership
 
@@ -186,12 +230,22 @@ additional numeric segment identifies a sub-requirement of its parent.
 - `F5.2` The model receives structured crawl facts and a bounded number of
   screenshot inputs.
 - `F5.3` The model returns schema-constrained structured JSON.
-- `F5.4` Model output includes a summary, apparent page purpose, form inventory,
-  conservative inferred controls, findings, and limitations.
-- `F5.5` Inferred controls include origin, confidence, and supporting evidence.
+- `F5.4` Model output includes a summary, apparent page purpose, form
+  inventory, conservative inferred controls, default synthetic test values,
+  findings, and limitations.
+- `F5.5` Inferred controls include origin, confidence, supporting evidence,
+  and a default synthetic test value.
 - `F5.6` An LLM failure does not invalidate or delete the deterministic crawl
   report.
 - `F5.7` The selected model is configurable without a source-code change.
+- `F5.8` When configured, an LLM planner may classify visible controls,
+  propose synthetic values, identify branch controls, and distinguish
+  intermediate from final actions from the persisted operator instructions.
+- `F5.8.1` A deterministic planner provides the same schema when the LLM is
+  unavailable, disabled, times out, or returns unusable control identifiers.
+- `F5.8.2` Hard enforcement overrides prompt output for CAPTCHA, credentials,
+  file upload, legal acceptance, payment, Dry Run final blocking, and Live
+  approval.
 
 ## F6. Operational transparency
 
@@ -211,18 +265,30 @@ additional numeric segment identifies a sub-requirement of its parent.
 - `F6.6` In-progress work should recover or be marked interrupted after an
   unexpected local process restart.
 
-## F7. Read-only safety boundary
+## F7. Guarded execution boundary
 
-- `F7` Crawling is read-only by construction.
-- `F7.1` The crawler never enters form values.
-- `F7.2` The crawler never submits a form.
-- `F7.2.1` Browser requests using methods other than GET, HEAD, or OPTIONS are
-  blocked before they reach the target server except narrowly classified
-  same-origin fetch/XHR initialization POSTs allowed by `F1.6.11`.
-- `F7.2.1.1` Allowed initialization requests and blocked non-read requests are
-  both counted and logged with sanitized endpoints.
-- `F7.2.2` Submit events and programmatic form submission APIs are disabled in
-  every crawled page before site scripts execute.
+- `F7` Form traversal is synthetic-data-first and final submission is governed
+  by the selected execution mode.
+- `F7.1` The crawler may enter only obviously synthetic or fixture-safe test
+  values; real user data is neither required nor inferred.
+- `F7.1.1` Credentials, payment controls, file uploads, CAPTCHA, and legal or
+  terms acceptance require human review and are not automatically populated.
+- `F7.2` Dry Run never activates a control classified as the final submit
+  action.
+- `F7.2.1` Dry Run may activate controls and allow network side effects needed
+  for field validation, autosave, branching, and intermediate progression.
+- `F7.2.2` Live mode may activate the final submit action only after explicit
+  per-run approval and typed confirmation.
+- `F7.2.3` Browser requests using methods other than GET, HEAD, or OPTIONS are
+  blocked before they reach the target server except as allowed by
+  `F1.6.11`, or to the resolved form-action origin during the explicitly
+  approved Live final-submit window.
+- `F7.2.3.1` Allowed initialization, interaction-scoped writes, blocked
+  autonomous writes, and submission attempts are counted and logged with
+  sanitized endpoints.
+- `F7.2.4` Submit events and programmatic form submission APIs are guarded
+  before site scripts execute and are released only for a classified
+  intermediate action or approved Live final action.
 - `F7.3` Screenshots use a fresh unauthenticated public-page context.
 - `F7.4` Private, authenticated, personalized, and tokenized targets are outside
   the supported boundary.
@@ -254,9 +320,13 @@ additional numeric segment identifies a sub-requirement of its parent.
   and events below local `data/harness/`.
 - `F8.7.3` A headful harness runs the same fixtures and assertions while
   showing the local browser.
-- `F8.7.4` Automated assertions prove that browser-initiated writes do not
-  reach the fixture server while a specifically classified same-origin
-  initialization request can complete.
+- `F8.7.4` Automated assertions prove that classified initialization,
+  validation, and autosave writes can complete while autonomous writes and
+  Dry Run final submissions remain blocked.
 - `F8.7.5` Automated assertions prove predictable gates are traversed and
   fingerprinted, CAPTCHA controls are not clicked, Settings persist, and
   screenshot evidence links open the full local image.
+- `F8.7.6` Repository-owned fixtures and tests prove value entry, select/radio/
+  checkbox branching, conditional-field discovery, intermediate advancement,
+  per-state populated screenshots, Dry Run final blocking, and explicitly
+  approved Live submission.

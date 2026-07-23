@@ -90,7 +90,7 @@ const routes = new Map([
               <label><input type="radio" name="contact_method" value="phone"> Phone</label>
             </fieldset>
             <label><input type="checkbox" name="attestation" required> I attest this fixture is synthetic</label>
-            <button type="submit">Continue</button>
+            <button type="submit">Submit application</button>
           </form>
         </main>`
       ),
@@ -117,8 +117,8 @@ const routes = new Map([
               <label>Best phone? <input type="tel" name="contact[phone]" autocomplete="tel"></label>
               <label for="story">Please describe your situation</label>
               <textarea id="story" data-field="assistance_story" aria-required="true"></textarea>
-              <div role="combobox" aria-label="Neighborhood" aria-required="true" tabindex="0">Choose a neighborhood</div>
-              <div role="switch" aria-label="Text message updates" tabindex="0"></div>
+              <div role="combobox" aria-label="Neighborhood" aria-required="true" aria-expanded="false" tabindex="0">Choose a neighborhood</div>
+              <div role="switch" aria-label="Text message updates" aria-checked="false" tabindex="0" style="min-height:42px;padding:9px;border:1px solid #8fa89a">Off</div>
               <input title="Unlabelled reference number" data-field="reference_number">
               <input type="hidden" name="tracking_id" value="noise-123">
               <input name="future_detail" aria-label="Future conditional detail" style="display:none">
@@ -129,7 +129,32 @@ const routes = new Map([
             <label>Newsletter email <input name="newsletter_email" type="email"></label>
             <button>Subscribe</button>
           </form>
-        </main>`
+        </main>`,
+        {
+          scripts: `<script>
+            const neighborhood = document.querySelector('[role="combobox"][aria-label="Neighborhood"]');
+            neighborhood.addEventListener("click", () => {
+              neighborhood.setAttribute("aria-expanded", "true");
+            });
+            neighborhood.addEventListener("keydown", (event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                neighborhood.setAttribute("aria-expanded", "true");
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                neighborhood.textContent = "North test district";
+                neighborhood.setAttribute("aria-expanded", "false");
+              }
+            });
+            const updateSwitch = document.querySelector('[role="switch"][aria-label="Text message updates"]');
+            updateSwitch.addEventListener("click", () => {
+              const next = updateSwitch.getAttribute("aria-checked") !== "true";
+              updateSwitch.setAttribute("aria-checked", String(next));
+              updateSwitch.textContent = next ? "On" : "Off";
+            });
+          </script>`,
+        }
       ),
   ],
   [
@@ -190,7 +215,7 @@ const routes = new Map([
                 <option>Lost</option><option>Damaged</option><option>Never arrived</option>
               </select>
             </label>
-            <button>Review request</button>
+            <button>Submit request</button>
           </form>
         </main>`
       ),
@@ -231,26 +256,119 @@ const routes = new Map([
         "Conditional household wizard",
         `<main>
           <h1>Household eligibility screener</h1>
-          <form action="/fixtures/write-probe" method="post">
-            <fieldset>
-              <legend>Do you have dependents?</legend>
-              <label><input type="radio" name="has_dependents" value="yes"> Yes</label>
-              <label><input type="radio" name="has_dependents" value="no"> No</label>
-            </fieldset>
-            <section id="dependent-details" hidden>
-              <label>Number of dependents <input name="dependent_count" type="number" min="1"></label>
-            </section>
-            <label>Annual household income <input name="annual_income" inputmode="decimal" required></label>
-            <button type="submit">Check eligibility</button>
-          </form>
+          <p>This three-state form autosaves synthetic changes and ends at an explicit final submit boundary.</p>
+          <div id="wizard-root"></div>
         </main>`,
         {
           scripts: `<script>
-            document.querySelectorAll('[name="has_dependents"]').forEach((field) => {
-              field.addEventListener("change", () => {
-                document.querySelector("#dependent-details").hidden = field.value !== "yes";
+            const root = document.querySelector("#wizard-root");
+            const state = { step: 1, values: {} };
+            const autosave = (source) => {
+              fetch("/fixtures/autosave", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ source, step: state.step, values: state.values })
+              }).catch(() => {});
+            };
+            const bindValues = () => {
+              root.querySelectorAll("input,select,textarea").forEach((field) => {
+                field.addEventListener("change", () => {
+                  state.values[field.name] =
+                    field.type === "checkbox" ? field.checked : field.value;
+                  if (field.name === "has_dependents") {
+                    document.querySelector("#dependent-details").hidden =
+                      field.value !== "yes";
+                  }
+                  if (field.name === "program") {
+                    document.querySelector("#program-details").hidden = !field.value;
+                    document.querySelector("#program-code-label").textContent =
+                      field.value === "energy" ? "Utility program code" : "Housing program code";
+                  }
+                  if (field.name === "updates") {
+                    document.querySelector("#updates-email").hidden = !field.checked;
+                  }
+                  if (field.name === "contact_method") {
+                    document.querySelector("#email-contact").hidden =
+                      field.value !== "email";
+                    document.querySelector("#phone-contact").hidden =
+                      field.value !== "phone";
+                  }
+                  autosave(field.name);
+                });
               });
-            });
+            };
+            const stepOne = () => {
+              state.step = 1;
+              root.innerHTML = \`
+                <form id="wizard-step-one">
+                  <label>Applicant name <input name="applicant_name" autocomplete="name" required></label>
+                  <label>Program
+                    <select name="program" required>
+                      <option value="">Choose one</option>
+                      <option value="energy">Energy assistance</option>
+                      <option value="housing">Housing assistance</option>
+                    </select>
+                  </label>
+                  <section id="program-details" hidden>
+                    <label><span id="program-code-label">Program code</span>
+                      <input name="program_code" required>
+                    </label>
+                  </section>
+                  <fieldset>
+                    <legend>Do you have dependents?</legend>
+                    <label><input type="radio" name="has_dependents" value="yes"> Yes</label>
+                    <label><input type="radio" name="has_dependents" value="no"> No</label>
+                  </fieldset>
+                  <section id="dependent-details" hidden>
+                    <label>Number of dependents <input name="dependent_count" type="number" min="1" max="12"></label>
+                  </section>
+                  <label><input type="checkbox" name="updates"> Exercise optional update preferences</label>
+                  <label id="updates-email" hidden>Updates email <input name="updates_email" type="email"></label>
+                  <label>Annual household income <input name="annual_income" type="number" min="0" required></label>
+                  <button type="submit">Next: contact details</button>
+                </form>\`;
+              root.querySelector("form").addEventListener("submit", (event) => {
+                event.preventDefault();
+                autosave("step_one_advance");
+                stepTwo();
+              });
+              bindValues();
+            };
+            const stepTwo = () => {
+              state.step = 2;
+              root.innerHTML = \`
+                <form id="wizard-step-two">
+                  <label>Preferred contact method
+                    <select name="contact_method" required>
+                      <option value="">Choose one</option>
+                      <option value="email">Email</option>
+                      <option value="phone">Phone</option>
+                    </select>
+                  </label>
+                  <label id="email-contact" hidden>Contact email <input name="contact_email" type="email" required></label>
+                  <label id="phone-contact" hidden>Contact phone <input name="contact_phone" type="tel" required></label>
+                  <label>Service address <input name="service_address" autocomplete="street-address" required></label>
+                  <label>Service ZIP <input name="service_zip" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" required></label>
+                  <button type="submit">Review application</button>
+                </form>\`;
+              root.querySelector("form").addEventListener("submit", (event) => {
+                event.preventDefault();
+                autosave("step_two_advance");
+                stepThree();
+              });
+              bindValues();
+            };
+            const stepThree = () => {
+              state.step = 3;
+              root.innerHTML = \`
+                <form id="wizard-step-three" method="post" action="/fixtures/live-submit">
+                  <h2>Review synthetic application</h2>
+                  <p id="review-summary">All values in this fixture are synthetic.</p>
+                  <input type="hidden" name="fixture_run" value="formweave">
+                  <button type="submit">Submit test application</button>
+                </form>\`;
+            };
+            stepOne();
           </script>`,
         }
       ),
@@ -331,7 +449,7 @@ const routes = new Map([
                       <option>FERA</option>
                     </select>
                   </label>
-                  <button type="submit">Review application</button>
+                  <button type="submit">Submit application</button>
                 </form>\`;
               const toggle = document.querySelector("#help-toggle");
               toggle.addEventListener("click", () => {
@@ -428,11 +546,12 @@ export async function startFixtureServer({ host = "127.0.0.1", port = 0 } = {}) 
   const requests = [];
   const server = createServer((request, response) => {
     const url = new URL(request.url || "/", `http://${request.headers.host || host}`);
-    requests.push({
+    const requestRecord = {
       at: new Date().toISOString(),
       method: request.method || "GET",
       path: url.pathname,
-    });
+    };
+    requests.push(requestRecord);
 
     if (url.pathname === "/fixtures/write-probe") {
       send(
@@ -450,6 +569,36 @@ export async function startFixtureServer({ host = "127.0.0.1", port = 0 } = {}) 
         JSON.stringify({ ready: true, component: "fixture:application" }),
         "application/json; charset=utf-8"
       );
+      return;
+    }
+    if (url.pathname === "/fixtures/autosave" && request.method === "POST") {
+      send(
+        response,
+        200,
+        JSON.stringify({ saved: true, synthetic: true }),
+        "application/json; charset=utf-8"
+      );
+      return;
+    }
+    if (url.pathname === "/fixtures/live-submit" && request.method === "POST") {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      request.on("end", () => {
+        requestRecord.body = body.slice(0, 2_000);
+        send(
+          response,
+          200,
+          layout(
+            "Synthetic submission received",
+            `<main>
+              <h1>Submission received</h1>
+              <p id="submission-confirmation">The repository-owned fixture accepted the synthetic live-mode submission.</p>
+            </main>`
+          )
+        );
+      });
       return;
     }
     const render = routes.get(url.pathname);

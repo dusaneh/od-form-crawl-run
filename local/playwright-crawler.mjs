@@ -5,12 +5,19 @@ import {
   validateTargetUrl,
 } from "../worker/crawler.ts";
 import {
-  installReadOnlyGuards,
   isSameOriginReadLikePost,
   runPredictableAutomations,
   sanitizedEndpoint,
 } from "./traversal-automation.mjs";
+import {
+  installSubmissionGuards,
+  traverseFormStates,
+} from "./form-traversal.mjs";
 import { normalizeTraversalSettings } from "./traversal-settings.mjs";
+import {
+  branchTestValues,
+  deterministicTestValue,
+} from "./test-values.mjs";
 
 const MAX_HTML_BYTES = 5_000_000;
 const MAX_PAGES = 12;
@@ -73,6 +80,10 @@ function semanticKey(value, index) {
   return normalized || `field_${index + 1}`;
 }
 
+function fieldIdentity(field) {
+  return `${field.frameUrl}|${field.selector || field.key}|${field.control}`;
+}
+
 function dedupeFields(rawFields) {
   const result = [];
   const seen = new Map();
@@ -87,6 +98,12 @@ function dedupeFields(rawFields) {
     if (existingIndex !== undefined) {
       const existing = result[existingIndex];
       existing.options += 1;
+      existing.optionValues = [
+        ...new Set([
+          ...(existing.optionValues || []),
+          ...(rawField.optionValues || []),
+        ]),
+      ];
       existing.required ||= rawField.required;
       existing.sensitive ||= rawField.sensitive;
       existing.hidden &&= rawField.hidden;
@@ -110,6 +127,12 @@ function dedupeFields(rawFields) {
       selector: rawField.selector,
       frameUrl: rawField.frameUrl,
       rendered: true,
+      optionValues: rawField.optionValues || [],
+      testValue: rawField.testValue,
+      testValues: rawField.testValues,
+      testValueSource: rawField.testValueSource,
+      entryStatus: rawField.entryStatus,
+      entryError: rawField.entryError,
     };
     if (groupKey) seen.set(groupKey, result.length);
     result.push(field);
@@ -222,6 +245,14 @@ async function extractFrame(frame, pageUrl) {
               : ["radio", "checkbox"].includes(control)
                 ? 1
                 : 0;
+          const optionValues =
+            element.tagName.toLowerCase() === "select"
+              ? Array.from(element.options)
+                  .filter((option) => !option.disabled && option.value)
+                  .map((option) => option.value)
+              : ["radio", "checkbox"].includes(control)
+                ? [String(element.value || "true")]
+                : [];
           return {
             name,
             id,
@@ -237,6 +268,7 @@ async function extractFrame(frame, pageUrl) {
               ),
             hidden: hiddenFor(element),
             options,
+            optionValues,
             selector: selectorFor(element, index),
           };
         });
@@ -306,7 +338,33 @@ async function extractRenderedPage(page, requestedUrl, response, browserMode) {
     frameResults.flatMap((result) =>
       result.fields.map((field) => ({ ...field, frameUrl: result.frameUrl }))
     )
-  );
+  ).map((field, index) => {
+    const descriptor = {
+      ...field,
+      type: field.control,
+      tag: field.control === "select" ? "select" : "",
+      options: (field.optionValues || []).map((value) => ({
+        value,
+        label: value,
+        disabled: false,
+      })),
+      groupOptions: (field.optionValues || []).map((value) => ({
+        value,
+        label: value,
+        disabled: false,
+      })),
+    };
+    return {
+      ...field,
+      testValue:
+        field.testValue ?? deterministicTestValue(descriptor, index),
+      testValues:
+        field.testValues ??
+        branchTestValues(descriptor, 8),
+      testValueSource: field.testValueSource ?? "deterministic",
+      entryStatus: field.entryStatus ?? (field.hidden ? "skipped" : undefined),
+    };
+  });
   const html = await page.content();
   const bytesFetched = Buffer.byteLength(html, "utf8");
   if (bytesFetched > MAX_HTML_BYTES) {
@@ -407,15 +465,36 @@ async function crawlOne(
   context,
   url,
   browserMode,
+  executionMode,
   traversalSettings,
   onBrowserEvent
 ) {
   const page = await context.newPage();
+  page.setDefaultTimeout(
+    Math.max(1_000, Math.min(traversalSettings.maxStateWaitMs, 8_000))
+  );
   const startedAt = Date.now();
   let blockedRequests = 0;
   let allowedReadLikeRequests = 0;
   const reportedBlockedEndpoints = new Set();
   const reportedAllowedEndpoints = new Set();
+  let allowSameOriginWritesUntil = 0;
+  let allowFinalWritesUntil = 0;
+  let allowedFinalWriteOrigin = "";
+  const authorizeWrites = ({ scope, durationMs, reason, origin = "" }) => {
+    const until = Date.now() + Math.max(250, Math.min(durationMs, 15_000));
+    if (scope === "final-action") {
+      allowFinalWritesUntil = Math.max(allowFinalWritesUntil, until);
+      allowedFinalWriteOrigin = origin;
+    } else {
+      allowSameOriginWritesUntil = Math.max(allowSameOriginWritesUntil, until);
+    }
+    onBrowserEvent?.(
+      "interaction_write_window_opened",
+      `Authorized a bounded ${scope} write window for ${reason}.`,
+      { scope, durationMs, reason, ...(origin ? { origin } : {}) }
+    );
+  };
   await page.route("**/*", async (route) => {
     const request = route.request();
     const method = request.method().toUpperCase();
@@ -442,6 +521,27 @@ async function crawlOne(
       return;
     }
     if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+      let requestOrigin = "";
+      try {
+        requestOrigin = new URL(request.url()).origin;
+      } catch {
+        requestOrigin = "";
+      }
+      const now = Date.now();
+      const interactionAllowed =
+        (now <= allowFinalWritesUntil &&
+          requestOrigin === allowedFinalWriteOrigin) ||
+        (now <= allowSameOriginWritesUntil && requestOrigin === frameOrigin);
+      if (interactionAllowed) {
+        const endpoint = sanitizedEndpoint(request.url());
+        await onBrowserEvent?.(
+          "interaction_write_allowed",
+          `Allowed an interaction-triggered ${method} request to ${endpoint}.`,
+          { method, endpoint, resourceType: request.resourceType(), executionMode }
+        );
+        await route.continue();
+        return;
+      }
       blockedRequests += 1;
       const endpoint = sanitizedEndpoint(request.url());
       const key = `${method} ${endpoint}`;
@@ -458,7 +558,7 @@ async function crawlOne(
     }
     await route.continue();
   });
-  await installReadOnlyGuards(page);
+  await installSubmissionGuards(page, executionMode);
 
   try {
     await onBrowserEvent?.("browser_page_opened", `Opening ${url} in local Chromium.`, {
@@ -477,6 +577,26 @@ async function crawlOne(
       traversalSettings,
       onBrowserEvent
     );
+    const formTraversal =
+      automation.captchaDetected || automation.unresolvedGate === "captcha"
+        ? {
+            actions: [],
+            evidence: [],
+            observedFields: [],
+            fieldsEntered: 0,
+            entryFailures: 0,
+            branchStates: 0,
+            submissionsAttempted: 0,
+            submissionsSucceeded: 0,
+            finalSubmission: "not_requested",
+          }
+        : await traverseFormStates(page, {
+            executionMode,
+            browserMode,
+            settings: traversalSettings,
+            authorizeWrites,
+            onEvent: onBrowserEvent,
+          });
     if (browserMode === "headful") {
       const headedPauseMs = Number.parseInt(
         process.env.FORMWEAVE_HEADFUL_PAUSE_MS || "1200",
@@ -485,13 +605,44 @@ async function crawlOne(
       await page.waitForTimeout(Math.max(300, Math.min(headedPauseMs, 10_000)));
     }
     const pageResult = await extractRenderedPage(page, url, response, browserMode);
+    const fieldMap = new Map(
+      pageResult.fields.map((field) => [fieldIdentity(field), field])
+    );
+    for (const observed of formTraversal.observedFields) {
+      const identity = fieldIdentity(observed);
+      const existing = fieldMap.get(identity);
+      fieldMap.set(
+        identity,
+        existing
+          ? {
+              ...existing,
+              ...observed,
+              key: existing.key,
+              label: existing.label || observed.label,
+            }
+          : observed
+      );
+    }
+    pageResult.fields = [...fieldMap.values()];
+    pageResult.forms ||= pageResult.fields.length ? 1 : 0;
+    pageResult.fingerprint = fingerprintPage(pageResult);
     pageResult.durationMs = Date.now() - startedAt;
     pageResult.blockedWriteRequests = blockedRequests;
     pageResult.allowedReadLikeRequests = allowedReadLikeRequests;
-    pageResult.automationActions = automation.actions;
+    pageResult.automationActions = [
+      ...automation.actions,
+      ...formTraversal.actions,
+    ];
     pageResult.captchaDetected = automation.captchaDetected;
     pageResult.unresolvedGate = automation.unresolvedGate;
     pageResult.stateExaminations = automation.stateExaminations;
+    pageResult.stateEvidence = formTraversal.evidence;
+    pageResult.fieldsEntered = formTraversal.fieldsEntered;
+    pageResult.entryFailures = formTraversal.entryFailures;
+    pageResult.branchStates = formTraversal.branchStates;
+    pageResult.submissionsAttempted = formTraversal.submissionsAttempted;
+    pageResult.submissionsSucceeded = formTraversal.submissionsSucceeded;
+    pageResult.finalSubmission = formTraversal.finalSubmission;
     await onBrowserEvent?.(
       "browser_page_extracted",
       `Rendered and extracted ${pageResult.finalUrl}.`,
@@ -503,7 +654,15 @@ async function crawlOne(
         shadowRoots: pageResult.shadowRootCount,
         blockedWriteRequests: blockedRequests,
         allowedReadLikeRequests,
-        automationActions: automation.actions.length,
+        automationActions:
+          automation.actions.length + formTraversal.actions.length,
+        stateEvidence: formTraversal.evidence.length,
+        fieldsEntered: formTraversal.fieldsEntered,
+        entryFailures: formTraversal.entryFailures,
+        branchStates: formTraversal.branchStates,
+        submissionsAttempted: formTraversal.submissionsAttempted,
+        submissionsSucceeded: formTraversal.submissionsSucceeded,
+        finalSubmission: formTraversal.finalSubmission,
         captchaDetected: automation.captchaDetected,
         unresolvedGate: automation.unresolvedGate || "",
         stateExaminations: automation.stateExaminations,
@@ -522,7 +681,9 @@ export async function crawlTargetsWithPlaywright(
   runId,
   {
     browserMode = "headless",
+    executionMode = "dry_run",
     allowLoopback = false,
+    discoverLinks = true,
     traversalSettings = {},
     onProgress,
     onBrowserEvent,
@@ -530,6 +691,9 @@ export async function crawlTargetsWithPlaywright(
 ) {
   if (!["headless", "headful"].includes(browserMode)) {
     throw new Error("Browser mode must be headless or headful.");
+  }
+  if (!["dry_run", "live"].includes(executionMode)) {
+    throw new Error("Execution mode must be dry_run or live.");
   }
   const normalizedSettings = normalizeTraversalSettings(traversalSettings);
   const queue = urls.map((url) => ({
@@ -566,11 +730,16 @@ export async function crawlTargetsWithPlaywright(
         context,
         candidate.url,
         browserMode,
+        executionMode,
         normalizedSettings,
         onBrowserEvent
       );
       pages.push(page);
-      if (!page.error && candidate.depth < MAX_DISCOVERY_DEPTH) {
+      if (
+        discoverLinks &&
+        !page.error &&
+        candidate.depth < MAX_DISCOVERY_DEPTH
+      ) {
         page.links
           .filter((link) => shouldDiscoverLink(link, page))
           .slice(0, MAX_DISCOVERED_LINKS_PER_PAGE)

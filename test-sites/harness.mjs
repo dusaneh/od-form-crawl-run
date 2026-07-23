@@ -24,7 +24,14 @@ try {
     runId,
     {
       browserMode,
+      executionMode: "dry_run",
       allowLoopback: true,
+      traversalSettings: {
+        stableWindowMs: 300,
+        maxStateWaitMs: 3_000,
+        maxFormStates: 24,
+        maxBranchOptionsPerControl: 2,
+      },
       onProgress: ({ pages, queued }) =>
         console.log(`Rendered ${pages} page${pages === 1 ? "" : "s"}; ${queued} queued.`),
       onBrowserEvent: (kind, message, metadata = {}) => {
@@ -58,10 +65,35 @@ try {
       : undefined;
     if (htmlArtifact) await writeFile(htmlArtifact, page.html, "utf8");
     if (screenshotArtifact) await writeFile(screenshotArtifact, page.screenshot);
+    const stateEvidence = [];
+    for (const state of page.stateEvidence || []) {
+      const stateNumber = String(state.sequence).padStart(2, "0");
+      const stateScreenshotArtifact = state.screenshot
+        ? path.join(
+            outputRoot,
+            "evidence",
+            `page_${number}_state_${stateNumber}.png`
+          )
+        : undefined;
+      if (stateScreenshotArtifact) {
+        await writeFile(stateScreenshotArtifact, state.screenshot);
+      }
+      const { screenshot: stateScreenshot, ...serializableState } = state;
+      void stateScreenshot;
+      stateEvidence.push({
+        ...serializableState,
+        screenshotArtifact: stateScreenshotArtifact,
+      });
+    }
     const { html, screenshot, ...serializablePage } = page;
     void html;
     void screenshot;
-    reportPages.push({ ...serializablePage, htmlArtifact, screenshotArtifact });
+    reportPages.push({
+      ...serializablePage,
+      stateEvidence,
+      htmlArtifact,
+      screenshotArtifact,
+    });
   }
 
   const report = {
@@ -69,6 +101,7 @@ try {
     generatedAt: new Date().toISOString(),
     targets: [`${fixture.origin}/fixtures/start`],
     browserMode,
+    executionMode: "dry_run",
     renderEngine: "playwright-chromium",
     pages: reportPages,
     nodes: output.nodes,
@@ -99,15 +132,32 @@ try {
     (request) => !["GET", "HEAD", "OPTIONS"].includes(request.method)
   );
   const unexpectedWrites = nonReadRequests.filter(
-    (request) => !(request.method === "POST" && request.path === "/fixtures/aura")
+    (request) =>
+      !(
+        request.method === "POST" &&
+        ["/fixtures/aura", "/fixtures/autosave"].includes(request.path)
+      )
+  );
+  const stateScreenshots = reportPages.reduce(
+    (sum, page) => sum + (page.stateEvidence?.length || 0),
+    0
+  );
+  const entryFailures = output.pages.reduce(
+    (sum, page) => sum + (page.entryFailures || 0),
+    0
   );
   console.log("");
   console.log("Harness result");
   console.log(`  Pages rendered: ${output.pages.filter((page) => !page.error).length}/${output.pages.length}`);
   console.log(`  Visible fields: ${visibleFields.length}`);
-  console.log(`  Screenshots: ${output.pages.filter((page) => page.screenshot).length}`);
+  console.log(
+    `  Screenshots: ${output.pages.filter((page) => page.screenshot).length} page + ${stateScreenshots} state`
+  );
   console.log(`  Browser write requests blocked: ${blockedWrites}`);
-  console.log(`  Read-like initialization requests allowed: ${nonReadRequests.length - unexpectedWrites.length}`);
+  console.log(`  Field entry failures: ${entryFailures}`);
+  console.log(
+    `  Expected initialization/autosave writes: ${nonReadRequests.length - unexpectedWrites.length}`
+  );
   console.log(`  Unexpected write requests reaching fixture server: ${unexpectedWrites.length}`);
   console.log(`  Report: ${path.join(outputRoot, "report.json")}`);
 
@@ -115,6 +165,7 @@ try {
     output.pages.some((page) => page.error) ||
     !visibleFields.length ||
     output.pages.some((page) => !page.screenshot) ||
+    entryFailures ||
     unexpectedWrites.length
   ) {
     process.exitCode = 1;

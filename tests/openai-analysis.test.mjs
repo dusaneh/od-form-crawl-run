@@ -29,7 +29,18 @@ const validAnalysis = {
   summary: "A fixture application form.",
   pagePurpose: "Collect an application.",
   visibleForms: ["Fixture application"],
-  inferredFields: [],
+  inferredFields: [
+    {
+      label: "Household member name",
+      control: "text",
+      required: false,
+      sensitive: true,
+      confidence: "medium",
+      evidence: "The review screenshot shows an additional household member section.",
+      originUrl: "https://forms.example.test/apply",
+      defaultTestValue: "Taylor Test",
+    },
+  ],
   keyFindings: [
     {
       tone: "success",
@@ -96,6 +107,10 @@ test("OpenAI success returns schema-constrained analysis and redacted events", a
       });
       assert.equal(result.status, "completed");
       assert.equal(result.summary, validAnalysis.summary);
+      assert.equal(
+        result.inferredFields[0].defaultTestValue,
+        "Taylor Test"
+      );
       assert.equal(request.url, "https://api.openai.com/v1/responses");
       const body = JSON.parse(request.options.body);
       assert.equal(body.store, false);

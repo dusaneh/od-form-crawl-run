@@ -1396,6 +1396,29 @@ textarea:focus-visible {
   font-family: var(--font-geist-mono), monospace;
 }
 
+.test-value-cell {
+  display: inline-block;
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-pill.entered {
+  color: #197451;
+  background: var(--mint-wash);
+}
+
+.field-pill.failed {
+  color: #b34c46;
+  background: var(--red-wash);
+}
+
+.field-pill.skipped {
+  color: #7a807c;
+  background: #f0f3f1;
+}
+
 .field-label-cell {
   min-width: 210px;
   max-width: 420px;
@@ -2357,6 +2380,58 @@ textarea:focus-visible {
   box-shadow: inset 0 0 0 1px rgba(50,174,123,0.14);
 }
 
+.launch-modal fieldset button.live {
+  border-color: #ead8d6;
+}
+
+.launch-modal fieldset button.live.selected {
+  border-color: var(--red);
+  background: #fff6f5;
+  box-shadow: inset 0 0 0 1px rgba(212, 92, 84, 0.14);
+}
+
+.launch-modal fieldset button.live > span {
+  color: #a4413b;
+  background: var(--red-wash);
+}
+
+.live-approval {
+  display: grid;
+  gap: 10px;
+  margin-top: 15px;
+  padding: 14px;
+  border: 1px solid #e8c4c0;
+  border-radius: 10px;
+  color: #70433e;
+  background: #fff8f7;
+}
+
+.live-approval > strong {
+  font-size: 10px;
+}
+
+.live-approval label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #76534f;
+  font-size: 9px;
+  font-weight: 620;
+}
+
+.live-approval label:last-child {
+  display: grid;
+}
+
+.live-approval input[type="text"],
+.live-approval input:not([type]) {
+  height: 37px;
+  padding: 0 10px;
+  border: 1px solid #ddbbb7;
+  border-radius: 7px;
+  background: white;
+}
+
 .launch-modal fieldset button > span {
   grid-row: 1 / 3;
   width: 27px;
@@ -2413,6 +2488,16 @@ textarea:focus-visible {
   color: #72897d;
   font-size: 8px;
   line-height: 1.45;
+}
+
+.safety-callout.live {
+  border-color: #e9c7c3;
+  color: #8d4741;
+  background: #fff7f6;
+}
+
+.safety-callout.live > span {
+  background: var(--red);
 }
 
 .launch-actions {
@@ -2713,6 +2798,22 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+.settings-agent-prompt {
+  grid-column: 1 / -1;
+}
+
+.settings-agent-prompt textarea {
+  width: 100%;
+  min-height: 145px;
+  padding: 11px 12px;
+  resize: vertical;
+  border: 1px solid #d4ded6;
+  border-radius: 8px;
+  color: #263c31;
+  background: #fbfdfb;
+  font: 10px/1.55 var(--font-geist-mono), monospace;
 }
 
 .settings-boundary:first-of-type {

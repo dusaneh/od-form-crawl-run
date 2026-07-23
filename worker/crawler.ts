@@ -52,6 +52,32 @@ export type CrawlPage = ParsedPage & {
   captchaDetected?: boolean;
   unresolvedGate?: string;
   stateExaminations?: number;
+  stateEvidence?: {
+    id: string;
+    sequence: number;
+    kind: string;
+    label: string;
+    url: string;
+    title: string;
+    fingerprint: string;
+    capturedAt: string;
+    fieldsVisible: number;
+    values: {
+      fieldKey: string;
+      label: string;
+      value: string;
+      source: "llm" | "deterministic";
+    }[];
+    screenshot?: Uint8Array;
+    screenshotContentType?: string;
+    screenshotProvider?: string;
+  }[];
+  fieldsEntered?: number;
+  entryFailures?: number;
+  branchStates?: number;
+  submissionsAttempted?: number;
+  submissionsSucceeded?: number;
+  finalSubmission?: "blocked" | "submitted" | "not_found" | "not_requested";
   error?: string;
 };
 
@@ -527,6 +553,9 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
           page.automationActions?.length
             ? `${page.automationActions.length} predictable traversal action${page.automationActions.length === 1 ? "" : "s"} completed before extraction.`
             : "No predictable traversal action was required before extraction.",
+          page.fieldsEntered
+            ? `${page.fieldsEntered} synthetic field entr${page.fieldsEntered === 1 ? "y was" : "ies were"} exercised across ${page.stateEvidence?.length || 0} captured states.`
+            : "No synthetic field values were entered on this page.",
         ];
     if (!page.screenshot) notes.push("Screenshot capture was unavailable; crawl data is still preserved.");
 
@@ -558,6 +587,7 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
       fieldDetails: pageContract,
       formActions: page.formActions,
       screenshotProvider: page.screenshotProvider,
+      stateEvidence: [],
       sensitiveMasks: 0,
       notes,
     };
@@ -614,7 +644,7 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
       code: "evidence_captured",
       title: `${screenshotCount} screenshot${screenshotCount === 1 ? "" : "s"} stored`,
       detail:
-        "Captures were taken in a fresh unauthenticated browser context. No form values were entered.",
+        "Captures were taken in a fresh browser context. State evidence may contain clearly synthetic test values entered during traversal.",
       time: "now",
     },
   ];
@@ -643,7 +673,48 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
       code: "predictable_traversal_completed",
       title: `${automationActions.length} predictable traversal action${automationActions.length === 1 ? "" : "s"} recorded`,
       detail:
-        "Cookie, welcome, optional-offer, disclosure, and intro actions are applied only through configured deterministic policies; every action is retained in the event log.",
+        "Gate handling, field entry, branch probes, form advances, and submission-boundary decisions are retained in the event log with state fingerprints.",
+      time: "now",
+    });
+  }
+  const fieldsEntered = pages.reduce(
+    (sum, page) => sum + (page.fieldsEntered || 0),
+    0
+  );
+  const stateEvidence = pages.reduce(
+    (sum, page) => sum + (page.stateEvidence?.length || 0),
+    0
+  );
+  if (fieldsEntered || stateEvidence) {
+    findings.push({
+      id: `${runId}_form_traversal`,
+      tone: pages.some((page) => page.entryFailures) ? "warning" : "success",
+      code: "form_states_exercised",
+      title: `${fieldsEntered} synthetic field entr${fieldsEntered === 1 ? "y" : "ies"} across ${stateEvidence} captured states`,
+      detail:
+        "Values, selections, validations, conditional branches, and advance actions were exercised in DOM order. Every state was captured before moving forward.",
+      time: "now",
+    });
+  }
+  if (pages.some((page) => page.finalSubmission === "blocked")) {
+    findings.push({
+      id: `${runId}_submit_blocked`,
+      tone: "success",
+      code: "dry_run_final_submission_blocked",
+      title: "Dry run stopped at the final submission boundary",
+      detail:
+        "The completed synthetic values were captured as evidence, but the final submit control was not activated.",
+      time: "now",
+    });
+  }
+  if (pages.some((page) => page.finalSubmission === "submitted")) {
+    findings.push({
+      id: `${runId}_live_submit`,
+      tone: "warning",
+      code: "live_submission_executed",
+      title: "Live mode activated a final submit control",
+      detail:
+        "Explicit live approval allowed the final action after pre-submission evidence was captured. The resulting state was captured separately.",
       time: "now",
     });
   }

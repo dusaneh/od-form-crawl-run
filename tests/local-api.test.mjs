@@ -44,7 +44,7 @@ async function waitForJson(url, predicate = () => true, timeoutMs = 90_000) {
 
 test(
   "local API persists browser reports, evidence, logs, and reconciles interrupted runs",
-  { timeout: 120_000 },
+  { timeout: 180_000 },
   async () => {
     const fixture = await startFixtureServer();
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), "formweave-api-"));
@@ -107,7 +107,7 @@ test(
       const health = await waitForJson(`${baseUrl}/api/health`);
       assert.equal(health.browser.engine, "playwright-chromium");
       assert.deepEqual(health.browser.modes, ["headless", "headful"]);
-      assert.equal(health.traversalSettingsVersion, 1);
+      assert.equal(health.traversalSettingsVersion, 2);
       const corsResponse = await fetch(`${baseUrl}/api/health`, {
         headers: { origin: "http://127.0.0.1:3000" },
       });
@@ -126,6 +126,11 @@ test(
       assert.equal(settingsPayload.settings.cookieConsent, "reject_non_essential");
       assert.equal(settingsPayload.settings.captchaPolicy, "detect_and_handoff");
       assert.equal(settingsPayload.settings.maxStateWaitMs, 12000);
+      assert.equal(settingsPayload.settings.enterTestValues, true);
+      assert.equal(settingsPayload.settings.exerciseBranches, true);
+      assert.equal(settingsPayload.settings.advanceFormSteps, true);
+      assert.equal(settingsPayload.settings.maxFormStates, 24);
+      assert.match(settingsPayload.settings.agentInstructions, /synthetic/i);
       assert.equal(
         settingsPayload.settingsPath,
         path.join(dataRoot, "settings.json")
@@ -140,14 +145,17 @@ test(
         body: JSON.stringify({
           settings: {
             ...settingsPayload.settings,
-            stableWindowMs: 600,
+            stableWindowMs: 300,
+            maxStateWaitMs: 3_000,
+            maxFormStates: 8,
+            maxBranchOptionsPerControl: 2,
             captchaPolicy: "click_and_bypass",
           },
         }),
       });
       assert.equal(saveSettingsResponse.status, 200);
       const savedSettings = await saveSettingsResponse.json();
-      assert.equal(savedSettings.settings.stableWindowMs, 600);
+      assert.equal(savedSettings.settings.stableWindowMs, 300);
       assert.equal(savedSettings.settings.captchaPolicy, "detect_and_handoff");
       assert.ok(savedSettings.settings.updatedAt);
 
@@ -160,12 +168,23 @@ test(
         reconciled.findings.some((finding) => finding.code === "crawl_interrupted")
       );
 
+      const unapprovedLiveResponse = await fetch(`${baseUrl}/api/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          urls: [`${fixture.origin}/fixtures/conditional-wizard`],
+          mode: "live",
+          browserMode: "headless",
+        }),
+      });
+      assert.equal(unapprovedLiveResponse.status, 400);
+
       const createResponse = await fetch(`${baseUrl}/api/runs`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           urls: [`${fixture.origin}/fixtures/start`],
-          mode: "crawl",
+          mode: "dry_run",
           browserMode: "headless",
         }),
       });
@@ -173,7 +192,9 @@ test(
       const created = await createResponse.json();
       const runId = created.run.id;
       assert.equal(created.run.browserMode, "headless");
-      assert.equal(created.run.traversalSettings.stableWindowMs, 600);
+      assert.equal(created.run.mode, "dry_run");
+      assert.equal(created.run.liveApproved, false);
+      assert.equal(created.run.traversalSettings.stableWindowMs, 300);
 
       const list = await waitForJson(
         `${baseUrl}/api/runs`,
@@ -188,12 +209,15 @@ test(
       assert.equal(finished.status, "awaiting_review", output.join(""));
       assert.equal(finished.reportAvailable, true);
       assert.ok(finished.stats.pagesFetched >= 9);
-      assert.equal(
-        finished.stats.screenshotsCaptured,
-        finished.stats.pagesFetched
+      assert.ok(
+        finished.stats.screenshotsCaptured > finished.stats.pagesFetched
       );
       assert.ok(finished.stats.automationActions >= 5);
       assert.ok(finished.stats.stateExaminations >= finished.stats.pagesFetched);
+      assert.ok(finished.stats.statesCaptured >= 6);
+      assert.ok(finished.stats.fieldsEntered >= 6);
+      assert.ok(finished.stats.branchStates >= 2);
+      assert.equal(finished.stats.submissionsAttempted, 0);
       assert.ok(finished.stats.allowedReadLikeRequests >= 1);
       assert.ok(finished.stats.blockedWriteRequests >= 1);
       assert.equal(finished.stats.captchaPages, 1);
@@ -203,6 +227,7 @@ test(
         await readFile(path.join(runDirectory, "report.json"), "utf8")
       );
       assert.equal(report.browserMode, "headless");
+      assert.equal(report.executionMode, "dry_run");
       assert.equal(report.renderEngine, "playwright-chromium");
       assert.ok(report.pages.every((page) => page.screenshotArtifact));
       assert.ok(report.pages.every((page) => page.htmlArtifact));
@@ -218,8 +243,32 @@ test(
           (field) => field.label === "Application reference"
         )
       );
-      assert.equal(report.traversalSettings.stableWindowMs, 600);
+      assert.equal(report.traversalSettings.stableWindowMs, 300);
       assert.ok(report.pages.some((page) => page.captchaDetected));
+      const wizardPage = report.pages.find(
+        (page) =>
+          new URL(page.finalUrl).pathname === "/fixtures/conditional-wizard"
+      );
+      assert.notEqual(wizardPage.finalSubmission, "submitted");
+      assert.ok(wizardPage.stateEvidence.length >= 6);
+      assert.ok(
+        wizardPage.stateEvidence.every(
+          (state) =>
+            state.screenshotArtifact &&
+            state.evidence &&
+            !Object.hasOwn(state, "screenshot")
+        )
+      );
+
+      const firstStateEvidence = wizardPage.stateEvidence[0];
+      const stateEvidenceResponse = await fetch(
+        `${baseUrl}${firstStateEvidence.evidence}`
+      );
+      assert.equal(stateEvidenceResponse.status, 200);
+      assert.match(
+        stateEvidenceResponse.headers.get("content-type"),
+        /image\/png/
+      );
 
       const events = await readFile(
         path.join(runDirectory, "events.jsonl"),
@@ -230,14 +279,32 @@ test(
       assert.match(events, /"kind":"automation_action_completed"/);
       assert.match(events, /"kind":"read_like_post_allowed"/);
       assert.match(events, /"kind":"captcha_handoff_required"/);
+      assert.match(events, /"kind":"field_entry_completed"/);
+      assert.match(events, /"kind":"state_evidence_captured"/);
+      assert.match(events, /"kind":"final_submission_blocked"/);
       assert.match(events, /"kind":"crawl_needs_review"/);
 
       const nonReadRequests = fixture.requests.filter(
         (request) => !["GET", "HEAD", "OPTIONS"].includes(request.method)
       );
-      assert.deepEqual(
-        nonReadRequests.map((request) => `${request.method} ${request.path}`),
-        ["POST /fixtures/aura"]
+      assert.ok(
+        nonReadRequests.some(
+          (request) =>
+            request.method === "POST" && request.path === "/fixtures/aura"
+        )
+      );
+      assert.ok(
+        nonReadRequests.some(
+          (request) =>
+            request.method === "POST" && request.path === "/fixtures/autosave"
+        )
+      );
+      assert.ok(
+        nonReadRequests.every(
+          (request) =>
+            request.path === "/fixtures/aura" ||
+            request.path === "/fixtures/autosave"
+        )
       );
     } finally {
       child.kill();

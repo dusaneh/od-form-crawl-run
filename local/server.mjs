@@ -106,7 +106,10 @@ function safeMetadata(metadata) {
   if (!metadata || typeof metadata !== "object") return {};
   return Object.fromEntries(
     Object.entries(metadata).filter(
-      ([key]) => !/(key|token|secret|authorization|base64|image)/i.test(key)
+      ([key]) =>
+        !/^(?:key|api.?key|openai.?key|token|secret|authorization|base64|image|password|credential)$/i.test(
+          key
+        )
     )
   );
 }
@@ -224,7 +227,10 @@ function initialRun(
         tone: "info",
         code: "crawl_queued",
         title: "Local crawl queued",
-        detail: `${urls.length} public target${urls.length === 1 ? "" : "s"} will be fetched without entering or submitting data.`,
+        detail:
+          mode === "live"
+            ? `${urls.length} target${urls.length === 1 ? "" : "s"} will be populated with synthetic values and may be submitted under explicit live approval.`
+            : `${urls.length} target${urls.length === 1 ? "" : "s"} will be populated with synthetic values and traversed while final submission remains blocked.`,
         time: "now",
       },
     ],
@@ -233,7 +239,7 @@ function initialRun(
     analysisStatus: "pending",
     artifacts: artifactsFor(id),
     synthetic: false,
-    liveApproved: false,
+    liveApproved: mode === "live",
     createdAt: now,
     updatedAt: now,
   };
@@ -266,7 +272,7 @@ async function executeCrawl(run) {
       run.id,
       "crawl_started",
       `Rendering ${run.urls.length} public target${run.urls.length === 1 ? "" : "s"} in local Chromium.`,
-      { browserMode: run.browserMode }
+      { browserMode: run.browserMode, executionMode: run.mode }
     );
     await updateRun(run, {
       progress: 8,
@@ -275,6 +281,7 @@ async function executeCrawl(run) {
 
     const output = await crawlTargetsWithPlaywright(run.urls, run.id, {
       browserMode: run.browserMode || "headless",
+      executionMode: run.mode === "live" ? "live" : "dry_run",
       allowLoopback: process.env.FORMWEAVE_ALLOW_LOCAL_TARGETS === "1",
       traversalSettings: run.traversalSettings,
       onProgress: async ({ pages, queued }) => {
@@ -329,10 +336,51 @@ async function executeCrawl(run) {
         );
       }
 
-      const { screenshot, html, ...reportPage } = page;
+      const reportStateEvidence = [];
+      node.stateEvidence = [];
+      for (const state of page.stateEvidence || []) {
+        const evidenceId = `${node.id}_${state.id}`;
+        const stateArtifact = path.join(
+          artifacts.evidenceDirectory,
+          `${evidenceId}${extensionFor(state.screenshotContentType)}`
+        );
+        if (state.screenshot) {
+          await writeFile(stateArtifact, state.screenshot);
+          screenshotsCaptured += 1;
+        }
+        const { screenshot: stateScreenshot, ...serializableState } = state;
+        void stateScreenshot;
+        const storedState = {
+          ...serializableState,
+          evidence: `/api/runs/${encodeURIComponent(run.id)}/evidence/${encodeURIComponent(evidenceId)}`,
+          evidenceAvailable: Boolean(state.screenshot),
+          screenshotArtifact: state.screenshot ? stateArtifact : undefined,
+        };
+        reportStateEvidence.push(storedState);
+        node.stateEvidence.push(storedState);
+        await logEvent(
+          run.id,
+          "state_evidence_stored",
+          `Stored ${state.kind.replaceAll("_", " ")} evidence for ${page.finalUrl}.`,
+          {
+            stateId: state.id,
+            evidenceId,
+            path: stateArtifact,
+            values: state.values.length,
+          }
+        );
+      }
+
+      const { screenshot, html, stateEvidence, ...reportPage } = page;
       void screenshot;
       void html;
-      reportPages.push({ ...reportPage, htmlArtifact, screenshotArtifact });
+      void stateEvidence;
+      reportPages.push({
+        ...reportPage,
+        stateEvidence: reportStateEvidence,
+        htmlArtifact,
+        screenshotArtifact,
+      });
     }
 
     const fetchedPages = output.pages.filter((page) => !page.error);
@@ -361,6 +409,30 @@ async function executeCrawl(run) {
         0
       ),
       captchaPages: output.pages.filter((page) => page.captchaDetected).length,
+      statesCaptured: output.pages.reduce(
+        (sum, page) => sum + (page.stateEvidence?.length || 0),
+        0
+      ),
+      fieldsEntered: output.pages.reduce(
+        (sum, page) => sum + (page.fieldsEntered || 0),
+        0
+      ),
+      entryFailures: output.pages.reduce(
+        (sum, page) => sum + (page.entryFailures || 0),
+        0
+      ),
+      branchStates: output.pages.reduce(
+        (sum, page) => sum + (page.branchStates || 0),
+        0
+      ),
+      submissionsAttempted: output.pages.reduce(
+        (sum, page) => sum + (page.submissionsAttempted || 0),
+        0
+      ),
+      submissionsSucceeded: output.pages.reduce(
+        (sum, page) => sum + (page.submissionsSucceeded || 0),
+        0
+      ),
       startedAt,
       finishedAt,
     };
@@ -406,6 +478,7 @@ async function executeCrawl(run) {
       findings,
       browserMode: run.browserMode,
       renderEngine: "playwright-chromium",
+      executionMode: run.mode === "live" ? "live" : "dry_run",
       traversalSettings: run.traversalSettings,
       analysis,
       artifacts,
@@ -501,12 +574,26 @@ async function createRun(request) {
     String(payload.name || "").trim().slice(0, 120) ||
     `${new URL(urls[0]).hostname.replace(/^www\./, "")} crawl`;
   const browserMode = payload.browserMode === "headful" ? "headful" : "headless";
+  const executionMode = payload.mode === "live" ? "live" : "dry_run";
+  if (
+    executionMode === "live" &&
+    (payload.liveApproved !== true || payload.liveConfirmation !== "SUBMIT")
+  ) {
+    return jsonResponse(
+      request,
+      {
+        error:
+          "Live mode requires explicit approval and the confirmation word SUBMIT.",
+      },
+      400
+    );
+  }
   const traversalSettings = await readTraversalSettings();
   const run = initialRun(
     id,
     urls,
     name,
-    payload.mode === "dry_run" ? "dry_run" : "crawl",
+    executionMode,
     browserMode,
     traversalSettings,
     now
@@ -516,6 +603,8 @@ async function createRun(request) {
   await logEvent(id, "run_created", "Created a filesystem-backed local crawl.", {
     targets: urls.length,
     browserMode,
+    executionMode,
+    liveApproved: executionMode === "live",
     traversalSettingsVersion: traversalSettings.version,
   });
   const task = executeCrawl(run);
@@ -590,7 +679,7 @@ async function route(request) {
   if (evidenceMatch && request.method === "GET") {
     const runId = decodeURIComponent(evidenceMatch[1]);
     const nodeId = decodeURIComponent(evidenceMatch[2]);
-    if (!/^page_\d+$/i.test(nodeId)) {
+    if (!/^page_\d+(?:_state_\d+)?$/i.test(nodeId)) {
       return jsonResponse(request, { error: "Invalid evidence id." }, 400);
     }
     const directory = artifactsFor(runId).evidenceDirectory;

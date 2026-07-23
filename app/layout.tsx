@@ -14,7 +14,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const origin = `${protocol}://${host}`;
   const title = "FormWeave — Public Form Crawler";
   const description =
-    "Crawl public forms, extract observed controls, capture evidence, and export structured reports without entering or submitting data.";
+    "Traverse public forms with synthetic test values, capture every state, and export structured local evidence with guarded Dry Run and Live modes.";
 
   return {
     metadataBase: new URL(origin),

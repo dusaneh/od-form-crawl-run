@@ -20,6 +20,10 @@ const field = {
   originState: "page_01",
   originUrl: "https://forms.example.test/apply",
   rendered: true,
+  testValue: "crawler.user@example.invalid",
+  testValues: ["crawler.user@example.invalid"],
+  testValueSource: "deterministic",
+  entryStatus: "entered",
 };
 const hiddenField = {
   key: "csrf_token",
@@ -50,7 +54,7 @@ const run = {
   status: "completed",
   stage: "Crawl complete",
   progress: 100,
-  mode: "crawl",
+  mode: "dry_run",
   browserMode: "headless",
   nodes: [
     {
@@ -87,6 +91,12 @@ const run = {
     formsFound: 1,
     fieldsFound: 1,
     screenshotsCaptured: 1,
+    statesCaptured: 2,
+    fieldsEntered: 1,
+    entryFailures: 0,
+    branchStates: 0,
+    submissionsAttempted: 0,
+    submissionsSucceeded: 0,
     bytesFetched: 4096,
     startedAt: now,
     finishedAt: now,
@@ -111,6 +121,7 @@ const report = {
   targets: run.urls,
   stats: run.stats,
   browserMode: "headless",
+  executionMode: "dry_run",
   renderEngine: "playwright-chromium",
   pages: [
     {
@@ -152,7 +163,7 @@ const report = {
   artifacts: run.artifacts,
 };
 const traversalSettings = {
-  version: 1,
+  version: 2,
   cookieConsent: "reject_non_essential",
   acceptCookiesWhenRequired: true,
   closeWelcomeBanners: true,
@@ -164,9 +175,16 @@ const traversalSettings = {
   pointerAndScrollPriming: true,
   unpredictablePopups: "observe_only",
   captchaPolicy: "detect_and_handoff",
+  enterTestValues: true,
+  exerciseBranches: true,
+  advanceFormSteps: true,
   stableWindowMs: 700,
   maxStateWaitMs: 12000,
   maxActionsPerPage: 10,
+  maxFormStates: 24,
+  maxBranchOptionsPerControl: 3,
+  agentInstructions:
+    "Use obviously synthetic values, exercise safe branch controls, advance intermediate states, and never submit in dry-run mode.",
   updatedAt: now,
 };
 
@@ -303,6 +321,7 @@ test(
             status: "running",
             stage: "Queued for local fetch",
             progress: 2,
+            mode: launchPayload.mode,
             browserMode: launchPayload.browserMode,
             reportAvailable: false,
             contract: [],
@@ -350,6 +369,9 @@ test(
       await page.getByRole("tab", { name: /Field contract/ }).click();
       await assert.doesNotReject(() =>
         page.getByText("Participant email", { exact: true }).waitFor()
+      );
+      await assert.doesNotReject(() =>
+        page.getByText("crawler.user@example.invalid", { exact: true }).waitFor()
       );
       await assert.doesNotReject(() =>
         page.getByRole("button", { name: "Show 1 hidden controls" }).waitFor()
@@ -403,12 +425,39 @@ test(
       await page
         .getByLabel("Form URLs")
         .fill("https://forms.example.test/another-application");
-      await page.getByRole("button", { name: /Launch crawl/ }).click();
-      await page.getByText(/Visible crawl launched/).waitFor();
+      await page.getByRole("button", { name: /Launch dry run/ }).click();
+      await page.getByText(/Visible dry run launched/).waitFor();
       assert.deepEqual(launchPayload, {
         urls: ["https://forms.example.test/another-application"],
-        mode: "crawl",
+        mode: "dry_run",
         browserMode: "headful",
+        liveApproved: false,
+        liveConfirmation: "",
+      });
+
+      await page.getByRole("button", { name: "New crawl" }).click();
+      await page.getByRole("button", { name: /Headless/ }).click();
+      await page.getByRole("button", { name: /Live submission/ }).click();
+      await page
+        .getByLabel("Form URLs")
+        .fill("https://forms.example.test/synthetic-live-fixture");
+      const liveLaunch = page.getByRole("button", {
+        name: /Launch live submission/,
+      });
+      assert.equal(await liveLaunch.isDisabled(), true);
+      await page
+        .getByLabel(/I authorize FormWeave/)
+        .check();
+      await page.getByLabel("Type SUBMIT to confirm").fill("SUBMIT");
+      assert.equal(await liveLaunch.isEnabled(), true);
+      await liveLaunch.click();
+      await page.getByText(/Headless live submission launched/).waitFor();
+      assert.deepEqual(launchPayload, {
+        urls: ["https://forms.example.test/synthetic-live-fixture"],
+        mode: "live",
+        browserMode: "headless",
+        liveApproved: true,
+        liveConfirmation: "SUBMIT",
       });
     } finally {
       await browser?.close();

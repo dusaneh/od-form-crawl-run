@@ -1,4 +1,14 @@
-export const TRAVERSAL_SETTINGS_VERSION = 1;
+export const TRAVERSAL_SETTINGS_VERSION = 2;
+
+export const DEFAULT_AGENT_INSTRUCTIONS = [
+  "Traverse as much of the public form as possible with synthetic test data.",
+  "Classify controls as deterministic, conditional, or human-review actions.",
+  "Enter ordinary fields in DOM order and exercise safe select, radio, and checkbox branches.",
+  "Use Next, Continue, Review, and equivalent controls to reveal later states.",
+  "In dry-run mode, never activate the final submit control.",
+  "Never solve CAPTCHA, provide real credentials, make a payment, upload a file, sign, or accept legal terms.",
+  "Use obviously synthetic values and reserve example.invalid for email and URL values.",
+].join(" ");
 
 export const DEFAULT_TRAVERSAL_SETTINGS = Object.freeze({
   version: TRAVERSAL_SETTINGS_VERSION,
@@ -16,6 +26,12 @@ export const DEFAULT_TRAVERSAL_SETTINGS = Object.freeze({
   stableWindowMs: 700,
   maxStateWaitMs: 12_000,
   maxActionsPerPage: 10,
+  enterTestValues: true,
+  exerciseBranches: true,
+  advanceFormSteps: true,
+  maxFormStates: 24,
+  maxBranchOptionsPerControl: 3,
+  agentInstructions: DEFAULT_AGENT_INSTRUCTIONS,
 });
 
 const BOOLEAN_KEYS = [
@@ -27,6 +43,9 @@ const BOOLEAN_KEYS = [
   "advanceIntroScreens",
   "allowSameOriginReadLikePosts",
   "pointerAndScrollPriming",
+  "enterTestValues",
+  "exerciseBranches",
+  "advanceFormSteps",
 ];
 
 function boundedInteger(value, fallback, minimum, maximum) {
@@ -71,6 +90,23 @@ export function normalizeTraversalSettings(input = {}) {
     1,
     25
   );
+  normalized.maxFormStates = boundedInteger(
+    input.maxFormStates,
+    DEFAULT_TRAVERSAL_SETTINGS.maxFormStates,
+    1,
+    30
+  );
+  normalized.maxBranchOptionsPerControl = boundedInteger(
+    input.maxBranchOptionsPerControl,
+    DEFAULT_TRAVERSAL_SETTINGS.maxBranchOptionsPerControl,
+    1,
+    8
+  );
+  normalized.agentInstructions =
+    typeof input.agentInstructions === "string" &&
+    input.agentInstructions.trim().length >= 40
+      ? input.agentInstructions.trim().slice(0, 8_000)
+      : DEFAULT_AGENT_INSTRUCTIONS;
   normalized.version = TRAVERSAL_SETTINGS_VERSION;
   return normalized;
 }

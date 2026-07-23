@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import type {
   BrowserMode,
   CrawlReport,
+  ExecutionMode,
   FlowEdge,
   FlowNode,
   FormRun,
@@ -16,7 +17,7 @@ type Tab = (typeof tabs)[number];
 type Surface = "runs" | "settings";
 
 const defaultTraversalSettings: TraversalSettings = {
-  version: 1,
+  version: 2,
   cookieConsent: "reject_non_essential",
   acceptCookiesWhenRequired: true,
   closeWelcomeBanners: true,
@@ -31,6 +32,13 @@ const defaultTraversalSettings: TraversalSettings = {
   stableWindowMs: 700,
   maxStateWaitMs: 12000,
   maxActionsPerPage: 10,
+  enterTestValues: true,
+  exerciseBranches: true,
+  advanceFormSteps: true,
+  maxFormStates: 24,
+  maxBranchOptionsPerControl: 3,
+  agentInstructions:
+    "Traverse as much of the public form as possible with synthetic test data. Classify controls as deterministic, conditional, or human-review actions. Enter ordinary fields in DOM order and exercise safe select, radio, and checkbox branches. Use Next, Continue, Review, and equivalent controls to reveal later states. In dry-run mode, never activate the final submit control. Never solve CAPTCHA, provide real credentials, make a payment, upload a file, sign, or accept legal terms. Use obviously synthetic values and reserve example.invalid for email and URL values.",
 };
 
 type RuntimeStatus = {
@@ -328,7 +336,7 @@ function Inspector({ node }: { node: FlowNode }) {
       </div>
       <EvidencePreview node={node} />
       <div className="evidence-caption">
-        <span>Read-only public-page evidence</span>
+        <span>Synthetic traversal evidence</span>
         <span>{node.screenshotProvider ?? "No provider"}</span>
       </div>
       <div className="inspector-metrics">
@@ -419,6 +427,8 @@ function FieldsPanel({ run }: { run: FormRun }) {
               <th>Observed label</th>
               <th>Control</th>
               <th>Semantic key</th>
+              <th>Default / test value</th>
+              <th>Entry result</th>
               <th>Contract</th>
               <th>Origin</th>
             </tr>
@@ -430,6 +440,17 @@ function FieldsPanel({ run }: { run: FormRun }) {
                 <td>{field.control}</td>
                 <td>
                   <code>{field.key}</code>
+                </td>
+                <td>
+                  <code className="test-value-cell">
+                    {field.testValue || "unavailable"}
+                  </code>
+                </td>
+                <td>
+                  <span className={`field-pill ${field.entryStatus ?? "skipped"}`}>
+                    {field.entryStatus ?? "not attempted"}
+                  </span>
+                  {field.entryError && <small title={field.entryError}>entry error</small>}
                 </td>
                 <td>
                   <span className={`field-pill ${field.required ? "required" : ""}`}>
@@ -447,7 +468,7 @@ function FieldsPanel({ run }: { run: FormRun }) {
             ))}
             {!displayedFields.length && (
               <tr>
-                <td colSpan={5} className="empty-table-cell">
+                <td colSpan={7} className="empty-table-cell">
                   No visible form fields were found in the observed page content.
                 </td>
               </tr>
@@ -510,7 +531,10 @@ function ReportPanel({
   const isRendered = report.renderEngine === "playwright-chromium";
   const visibleFields = report.contract.filter((field) => !field.hidden);
   const hiddenFields = report.contract.length - visibleFields.length;
-  const localScreenshots = report.pages.filter((page) => page.screenshotArtifact).length;
+  const stateEvidence = report.pages.flatMap((page) => page.stateEvidence ?? []);
+  const localScreenshots =
+    report.pages.filter((page) => page.screenshotArtifact).length +
+    stateEvidence.filter((state) => state.screenshotArtifact).length;
   const traversalActions = report.pages.flatMap((page) =>
     (page.automationActions ?? []).map((action) => ({
       ...action,
@@ -560,6 +584,14 @@ function ReportPanel({
         <div><span>State examinations</span><strong>{report.stats.stateExaminations ?? 0}</strong><small>Bounded stable-state waits</small></div>
         <div><span>Read-like init</span><strong>{report.stats.allowedReadLikeRequests ?? 0}</strong><small>Classified same-origin requests</small></div>
         <div><span>Writes blocked</span><strong>{report.stats.blockedWriteRequests ?? 0}</strong><small>Submission safety guard</small></div>
+        <div><span>States captured</span><strong>{report.stats.statesCaptured ?? 0}</strong><small>Values visible before movement</small></div>
+        <div><span>Fields entered</span><strong>{report.stats.fieldsEntered ?? 0}</strong><small>{report.stats.entryFailures ?? 0} entry failures</small></div>
+        <div><span>Branch states</span><strong>{report.stats.branchStates ?? 0}</strong><small>Select, radio, and checkbox probes</small></div>
+        <div>
+          <span>Final submissions</span>
+          <strong>{report.stats.submissionsSucceeded ?? 0}</strong>
+          <small>{report.executionMode === "live" ? "Live mode" : "Blocked in dry run"}</small>
+        </div>
       </section>
 
       {traversalActions.length ? (
@@ -614,6 +646,18 @@ function ReportPanel({
                   {page.unresolvedGate && !page.captchaDetected && (
                     <span>{page.unresolvedGate.replaceAll("_", " ")} unresolved</span>
                   )}
+                  {(page.fieldsEntered ?? 0) > 0 && (
+                    <span>{page.fieldsEntered} values entered</span>
+                  )}
+                  {(page.stateEvidence?.length ?? 0) > 0 && (
+                    <span>{page.stateEvidence?.length} states captured</span>
+                  )}
+                  {page.finalSubmission === "blocked" && (
+                    <span>final submit blocked</span>
+                  )}
+                  {page.finalSubmission === "submitted" && (
+                    <span>live submission executed</span>
+                  )}
                 </div>
               </div>
               <div className="page-report-artifacts">
@@ -652,6 +696,7 @@ function ReportPanel({
                 <tr>
                   <th>Label</th>
                   <th>Control</th>
+                  <th>Default test value</th>
                   <th>Confidence</th>
                   <th>Evidence</th>
                   <th>Origin</th>
@@ -662,6 +707,9 @@ function ReportPanel({
                   <tr key={`${field.originUrl}-${field.label}-${index}`}>
                     <td className="field-label-cell">{field.label}</td>
                     <td>{field.control}</td>
+                    <td className="field-test-value">
+                      {field.defaultTestValue || "Human review"}
+                    </td>
                     <td><span className={`confidence-pill ${field.confidence}`}>{field.confidence}</span></td>
                     <td>{field.evidence}</td>
                     <td>{shortHost(field.originUrl)}</td>
@@ -724,20 +772,39 @@ function ReportPanel({
 }
 
 function EvidencePanel({ nodes }: { nodes: FlowNode[] }) {
+  const items = nodes.flatMap((node) => {
+    const states = node.stateEvidence ?? [];
+    if (!states.length) {
+      return [{ node, label: node.title, detail: node.fingerprint }];
+    }
+    return states.map((state) => ({
+      node: {
+        ...node,
+        id: `${node.id}-${state.id}`,
+        title: state.label,
+        fingerprint: state.fingerprint,
+        evidence: state.evidence ?? "",
+        evidenceAvailable: state.evidenceAvailable,
+        screenshotProvider: state.screenshotProvider,
+      },
+      label: state.label,
+      detail: `${state.kind.replaceAll("_", " ")} · ${state.values.length} values`,
+    }));
+  });
   return (
     <div className="evidence-gallery">
-      {nodes.slice(0, 6).map((node) => (
-        <article key={node.id}>
-          <EvidencePreview node={node} />
+      {items.map((item) => (
+        <article key={item.node.id}>
+          <EvidencePreview node={item.node} />
           <div>
-            <strong>{node.title}</strong>
+            <strong>{item.label}</strong>
             <span>
-              {node.evidenceAvailable ? "captured" : "unavailable"} · {node.fingerprint}
+              {item.node.evidenceAvailable ? "captured" : "unavailable"} · {item.detail}
             </span>
           </div>
         </article>
       ))}
-      {!nodes.length && <p className="empty-panel-copy">Evidence will appear after a page is fetched.</p>}
+      {!items.length && <p className="empty-panel-copy">Evidence will appear after a page is fetched.</p>}
     </div>
   );
 }
@@ -860,20 +927,32 @@ function LaunchModal({
   onClose: () => void;
   onLaunch: (
     urls: string[],
-    mode: "crawl" | "dry_run",
-    browserMode: BrowserMode
+    mode: ExecutionMode,
+    browserMode: BrowserMode,
+    liveApproved: boolean,
+    liveConfirmation: string
   ) => Promise<void>;
   busy: boolean;
 }) {
   const [urls, setUrls] = useState("");
   const [browserMode, setBrowserMode] = useState<BrowserMode>("headless");
+  const [executionMode, setExecutionMode] =
+    useState<ExecutionMode>("dry_run");
+  const [liveApproved, setLiveApproved] = useState(false);
+  const [liveConfirmation, setLiveConfirmation] = useState("");
 
   if (!open) return null;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     const values = urls.split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean);
-    await onLaunch(values, "crawl", browserMode);
+    await onLaunch(
+      values,
+      executionMode,
+      browserMode,
+      liveApproved,
+      liveConfirmation
+    );
   }
 
   return (
@@ -887,9 +966,9 @@ function LaunchModal({
       >
         <div className="launch-heading">
           <div>
-            <span className="eyebrow">NEW READ-ONLY CRAWL</span>
-            <h2 id="launch-title">Fetch and map public forms</h2>
-            <p>One URL per line. FormWeave renders the actual page in local Chromium and stores crawl evidence.</p>
+            <span className="eyebrow">NEW FORM TRAVERSAL</span>
+            <h2 id="launch-title">Populate, branch, and map forms</h2>
+            <p>One URL per line. FormWeave enters synthetic values, exercises safe branches, and captures every state locally.</p>
           </div>
           <button onClick={onClose} aria-label="Close launch dialog">×</button>
         </div>
@@ -928,19 +1007,85 @@ function LaunchModal({
               <small>Open visible local Chromium so you can watch every page render.</small>
             </button>
           </fieldset>
-          <div className="safety-callout">
-            <span>✓</span>
+          <fieldset className="execution-mode-fieldset">
+            <legend>Execution mode</legend>
+            <button
+              type="button"
+              className={executionMode === "dry_run" ? "selected" : ""}
+              aria-pressed={executionMode === "dry_run"}
+              onClick={() => setExecutionMode("dry_run")}
+            >
+              <span aria-hidden="true">◇</span>
+              <strong>Dry run</strong>
+              <small>Enter values, test branches, and advance through intermediate states. Stop before final submission.</small>
+            </button>
+            <button
+              type="button"
+              className={executionMode === "live" ? "selected live" : "live"}
+              aria-pressed={executionMode === "live"}
+              onClick={() => setExecutionMode("live")}
+            >
+              <span aria-hidden="true">!</span>
+              <strong>Live submission</strong>
+              <small>Perform the same traversal and activate the final submit control. The target may persist a real record.</small>
+            </button>
+          </fieldset>
+          {executionMode === "live" && (
+            <div className="live-approval">
+              <strong>Explicit submission approval required</strong>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={liveApproved}
+                  onChange={(event) => setLiveApproved(event.target.checked)}
+                />
+                I authorize FormWeave to submit synthetic data to the listed targets.
+              </label>
+              <label>
+                Type SUBMIT to confirm
+                <input
+                  value={liveConfirmation}
+                  onChange={(event) => setLiveConfirmation(event.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+            </div>
+          )}
+          <div className={`safety-callout ${executionMode === "live" ? "live" : ""}`}>
+            <span>{executionMode === "live" ? "!" : "✓"}</span>
             <div>
-              <strong>Read-only by construction</strong>
-              <p>No fields are filled and no form is submitted. Playwright blocks write requests and stores screenshots from a fresh local browser context.</p>
+              <strong>
+                {executionMode === "live"
+                  ? "Live mode can create a backend record"
+                  : "Final submission remains blocked"}
+              </strong>
+              <p>
+                {executionMode === "live"
+                  ? "Synthetic values and state screenshots are still stored, but the final action is permitted after explicit approval."
+                  : "Synthetic entry may trigger same-origin validation or autosave requests. The completed state is captured before the final submit control."}
+              </p>
             </div>
           </div>
           <div className="launch-actions">
             <button type="button" className="secondary-button" onClick={onClose}>
               Cancel
             </button>
-            <button type="submit" className="primary-button" disabled={busy}>
-              {busy ? "Starting…" : "Launch crawl"} <span>→</span>
+            <button
+              type="submit"
+              className="primary-button"
+              disabled={
+                busy ||
+                (executionMode === "live" &&
+                  (!liveApproved || liveConfirmation !== "SUBMIT"))
+              }
+            >
+              {busy
+                ? "Starting…"
+                : executionMode === "live"
+                  ? "Launch live submission"
+                  : "Launch dry run"}{" "}
+              <span>→</span>
             </button>
           </div>
         </form>
@@ -1000,7 +1145,10 @@ function TraversalSettingsPanel({
       | "expandSafeDisclosures"
       | "advanceIntroScreens"
       | "allowSameOriginReadLikePosts"
-      | "pointerAndScrollPriming",
+      | "pointerAndScrollPriming"
+      | "enterTestValues"
+      | "exerciseBranches"
+      | "advanceFormSteps",
     value: boolean
   ) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -1034,9 +1182,30 @@ function TraversalSettingsPanel({
           : "Observed",
     },
     {
+      obstacle: "Form fields and validation",
+      behavior:
+        "Enter synthetic defaults in DOM order, trigger change/blur validation, and record failures",
+      disposition: draft.enterTestValues ? "Automatic" : "Observed",
+    },
+    {
+      obstacle: "Conditional branches and steps",
+      behavior:
+        "Exercise bounded select, radio, and checkbox options; populate revealed fields; advance intermediate states",
+      disposition:
+        draft.exerciseBranches && draft.advanceFormSteps
+          ? "Automatic"
+          : "Observed",
+    },
+    {
+      obstacle: "Final submission",
+      behavior:
+        "Dry run captures completed values and stops. Live mode submits only after explicit per-run approval",
+      disposition: "Review",
+    },
+    {
       obstacle: "App initialization",
       behavior:
-        "Allow only same-origin fetch/XHR POSTs classified as render or initialization; continue blocking submissions",
+        "Allow classified initialization and bounded same-origin validation/autosave requests caused by synthetic interactions",
       disposition: draft.allowSameOriginReadLikePosts ? "Automatic" : "Blocked",
     },
     {
@@ -1122,6 +1291,34 @@ function TraversalSettingsPanel({
         <article className="settings-section">
           <div className="settings-section-heading">
             <div>
+              <span className="eyebrow">FORM EXERCISE</span>
+              <h3>Populate and traverse states</h3>
+            </div>
+            <span className="policy-badge automatic">State evidence</span>
+          </div>
+          <SettingsToggle
+            checked={draft.enterTestValues}
+            label="Enter synthetic test values"
+            detail="Populate supported controls in DOM order, trigger native input/change/blur validation, and report every success or failure."
+            onChange={(value) => setBoolean("enterTestValues", value)}
+          />
+          <SettingsToggle
+            checked={draft.exerciseBranches}
+            label="Exercise choice branches"
+            detail="Probe bounded select, radio, checkbox, and switch options, populate newly revealed fields, and capture each state."
+            onChange={(value) => setBoolean("exerciseBranches", value)}
+          />
+          <SettingsToggle
+            checked={draft.advanceFormSteps}
+            label="Advance intermediate form steps"
+            detail="Use Next, Continue, Review, and equivalent controls. Dry run stops at the final submit boundary."
+            onChange={(value) => setBoolean("advanceFormSteps", value)}
+          />
+        </article>
+
+        <article className="settings-section">
+          <div className="settings-section-heading">
+            <div>
               <span className="eyebrow">OVERLAYS</span>
               <h3>Predictable blockers</h3>
             </div>
@@ -1181,19 +1378,20 @@ function TraversalSettingsPanel({
               <span className="eyebrow">NETWORK SAFETY</span>
               <h3>Read-like initialization</h3>
             </div>
-            <span className="policy-badge review">Narrow allowlist</span>
+            <span className="policy-badge review">Interaction windows</span>
           </div>
           <SettingsToggle
             checked={draft.allowSameOriginReadLikePosts}
             label="Allow classified initialization POSTs"
-            detail="Permit only same-origin fetch/XHR endpoints named for render, bootstrap, init, component, config, or Aura. Submissions remain blocked."
+            detail="Permit same-origin render/bootstrap requests outside interaction windows. Validation and autosave writes are allowed only immediately after a synthetic action."
             onChange={(value) => setBoolean("allowSameOriginReadLikePosts", value)}
           />
           <div className="settings-locked">
             <span>LOCKED</span>
             <p>
-              Form submit events and submit APIs are disabled in the page. Every other
-              non-read request is blocked and logged with a sanitized endpoint.
+              Autonomous form submissions remain blocked. The crawler grants a short
+              submit window only for a classified intermediate step, or for the final
+              action after explicit Live-mode approval.
             </p>
           </div>
         </article>
@@ -1257,7 +1455,68 @@ function TraversalSettingsPanel({
               />
               <small>Ceiling that prevents loops or runaway overlay handling.</small>
             </label>
+            <label className="settings-field">
+              State evidence limit
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={draft.maxFormStates}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    maxFormStates: Number(event.target.value),
+                  }))
+                }
+              />
+              <small>Maximum populated, branch, advance, and result screenshots per page.</small>
+            </label>
+            <label className="settings-field">
+              Branch options per control
+              <input
+                type="number"
+                min={1}
+                max={8}
+                value={draft.maxBranchOptionsPerControl}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    maxBranchOptionsPerControl: Number(event.target.value),
+                  }))
+                }
+              />
+              <small>Bounded alternatives for selects, radios, checkboxes, and switches.</small>
+            </label>
           </div>
+        </article>
+
+        <article className="settings-section settings-agent-prompt">
+          <div className="settings-section-heading">
+            <div>
+              <span className="eyebrow">AGENT POLICY</span>
+              <h3>Natural-language traversal instructions</h3>
+            </div>
+            <span className="policy-badge automatic">LLM + fallback</span>
+          </div>
+          <label className="settings-field">
+            Instructions for control classification and test-value generation
+            <textarea
+              value={draft.agentInstructions}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  agentInstructions: event.target.value,
+                }))
+              }
+              rows={8}
+              spellCheck
+            />
+            <small>
+              The LLM proposes values, branches, and advance classifications. Hard
+              enforcement still owns CAPTCHA, credentials, files, legal acceptance,
+              payment, dry-run final blocking, and Live approval.
+            </small>
+          </label>
         </article>
 
         <article className="settings-section settings-review">
@@ -1503,15 +1762,23 @@ export function ControlPlane() {
 
   async function launch(
     urls: string[],
-    mode: "crawl" | "dry_run",
-    browserMode: BrowserMode
+    mode: ExecutionMode,
+    browserMode: BrowserMode,
+    liveApproved: boolean,
+    liveConfirmation: string
   ) {
     setLaunching(true);
     try {
       const response = await fetch(apiUrl("/api/runs"), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ urls, mode, browserMode }),
+        body: JSON.stringify({
+          urls,
+          mode,
+          browserMode,
+          liveApproved,
+          liveConfirmation,
+        }),
       });
       const data = (await response.json()) as { run?: FormRun; error?: string };
       if (!response.ok || !data.run) throw new Error(data.error ?? "Unable to launch.");
@@ -1522,7 +1789,7 @@ export function ControlPlane() {
       setSelectedNode(data.run.nodes[0]?.id ?? "welcome");
       setLaunchOpen(false);
       setToast(
-        `${browserMode === "headful" ? "Visible" : "Headless"} crawl launched for ${urls.length} target${urls.length === 1 ? "" : "s"}.`
+        `${browserMode === "headful" ? "Visible" : "Headless"} ${mode === "live" ? "live submission" : "dry run"} launched for ${urls.length} target${urls.length === 1 ? "" : "s"}.`
       );
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Unable to launch session.");
@@ -1665,6 +1932,8 @@ export function ControlPlane() {
                       <span>{activeRun.browserMode === "headful" ? "Headful browser" : "Headless browser"}</span>
                     </>
                   )}
+                  <span>·</span>
+                  <span>{activeRun.mode === "live" ? "Live submission" : "Dry run"}</span>
                 </div>
               </div>
             </div>
@@ -1701,9 +1970,14 @@ export function ControlPlane() {
           </div>
           <div className="trust-strip">
             <div><span>✓</span> {activeRun.browserMode ? "Local Playwright render" : "Persisted crawl facts"}</div>
-            <div><span>✓</span> No form values entered</div>
-            <div><span>✓</span> {runtime ? "Artifacts stored locally" : "Evidence stored privately"}</div>
-            <div className="locked"><span>⌕</span> Form submission disabled</div>
+            <div><span>✓</span> Synthetic test values only</div>
+            <div><span>✓</span> Every populated state captured locally</div>
+            <div className={activeRun.mode === "live" ? "live" : "locked"}>
+              <span>{activeRun.mode === "live" ? "!" : "⌕"}</span>{" "}
+              {activeRun.mode === "live"
+                ? "Final submission explicitly enabled"
+                : "Final submission blocked"}
+            </div>
           </div>
 
           <div className="workspace-tabs" role="tablist">

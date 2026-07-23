@@ -32,6 +32,11 @@ const analysisSchema = {
             description: "What in the screenshot or crawl facts supports the inference.",
           },
           originUrl: { type: "string" },
+          defaultTestValue: {
+            type: "string",
+            description:
+              "An obviously synthetic value suitable for exercising this inferred field.",
+          },
         },
         required: [
           "label",
@@ -41,6 +46,7 @@ const analysisSchema = {
           "confidence",
           "evidence",
           "originUrl",
+          "defaultTestValue",
         ],
         additionalProperties: false,
       },
@@ -106,8 +112,20 @@ function pageFacts(pages) {
       sensitive: field.sensitive,
       hidden: field.hidden,
       options: field.options,
+      defaultTestValue: field.testValue || "",
+      testValues: field.testValues || [],
+      entryStatus: field.entryStatus || "not_attempted",
     })),
     formActions: page.formActions,
+    stateEvidence: (page.stateEvidence || []).map((state) => ({
+      id: state.id,
+      kind: state.kind,
+      label: state.label,
+      fingerprint: state.fingerprint,
+      fieldsVisible: state.fieldsVisible,
+      values: state.values,
+    })),
+    finalSubmission: page.finalSubmission || "not_requested",
   }));
 }
 
@@ -149,10 +167,11 @@ export async function analyzeCrawl(pages, log) {
     {
       type: "input_text",
       text: [
-        "Analyze this read-only public-page crawl.",
+        "Analyze this synthetic form traversal.",
         "Treat DOM-extracted fields as observed facts.",
         "Use screenshots only to identify visible controls or structure that rendered-DOM extraction missed.",
-        "Never claim that a form was filled, submitted, or functionally verified.",
+        "Use the recorded state evidence and entry outcomes to report what was actually filled, branched, advanced, blocked, or submitted.",
+        "For every inferred field, return an obviously synthetic defaultTestValue that could exercise it; use example.invalid for email and URL domains.",
         "Do not duplicate DOM fields in inferredFields unless the screenshot adds materially different information.",
         "Keep inferredFields conservative and state uncertainty in evidence.",
         "",
@@ -198,7 +217,7 @@ export async function analyzeCrawl(pages, log) {
           {
             role: "system",
             content:
-              "You are a form-crawl analyst. Separate directly observed HTML facts from screenshot-based inference and produce audit-ready structured output.",
+              "You are a form-traversal analyst. Separate observed DOM facts, recorded synthetic interactions, and screenshot inference, and produce audit-ready structured output.",
           },
           { role: "user", content },
         ],
