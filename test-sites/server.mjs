@@ -1,0 +1,329 @@
+import { createServer } from "node:http";
+import { pathToFileURL } from "node:url";
+
+const sharedStyles = `
+  :root { color-scheme: light; font: 16px/1.45 system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: #17372c; background: #eef5f0; }
+  header, footer { padding: 18px 6vw; color: white; background: #123d30; }
+  nav { display: flex; flex-wrap: wrap; gap: 16px; }
+  nav a { color: #c9ffe8; }
+  main { width: min(850px, 90vw); margin: 32px auto; padding: 28px; background: white; border-radius: 14px; }
+  form { display: grid; gap: 16px; margin: 24px 0; padding: 22px; border: 1px solid #cfded5; border-radius: 10px; }
+  label, fieldset { display: grid; gap: 6px; }
+  input, select, textarea, [role="combobox"], [role="textbox"] { min-height: 42px; padding: 9px; border: 1px solid #8fa89a; border-radius: 6px; }
+  button { width: max-content; padding: 10px 16px; }
+  .ad, .cookie, .promo { padding: 14px; color: #5d5240; background: #fff3d3; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+`;
+
+function layout(title, body, { scripts = "" } = {}) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${title}</title>
+    <style>${sharedStyles}</style>
+  </head>
+  <body>
+    <header>
+      <strong>Fixture County Services</strong>
+      <nav>
+        <a href="/fixtures/start">Forms</a>
+        <a href="/about">About us</a>
+        <a href="/press">Press releases</a>
+      </nav>
+    </header>
+    ${body}
+    <footer>Fixture content only. Do not enter real personal information.</footer>
+    ${scripts}
+  </body>
+</html>`;
+}
+
+const routes = new Map([
+  [
+    "/fixtures/start",
+    () =>
+      layout(
+        "Form crawl fixture index",
+        `<main>
+          <h1>Public service forms</h1>
+          <p>This index intentionally mixes useful form links with ordinary site navigation.</p>
+          <div class="promo">Applications close whenever the integration test ends.</div>
+          <ul>
+            <li><a href="/fixtures/semantic-application">Semantic benefits application</a></li>
+            <li><a href="/fixtures/messy-intake?campaign=summer">Messy community intake</a></li>
+            <li><a href="/fixtures/spa-enrollment">JavaScript enrollment form</a></li>
+            <li><a href="/fixtures/iframe-request">Embedded service request</a></li>
+            <li><a href="/fixtures/shadow-form">Web-component contact form</a></li>
+            <li><a href="/fixtures/conditional-wizard">Conditional multi-step form</a></li>
+          </ul>
+          <a href="/about">Read our annual report</a>
+        </main>`
+      ),
+  ],
+  [
+    "/fixtures/semantic-application",
+    () =>
+      layout(
+        "Semantic benefits application",
+        `<main>
+          <h1>Household support application</h1>
+          <p>Clean native markup provides a baseline for extraction.</p>
+          <form method="post" action="/fixtures/write-probe">
+            <input type="hidden" name="csrf_token" value="fixture-only">
+            <label for="legal-name">Legal name</label>
+            <input id="legal-name" name="legal_name" autocomplete="name" required>
+            <label>Email address <input type="email" name="email" autocomplete="email" required></label>
+            <label for="household-size">Household size</label>
+            <select id="household-size" name="household_size" required>
+              <option value="">Choose one</option>
+              <option>1</option><option>2</option><option>3+</option>
+            </select>
+            <fieldset>
+              <legend>Preferred contact method</legend>
+              <label><input type="radio" name="contact_method" value="email" required> Email</label>
+              <label><input type="radio" name="contact_method" value="phone"> Phone</label>
+            </fieldset>
+            <label><input type="checkbox" name="attestation" required> I attest this fixture is synthetic</label>
+            <button type="submit">Continue</button>
+          </form>
+        </main>`
+      ),
+  ],
+  [
+    "/fixtures/messy-intake",
+    () =>
+      layout(
+        "Messy community intake",
+        `<aside class="cookie">This fake cookie banner exists to create normal page noise. <button>Accept</button></aside>
+        <main>
+          <div class="ad">Advertisement: definitely not part of the application.</div>
+          <h1>Community assistance — tell us what happened</h1>
+          <form role="search" action="/fixtures/messy-intake">
+            <label class="visually-hidden" for="site-search">Search this site</label>
+            <input id="site-search" name="q" type="search" placeholder="Search all programs">
+            <button>Search</button>
+          </form>
+          <section>
+            <p id="help-for-nickname">This can be a nickname.</p>
+            <form method="post" action="/fixtures/write-probe" novalidate>
+              <div><span id="applicant-label">Applicant display name</span></div>
+              <input aria-labelledby="applicant-label help-for-nickname" name="displayName" required>
+              <label>Best phone? <input type="tel" name="contact[phone]" autocomplete="tel"></label>
+              <label for="story">Please describe your situation</label>
+              <textarea id="story" data-field="assistance_story" aria-required="true"></textarea>
+              <div role="combobox" aria-label="Neighborhood" aria-required="true" tabindex="0">Choose a neighborhood</div>
+              <div role="switch" aria-label="Text message updates" tabindex="0"></div>
+              <input title="Unlabelled reference number" data-field="reference_number">
+              <input type="hidden" name="tracking_id" value="noise-123">
+              <input name="future_detail" aria-label="Future conditional detail" style="display:none">
+              <button type="submit">Send request</button>
+            </form>
+          </section>
+          <form action="/fixtures/newsletter">
+            <label>Newsletter email <input name="newsletter_email" type="email"></label>
+            <button>Subscribe</button>
+          </form>
+        </main>`
+      ),
+  ],
+  [
+    "/fixtures/spa-enrollment",
+    () =>
+      layout(
+        "Client-rendered enrollment",
+        `<main>
+          <h1>Program enrollment</h1>
+          <p>The form below does not exist in the server HTML. JavaScript creates it after load.</p>
+          <div id="spa-root" aria-live="polite">Loading enrollment module…</div>
+        </main>`,
+        {
+          scripts: `<script>
+            setTimeout(() => {
+              document.querySelector("#spa-root").innerHTML = \`
+                <form id="spa-form" action="/fixtures/write-probe" method="post">
+                  <label>Participant email <input type="email" name="participant_email" required></label>
+                  <label for="program-code">Program code</label>
+                  <input id="program-code" name="programCode" aria-required="true">
+                  <label>Start date <input type="date" name="start_date"></label>
+                  <button type="submit">Enroll</button>
+                </form>\`;
+              fetch("/fixtures/write-probe", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ shouldNeverReachServer: true })
+              }).catch(() => {});
+            }, 180);
+          </script>`,
+        }
+      ),
+  ],
+  [
+    "/fixtures/iframe-request",
+    () =>
+      layout(
+        "Embedded service request",
+        `<main>
+          <h1>Request a replacement card</h1>
+          <p>The operational form is rendered inside a same-origin iframe.</p>
+          <iframe title="Replacement card request" src="/fixtures/embedded-intake" width="100%" height="430"></iframe>
+        </main>`
+      ),
+  ],
+  [
+    "/fixtures/embedded-intake",
+    () =>
+      layout(
+        "Embedded card form",
+        `<main>
+          <h1>Card details</h1>
+          <form method="post" action="/fixtures/write-probe">
+            <label>Member number <input name="member_number" required></label>
+            <label>Mailing ZIP code <input name="mailing_zip" inputmode="numeric" required></label>
+            <label>Reason
+              <select name="replacement_reason">
+                <option>Lost</option><option>Damaged</option><option>Never arrived</option>
+              </select>
+            </label>
+            <button>Review request</button>
+          </form>
+        </main>`
+      ),
+  ],
+  [
+    "/fixtures/shadow-form",
+    () =>
+      layout(
+        "Shadow DOM contact form",
+        `<main>
+          <h1>Contact a case worker</h1>
+          <p>The form controls live in an open shadow root.</p>
+          <case-worker-form></case-worker-form>
+        </main>`,
+        {
+          scripts: `<script>
+            customElements.define("case-worker-form", class extends HTMLElement {
+              connectedCallback() {
+                const root = this.attachShadow({ mode: "open" });
+                root.innerHTML = \`
+                  <style>form{display:grid;gap:12px;padding:18px;border:1px solid #aaa}label{display:grid}</style>
+                  <form action="/fixtures/write-probe" method="post">
+                    <label>Case ID <input name="case_id" required></label>
+                    <label>Reply email <input name="reply_email" type="email"></label>
+                    <label>Question <textarea name="case_question" required></textarea></label>
+                    <button>Send question</button>
+                  </form>\`;
+              }
+            });
+          </script>`,
+        }
+      ),
+  ],
+  [
+    "/fixtures/conditional-wizard",
+    () =>
+      layout(
+        "Conditional household wizard",
+        `<main>
+          <h1>Household eligibility screener</h1>
+          <form action="/fixtures/write-probe" method="post">
+            <fieldset>
+              <legend>Do you have dependents?</legend>
+              <label><input type="radio" name="has_dependents" value="yes"> Yes</label>
+              <label><input type="radio" name="has_dependents" value="no"> No</label>
+            </fieldset>
+            <section id="dependent-details" hidden>
+              <label>Number of dependents <input name="dependent_count" type="number" min="1"></label>
+            </section>
+            <label>Annual household income <input name="annual_income" inputmode="decimal" required></label>
+            <button type="submit">Check eligibility</button>
+          </form>
+        </main>`,
+        {
+          scripts: `<script>
+            document.querySelectorAll('[name="has_dependents"]').forEach((field) => {
+              field.addEventListener("change", () => {
+                document.querySelector("#dependent-details").hidden = field.value !== "yes";
+              });
+            });
+          </script>`,
+        }
+      ),
+  ],
+  [
+    "/about",
+    () =>
+      layout(
+        "About Fixture County",
+        `<main><h1>About this test site</h1><p>This ordinary content page should not be discovered as a form workflow.</p></main>`
+      ),
+  ],
+  [
+    "/press",
+    () =>
+      layout(
+        "Fixture County press",
+        `<main><h1>Press releases</h1><p>More non-form navigation noise.</p></main>`
+      ),
+  ],
+]);
+
+function send(response, status, body, contentType = "text/html; charset=utf-8") {
+  response.writeHead(status, {
+    "content-type": contentType,
+    "cache-control": "no-store",
+    "x-fixture-site": "formweave",
+  });
+  response.end(body);
+}
+
+export async function startFixtureServer({ host = "127.0.0.1", port = 0 } = {}) {
+  const requests = [];
+  const server = createServer((request, response) => {
+    const url = new URL(request.url || "/", `http://${request.headers.host || host}`);
+    requests.push({
+      at: new Date().toISOString(),
+      method: request.method || "GET",
+      path: url.pathname,
+    });
+
+    if (url.pathname === "/fixtures/write-probe") {
+      send(
+        response,
+        409,
+        JSON.stringify({ error: "A crawler write reached the fixture server." }),
+        "application/json; charset=utf-8"
+      );
+      return;
+    }
+    const render = routes.get(url.pathname);
+    if (!render) {
+      send(response, 404, layout("Not found", "<main><h1>Not found</h1></main>"));
+      return;
+    }
+    send(response, 200, render());
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, host, resolve);
+  });
+  const address = server.address();
+  const resolvedPort = typeof address === "object" && address ? address.port : port;
+  return {
+    host,
+    port: resolvedPort,
+    origin: `http://${host}:${resolvedPort}`,
+    requests,
+    close: () => new Promise((resolve) => server.close(resolve)),
+  };
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const requestedPort = Number.parseInt(process.env.FORMWEAVE_FIXTURE_PORT || "4179", 10);
+  const fixture = await startFixtureServer({ port: requestedPort });
+  console.log(`FormWeave crawl fixtures: ${fixture.origin}/fixtures/start`);
+}

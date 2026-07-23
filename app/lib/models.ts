@@ -77,6 +77,8 @@ export type FieldContract = {
   selector: string;
   originState: string;
   originUrl: string;
+  frameUrl?: string;
+  rendered?: boolean;
 };
 
 export type CrawlStats = {
@@ -109,8 +111,16 @@ export type CrawlReportPage = {
   screenshotProvider?: string;
   htmlArtifact?: string;
   screenshotArtifact?: string;
+  rendered?: boolean;
+  renderEngine?: string;
+  browserMode?: BrowserMode;
+  frameCount?: number;
+  shadowRootCount?: number;
+  blockedWriteRequests?: number;
   error?: string;
 };
+
+export type BrowserMode = "headless" | "headful";
 
 export type InferredField = {
   label: string;
@@ -147,6 +157,8 @@ export type CrawlReport = {
   pages: CrawlReportPage[];
   contract: FieldContract[];
   findings: Finding[];
+  browserMode?: BrowserMode;
+  renderEngine?: string;
   analysis?: CrawlAnalysis;
   artifacts?: {
     runDirectory: string;
@@ -166,6 +178,7 @@ export type FormRun = {
   stage: string;
   progress: number;
   mode: "crawl" | "dry_run" | "live";
+  browserMode?: BrowserMode;
   nodes: FlowNode[];
   edges: FlowEdge[];
   findings: Finding[];

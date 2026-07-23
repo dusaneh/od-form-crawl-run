@@ -35,7 +35,7 @@ launch("Local API", process.execPath, ["local/server.mjs"]);
 launch("Local web app", process.execPath, [
   vinextCli,
   "dev",
-  "--host",
+  "--hostname",
   "127.0.0.1",
   "--port",
   "3000",

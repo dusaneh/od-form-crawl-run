@@ -32,6 +32,12 @@ export type CrawlPage = ParsedPage & {
   screenshot?: Uint8Array;
   screenshotContentType?: string;
   screenshotProvider?: string;
+  rendered?: boolean;
+  renderEngine?: string;
+  browserMode?: "headless" | "headful";
+  frameCount?: number;
+  shadowRootCount?: number;
+  blockedWriteRequests?: number;
   error?: string;
 };
 
@@ -497,10 +503,12 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
     const notes = page.error
       ? [page.error]
       : [
-          `Fetched ${page.bytesFetched.toLocaleString()} bytes from the public page.`,
+          `${page.rendered ? "Rendered and serialized" : "Fetched"} ${page.bytesFetched.toLocaleString()} bytes from the public page.`,
           `${page.forms} form${page.forms === 1 ? "" : "s"} and ${visibleFields.length} visible field${visibleFields.length === 1 ? "" : "s"} detected.`,
           page.hasScripts
-            ? "Client-side scripts are present; dynamic states require operator review."
+            ? page.rendered
+              ? "Client-side scripts executed; unvisited conditional state transitions still require operator review."
+              : "Client-side scripts are present; dynamic states require operator review."
             : "No client-side script tag was observed in the fetched HTML.",
         ];
     if (!page.screenshot) notes.push("Screenshot capture was unavailable; crawl data is still preserved.");
@@ -577,7 +585,7 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
       tone: failed.length ? "warning" : "success",
       code: "crawl_finished",
       title: `${fetched.length} page${fetched.length === 1 ? "" : "s"} fetched`,
-      detail: `${contract.filter((field) => !field.hidden).length} visible fields across ${fetched.reduce((sum, page) => sum + page.forms, 0)} forms were extracted from the returned HTML.`,
+      detail: `${contract.filter((field) => !field.hidden).length} visible fields across ${fetched.reduce((sum, page) => sum + page.forms, 0)} forms were extracted from observed page content.`,
       time: "now",
     },
     {
@@ -597,7 +605,9 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
       code: "dynamic_review_required",
       title: "Client-side behavior detected",
       detail:
-        "The HTML crawl is real, but script-driven conditional states are not certified automatically in this runtime.",
+        pages.some((page) => page.rendered)
+          ? "The rendered DOM was observed in local Chromium, but unvisited conditional or multi-step states are not yet certified automatically."
+          : "The HTML crawl is real, but script-driven conditional states are not certified automatically in this runtime.",
       time: "now",
     });
   }

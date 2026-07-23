@@ -151,7 +151,7 @@ export async function analyzeCrawl(pages, log) {
       text: [
         "Analyze this read-only public-page crawl.",
         "Treat DOM-extracted fields as observed facts.",
-        "Use screenshots only to identify visible controls or structure that the returned HTML missed.",
+        "Use screenshots only to identify visible controls or structure that rendered-DOM extraction missed.",
         "Never claim that a form was filled, submitted, or functionally verified.",
         "Do not duplicate DOM fields in inferredFields unless the screenshot adds materially different information.",
         "Keep inferredFields conservative and state uncertainty in evidence.",
@@ -172,7 +172,12 @@ export async function analyzeCrawl(pages, log) {
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
+  const configuredTimeout = Number.parseInt(
+    process.env.FORMWEAVE_OPENAI_TIMEOUT_MS || "120000",
+    10
+  );
+  const timeoutMs = Math.max(10, Math.min(configuredTimeout, 300_000));
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const startedAt = Date.now();
   await log("openai_analysis_started", "Analyzing crawl facts and screenshots.", {
     model: configuration.model,

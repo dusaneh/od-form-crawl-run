@@ -25,28 +25,36 @@ additional numeric segment identifies a sub-requirement of its parent.
 - `F1.1.2` A crawl has a stable run ID and truthful queued, running, completed,
   review, or failed status.
 - `F1.2` The crawler fetches the actual returned page content.
-- `F1.2.1` Redirects, HTTP status, content type, response size, and duration are
-  recorded.
+- `F1.2.1` Redirects, HTTP status, content type, serialized rendered-DOM size,
+  and duration are recorded.
 - `F1.2.2` Fetches have explicit timeouts and byte limits.
-- `F1.2.3` Returned HTML is retained for local inspection.
+- `F1.2.3` The serialized rendered DOM is retained as HTML for local
+  inspection.
+- `F1.2.4` Local crawls use Playwright Chromium to execute client-side
+  JavaScript before form structure and evidence are captured.
 - `F1.3` The crawler discovers relevant same-origin form, intake, application,
   registration, and step links within a bounded crawl.
 - `F1.3.1` Discovery depth and page-count limits are explicit.
 - `F1.3.2` A discovered page is represented in the run graph and final report.
+- `F1.3.3` Same-origin iframe documents and open shadow roots are included in
+  rendered-DOM extraction with their origin recorded.
+- `F1.3.4` Bounded conditional and multi-step state exploration may actuate
+  safe non-submit controls, but must never enter user values or submit a form.
 - `F1.4` The crawler extracts observed form structure from page content.
 - `F1.4.1` Forms and form actions are recorded.
 - `F1.4.2` Controls include label, semantic key, raw control type, selector,
   required state, option count, hidden state, and sensitivity indicator.
 - `F1.4.3` Visible fields and hidden/system controls remain distinguishable.
-- `F1.4.4` Client-rendered controls that do not exist in returned HTML must not
-  be represented as DOM-observed facts.
+- `F1.4.4` Client-rendered controls may be represented as rendered-DOM
+  observations only after Playwright actually observes them; they remain
+  distinguishable from raw response HTML and LLM inference.
 - `F1.5` Script-driven or otherwise uncertified states are explicitly flagged
   for review.
 
 ## F2. Evidence and provenance
 
 - `F2` Every completed crawl must provide inspectable evidence of what happened.
-- `F2.1` Each successfully fetched page stores its returned HTML as a separate
+- `F2.1` Each successfully rendered page stores its serialized DOM as a separate
   artifact.
 - `F2.2` Each page should have screenshot evidence when capture succeeds.
 - `F2.2.1` Screenshot evidence is associated with the exact run and page.
@@ -55,6 +63,8 @@ additional numeric segment identifies a sub-requirement of its parent.
   HTML extraction.
 - `F2.2.4` Imported reports must not imply that screenshot binaries exist when
   the imported file did not contain them.
+- `F2.2.5` Local screenshot capture uses the same local Playwright page and
+  must not depend on a third-party screenshot service.
 - `F2.3` Every crawl produces a complete machine-readable JSON report.
 - `F2.3.1` The report includes targets, timestamps, aggregate statistics,
   per-page facts, the full field contract, findings, analysis, and artifact
@@ -92,6 +102,13 @@ additional numeric segment identifies a sub-requirement of its parent.
 - `F3.9` The UI displays the local artifact paths for the selected run.
 - `F3.10` The UI reports whether the local crawler and LLM configuration are
   ready without exposing secrets.
+- `F3.11` The new-crawl UI provides a Headless/Headful browser visibility
+  switch.
+- `F3.11.1` Headless mode runs Chromium in the background and is the default.
+- `F3.11.2` Headful mode opens visible local Chromium so the operator can
+  watch pages render.
+- `F3.11.3` Both visibility modes use the same extraction, screenshot,
+  persistence, logging, and safety pipeline.
 
 ## F4. Local-first operation and ownership
 
@@ -104,7 +121,7 @@ additional numeric segment identifies a sub-requirement of its parent.
 - `F4.3` Local run state and artifacts are stored below the repository-local
   `data/` directory by default.
 - `F4.3.1` Each run has its own directory containing `run.json`,
-  `report.json`, `events.jsonl`, returned HTML, and screenshot evidence.
+  `report.json`, `events.jsonl`, rendered HTML, and screenshot evidence.
 - `F4.3.2` An aggregate crawler log is stored under `data/logs/`.
 - `F4.4` Local data and secrets are excluded from Git.
 - `F4.5` Existing downloaded FormWeave reports can be imported into the local
@@ -113,6 +130,8 @@ additional numeric segment identifies a sub-requirement of its parent.
   be reconstructed from the download.
 - `F4.6` Hosted compatibility may remain, but localhost is the primary
   development and inspection path.
+- `F4.7` Local browser binaries are installed and managed through Playwright;
+  local crawling does not require a remote browser or screenshot account.
 
 ## F5. OpenAI enrichment
 
@@ -138,6 +157,8 @@ additional numeric segment identifies a sub-requirement of its parent.
   its outputs live.
 - `F6.1` A health endpoint reports local runtime, storage root, active crawl
   count, model name, and whether a credential is configured.
+- `F6.1.1` Health output reports the active browser engine and supported
+  Headless/Headful modes.
 - `F6.2` Progress is driven by actual crawl work rather than a cosmetic timer.
 - `F6.3` Failures include actionable messages in the run findings and event
   log.
@@ -153,6 +174,10 @@ additional numeric segment identifies a sub-requirement of its parent.
 - `F7` Crawling is read-only by construction.
 - `F7.1` The crawler never enters form values.
 - `F7.2` The crawler never submits a form.
+- `F7.2.1` Browser requests using methods other than GET, HEAD, or OPTIONS are
+  blocked before they reach the target server.
+- `F7.2.2` Submit events and programmatic form submission APIs are disabled in
+  every crawled page before site scripts execute.
 - `F7.3` Screenshots use a fresh unauthenticated public-page context.
 - `F7.4` Private, authenticated, personalized, and tokenized targets are outside
   the supported boundary.
@@ -173,3 +198,14 @@ additional numeric segment identifies a sub-requirement of its parent.
   execution boundaries are documented.
 - `F8.6` `FEATURES.md` and `FEATURE_STATUS.md` are updated with every relevant
   product change.
+- `F8.7` Repository-owned test sites exercise realistic form implementation
+  variation and page noise without depending on third-party websites.
+- `F8.7.1` Fixtures include clean semantic HTML, multiple unrelated forms,
+  noisy page chrome, delayed SPA rendering, same-origin iframe forms, open
+  shadow-DOM forms, hidden controls, and conditional fields.
+- `F8.7.2` A headless harness writes its report, rendered HTML, screenshots,
+  and events below local `data/harness/`.
+- `F8.7.3` A headful harness runs the same fixtures and assertions while
+  showing the local browser.
+- `F8.7.4` Automated assertions prove that browser-initiated write requests do
+  not reach the fixture server.

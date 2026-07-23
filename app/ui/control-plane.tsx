@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type {
+  BrowserMode,
   CrawlReport,
   FlowEdge,
   FlowNode,
@@ -20,6 +21,10 @@ type RuntimeStatus = {
     configured: boolean;
     keySource: string;
     model: string;
+  };
+  browser?: {
+    engine: string;
+    modes: BrowserMode[];
   };
   activeCrawls: number;
 };
@@ -122,7 +127,7 @@ function StatCard({
 function ProgressRail({ progress }: { progress: number }) {
   const stages = [
     ["Queue", 8],
-    ["Fetch pages", 58],
+    ["Render pages", 58],
     ["Extract fields", 84],
     ["Store evidence", 100],
   ] as const;
@@ -329,7 +334,11 @@ function FieldsPanel({ run }: { run: FormRun }) {
         <div>
           <span>OBSERVED CONTRACT</span>
           <strong>{visibleFields.length} fields</strong>
-          <small>Extracted from fetched HTML</small>
+          <small>
+            {run.browserMode
+              ? "Extracted from the rendered browser DOM"
+              : "Extracted from the source crawl facts"}
+          </small>
         </div>
         <div>
           <span>REQUIRED</span>
@@ -393,7 +402,7 @@ function FieldsPanel({ run }: { run: FormRun }) {
             {!displayedFields.length && (
               <tr>
                 <td colSpan={5} className="empty-table-cell">
-                  No visible form fields were found in the fetched HTML.
+                  No visible form fields were found in the observed page content.
                 </td>
               </tr>
             )}
@@ -452,6 +461,7 @@ function ReportPanel({
   }
 
   const analysis = report.analysis;
+  const isRendered = report.renderEngine === "playwright-chromium";
   const visibleFields = report.contract.filter((field) => !field.hidden);
   const hiddenFields = report.contract.length - visibleFields.length;
   const localScreenshots = report.pages.filter((page) => page.screenshotArtifact).length;
@@ -467,7 +477,9 @@ function ReportPanel({
           </h3>
           <p>
             {analysis?.pagePurpose ||
-              "Deterministic HTML extraction with locally persisted evidence and logs."}
+              (isRendered
+                ? "Deterministic rendered-DOM extraction with locally persisted evidence and logs."
+                : "Deterministic source-crawl extraction with locally persisted report facts.")}
           </p>
         </div>
         <div className={`analysis-chip ${analysis?.status ?? "pending"}`}>
@@ -484,14 +496,14 @@ function ReportPanel({
 
       <section className="report-metrics" aria-label="Report totals">
         <div><span>Pages fetched</span><strong>{report.stats.pagesFetched}</strong><small>{report.stats.pagesAttempted} attempted</small></div>
-        <div><span>Forms found</span><strong>{report.stats.formsFound}</strong><small>Across returned HTML</small></div>
+        <div><span>Forms found</span><strong>{report.stats.formsFound}</strong><small>{isRendered ? "Across rendered pages" : "Across source crawl pages"}</small></div>
         <div><span>Visible fields</span><strong>{report.stats.fieldsFound}</strong><small>{hiddenFields} hidden controls retained</small></div>
         <div>
           <span>Screenshots local</span>
           <strong>{localScreenshots}</strong>
           <small>{report.stats.screenshotsCaptured} reported by source crawl</small>
         </div>
-        <div><span>Bytes fetched</span><strong>{formatBytes(report.stats.bytesFetched)}</strong><small>Raw page response bytes</small></div>
+        <div><span>{isRendered ? "DOM bytes" : "Source bytes"}</span><strong>{formatBytes(report.stats.bytesFetched)}</strong><small>{isRendered ? "Serialized rendered HTML" : "Reported by the source crawl"}</small></div>
       </section>
 
       <section className="report-section">
@@ -612,7 +624,7 @@ function ReportPanel({
             <div><dt>Run directory</dt><dd><code>{report.artifacts.runDirectory}</code></dd></div>
             <div><dt>Report</dt><dd><code>{report.artifacts.report}</code></dd></div>
             <div><dt>Event log</dt><dd><code>{report.artifacts.events}</code></dd></div>
-            <div><dt>Returned HTML</dt><dd><code>{report.artifacts.pagesDirectory}</code></dd></div>
+            <div><dt>{isRendered ? "Rendered HTML" : "Page HTML"}</dt><dd><code>{report.artifacts.pagesDirectory}</code></dd></div>
             <div><dt>Screenshots</dt><dd><code>{report.artifacts.evidenceDirectory}</code></dd></div>
           </dl>
         </section>
@@ -710,7 +722,11 @@ function Queue({ runs, onSelect }: { runs: FormRun[]; onSelect: (run: FormRun) =
                 </td>
                 <td>
                   <span className="mode-pill">
-                    {run.mode === "dry_run" ? "Dry run" : run.mode}
+                    {run.browserMode === "headful"
+                      ? "Headful"
+                      : run.browserMode === "headless"
+                        ? "Headless"
+                        : "Legacy"}
                   </span>
                 </td>
                 <td>
@@ -752,17 +768,22 @@ function LaunchModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onLaunch: (urls: string[], mode: "crawl" | "dry_run") => Promise<void>;
+  onLaunch: (
+    urls: string[],
+    mode: "crawl" | "dry_run",
+    browserMode: BrowserMode
+  ) => Promise<void>;
   busy: boolean;
 }) {
   const [urls, setUrls] = useState("");
+  const [browserMode, setBrowserMode] = useState<BrowserMode>("headless");
 
   if (!open) return null;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     const values = urls.split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean);
-    await onLaunch(values, "crawl");
+    await onLaunch(values, "crawl", browserMode);
   }
 
   return (
@@ -778,7 +799,7 @@ function LaunchModal({
           <div>
             <span className="eyebrow">NEW READ-ONLY CRAWL</span>
             <h2 id="launch-title">Fetch and map public forms</h2>
-            <p>One URL per line. FormWeave fetches the actual page and stores crawl evidence.</p>
+            <p>One URL per line. FormWeave renders the actual page in local Chromium and stores crawl evidence.</p>
           </div>
           <button onClick={onClose} aria-label="Close launch dialog">×</button>
         </div>
@@ -794,11 +815,34 @@ function LaunchModal({
             />
             <small>Up to 12 public HTTP or HTTPS URLs; private-network targets are blocked</small>
           </label>
+          <fieldset>
+            <legend>Browser visibility</legend>
+            <button
+              type="button"
+              className={browserMode === "headless" ? "selected" : ""}
+              aria-pressed={browserMode === "headless"}
+              onClick={() => setBrowserMode("headless")}
+            >
+              <span aria-hidden="true">◉</span>
+              <strong>Headless</strong>
+              <small>Run Chromium in the background. Best for routine and automated crawls.</small>
+            </button>
+            <button
+              type="button"
+              className={browserMode === "headful" ? "selected" : ""}
+              aria-pressed={browserMode === "headful"}
+              onClick={() => setBrowserMode("headful")}
+            >
+              <span aria-hidden="true">▣</span>
+              <strong>Headful</strong>
+              <small>Open visible local Chromium so you can watch every page render.</small>
+            </button>
+          </fieldset>
           <div className="safety-callout">
             <span>✓</span>
             <div>
               <strong>Read-only by construction</strong>
-              <p>No fields are filled and no form is submitted. Use only public, non-tokenized URLs; screenshots use a fresh unauthenticated capture.</p>
+              <p>No fields are filled and no form is submitted. Playwright blocks write requests and stores screenshots from a fresh local browser context.</p>
             </div>
           </div>
           <div className="launch-actions">
@@ -927,13 +971,17 @@ export function ControlPlane() {
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
-  async function launch(urls: string[], mode: "crawl" | "dry_run") {
+  async function launch(
+    urls: string[],
+    mode: "crawl" | "dry_run",
+    browserMode: BrowserMode
+  ) {
     setLaunching(true);
     try {
       const response = await fetch(apiUrl("/api/runs"), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ urls, mode }),
+        body: JSON.stringify({ urls, mode, browserMode }),
       });
       const data = (await response.json()) as { run?: FormRun; error?: string };
       if (!response.ok || !data.run) throw new Error(data.error ?? "Unable to launch.");
@@ -943,7 +991,9 @@ export function ControlPlane() {
       setReport(null);
       setSelectedNode(data.run.nodes[0]?.id ?? "welcome");
       setLaunchOpen(false);
-      setToast(`${mode === "dry_run" ? "Dry run" : "Crawl"} launched for ${urls.length} target${urls.length === 1 ? "" : "s"}.`);
+      setToast(
+        `${browserMode === "headful" ? "Visible" : "Headless"} crawl launched for ${urls.length} target${urls.length === 1 ? "" : "s"}.`
+      );
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Unable to launch session.");
     } finally {
@@ -1045,6 +1095,12 @@ export function ControlPlane() {
                   <span>
                     {activeRun.stats?.pagesFetched ?? activeRun.nodes.length} pages · {activeRun.urls.length} seeds
                   </span>
+                  {activeRun.browserMode && (
+                    <>
+                      <span>·</span>
+                      <span>{activeRun.browserMode === "headful" ? "Headful browser" : "Headless browser"}</span>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -1080,7 +1136,7 @@ export function ControlPlane() {
             <ProgressRail progress={activeRun.progress} />
           </div>
           <div className="trust-strip">
-            <div><span>✓</span> Real public-page fetch</div>
+            <div><span>✓</span> {activeRun.browserMode ? "Local Playwright render" : "Persisted crawl facts"}</div>
             <div><span>✓</span> No form values entered</div>
             <div><span>✓</span> {runtime ? "Artifacts stored locally" : "Evidence stored privately"}</div>
             <div className="locked"><span>⌕</span> Form submission disabled</div>
@@ -1145,7 +1201,7 @@ export function ControlPlane() {
           <section className="empty-run-card">
             <span className="eyebrow">NO REAL CRAWLS YET</span>
             <h2>Start with a public form URL</h2>
-            <p>FormWeave will fetch the page, extract its actual controls, capture evidence, and produce a downloadable report.</p>
+            <p>FormWeave will render the page, extract its actual controls, capture evidence, and produce a downloadable report.</p>
             <button className="primary-button" onClick={() => setLaunchOpen(true)}>
               <span className="plus">+</span> Launch first crawl
             </button>

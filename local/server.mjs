@@ -3,7 +3,10 @@ import { appendFile, mkdir, readFile, readdir, writeFile } from "node:fs/promise
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { crawlTargets, validateTargetUrl } from "../worker/crawler.ts";
+import {
+  crawlTargetsWithPlaywright,
+  validatePlaywrightTarget,
+} from "./playwright-crawler.mjs";
 import { analyzeCrawl, openAIConfiguration } from "./openai-analysis.mjs";
 
 const localDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -98,7 +101,7 @@ async function logEvent(runId, kind, message, metadata = {}) {
 }
 
 function apiHeaders(request, extra = {}) {
-  const origin = request.headers.origin;
+  const origin = request.headers.get("origin");
   const allowed =
     !origin ||
     /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/i.test(origin);
@@ -145,12 +148,12 @@ async function listRuns() {
   return runs.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 }
 
-function initialRun(id, urls, name, mode, now) {
+function initialRun(id, urls, name, mode, browserMode, now) {
   const nodes = urls.map((url, index) => ({
     id: `target_${String(index + 1).padStart(2, "0")}`,
     step: String(index + 1).padStart(2, "0"),
     title: new URL(url).hostname,
-    subtitle: "Queued for fetch",
+    subtitle: "Queued for browser render",
     fingerprint: "pending",
     status: index === 0 ? "active" : "queued",
     fields: 0,
@@ -161,7 +164,7 @@ function initialRun(id, urls, name, mode, now) {
     evidenceAvailable: false,
     sourceUrl: url,
     sensitiveMasks: 0,
-    notes: ["The target has been queued for a real server-side fetch."],
+    notes: ["The target has been queued for a real local browser render."],
   }));
   return {
     id,
@@ -169,9 +172,10 @@ function initialRun(id, urls, name, mode, now) {
     targetUrl: urls[0],
     urls,
     status: "running",
-    stage: "Queued for local fetch",
+    stage: "Queued for local browser crawl",
     progress: 2,
     mode,
+    browserMode,
     nodes,
     edges: [],
     findings: [
@@ -221,19 +225,29 @@ async function executeCrawl(run) {
     await logEvent(
       run.id,
       "crawl_started",
-      `Fetching ${run.urls.length} public target${run.urls.length === 1 ? "" : "s"}.`
+      `Rendering ${run.urls.length} public target${run.urls.length === 1 ? "" : "s"} in local Chromium.`,
+      { browserMode: run.browserMode }
     );
-    await updateRun(run, { progress: 8, stage: "Fetching target HTML" });
+    await updateRun(run, {
+      progress: 8,
+      stage: `Launching ${run.browserMode === "headful" ? "visible" : "headless"} local Chromium`,
+    });
 
-    const output = await crawlTargets(run.urls, run.id, async ({ pages, queued }) => {
-      await updateRun(run, {
-        progress: Math.min(78, 12 + pages * 6),
-        stage: `Fetched ${pages} page${pages === 1 ? "" : "s"} · ${queued} queued`,
-      });
-      await logEvent(run.id, "crawl_progress", "Crawl batch completed.", {
-        pages,
-        queued,
-      });
+    const output = await crawlTargetsWithPlaywright(run.urls, run.id, {
+      browserMode: run.browserMode || "headless",
+      allowLoopback: process.env.FORMWEAVE_ALLOW_LOCAL_TARGETS === "1",
+      onProgress: async ({ pages, queued }) => {
+        await updateRun(run, {
+          progress: Math.min(78, 12 + pages * 6),
+          stage: `Rendered ${pages} page${pages === 1 ? "" : "s"} · ${queued} queued`,
+        });
+        await logEvent(run.id, "crawl_progress", "Browser crawl batch completed.", {
+          pages,
+          queued,
+        });
+      },
+      onBrowserEvent: (kind, message, metadata) =>
+        logEvent(run.id, kind, message, metadata),
     });
     await updateRun(run, { progress: 82, stage: "Persisting local evidence" });
 
@@ -249,7 +263,7 @@ async function executeCrawl(run) {
       if (page.html) {
         htmlArtifact = path.join(artifacts.pagesDirectory, `page_${pageNumber}.html`);
         await writeFile(htmlArtifact, page.html, "utf8");
-        await logEvent(run.id, "html_stored", `Stored returned HTML for ${page.finalUrl}.`, {
+        await logEvent(run.id, "html_stored", `Stored rendered HTML for ${page.finalUrl}.`, {
           path: htmlArtifact,
           bytes: page.bytesFetched,
         });
@@ -332,6 +346,8 @@ async function executeCrawl(run) {
       pages: reportPages,
       contract: output.contract,
       findings,
+      browserMode: run.browserMode,
+      renderEngine: "playwright-chromium",
       analysis,
       artifacts,
     };
@@ -388,7 +404,15 @@ async function createRun(request) {
   }
   let urls;
   try {
-    urls = [...new Set(rawUrls.map(validateTargetUrl))];
+    urls = [
+      ...new Set(
+        rawUrls.map((url) =>
+          validatePlaywrightTarget(url, {
+            allowLoopback: process.env.FORMWEAVE_ALLOW_LOCAL_TARGETS === "1",
+          })
+        )
+      ),
+    ];
   } catch (error) {
     return jsonResponse(
       request,
@@ -402,17 +426,20 @@ async function createRun(request) {
   const name =
     String(payload.name || "").trim().slice(0, 120) ||
     `${new URL(urls[0]).hostname.replace(/^www\./, "")} crawl`;
+  const browserMode = payload.browserMode === "headful" ? "headful" : "headless";
   const run = initialRun(
     id,
     urls,
     name,
     payload.mode === "dry_run" ? "dry_run" : "crawl",
+    browserMode,
     now
   );
   await mkdir(runDirectory(id), { recursive: true });
   await saveRun(run);
   await logEvent(id, "run_created", "Created a filesystem-backed local crawl.", {
     targets: urls.length,
+    browserMode,
   });
   const task = executeCrawl(run);
   runningTasks.set(id, task);
@@ -451,6 +478,10 @@ async function route(request) {
         configured: openai.configured,
         keySource: openai.keySource,
         model: openai.model,
+      },
+      browser: {
+        engine: "playwright-chromium",
+        modes: ["headless", "headful"],
       },
       activeCrawls: runningTasks.size,
     });
@@ -559,11 +590,48 @@ const server = createServer(async (incoming, outgoing) => {
   }
 });
 
+async function reconcileInterruptedRuns() {
+  const runs = await listRuns();
+  const interrupted = runs.filter((run) => run.status === "running");
+  for (const run of interrupted) {
+    const finding = {
+      id: `${run.id}_interrupted`,
+      tone: "danger",
+      code: "crawl_interrupted",
+      title: "Crawl interrupted by local service restart",
+      detail:
+        "The local API stopped before this crawl completed. Existing artifacts and logs were preserved; start a new crawl to retry.",
+      time: "now",
+    };
+    await updateRun(run, {
+      status: "failed",
+      stage: "Interrupted by local service restart",
+      progress: 100,
+      findings: [...(run.findings || []), finding],
+      analysisStatus: "failed",
+    });
+    await logEvent(
+      run.id,
+      "crawl_interrupted",
+      "Marked an unfinished crawl as interrupted during local API startup."
+    );
+  }
+  return interrupted.length;
+}
+
+const reconciledRuns = await reconcileInterruptedRuns();
+
 server.listen(port, host, () => {
   const openai = openAIConfiguration();
   console.log(`FormWeave local API: http://${host}:${port}`);
   console.log(`Local artifacts: ${dataRoot}`);
+  console.log("Browser renderer: local Playwright Chromium · headless + headful");
   console.log(
     `OpenAI analysis: ${openai.configured ? `configured via ${openai.keySource}` : "not configured"} · ${openai.model}`
   );
+  if (reconciledRuns) {
+    console.log(
+      `Recovered startup state: ${reconciledRuns} interrupted crawl${reconciledRuns === 1 ? "" : "s"} marked failed.`
+    );
+  }
 });
