@@ -25,18 +25,22 @@ test(
   async () => {
     const fixture = await startFixtureServer();
     try {
+      const events = [];
       const output = await crawlTargetsWithPlaywright(
         [`${fixture.origin}/fixtures/start`],
         "run_fixture_test",
         {
           browserMode: "headless",
           allowLoopback: true,
+          onBrowserEvent: (kind, message, metadata = {}) => {
+            events.push({ kind, message, metadata });
+          },
         }
       );
 
-      assert.equal(output.pages.length, 7);
+      assert.equal(output.pages.length, 9);
       assert.equal(output.pages.filter((page) => page.error).length, 0);
-      assert.equal(output.pages.filter((page) => page.screenshot).length, 7);
+      assert.equal(output.pages.filter((page) => page.screenshot).length, 9);
       assert.ok(
         output.pages.every(
           (page) =>
@@ -93,10 +97,55 @@ test(
         )
       );
 
-      const writesAtServer = fixture.requests.filter(
+      const automationPage = pageAt("/fixtures/automation-gates");
+      assert.ok(automationPage.allowedReadLikeRequests >= 1);
+      assert.ok(automationPage.blockedWriteRequests >= 1);
+      assert.equal(automationPage.unresolvedGate, "");
+      assert.ok(
+        automationPage.fields.some(
+          (field) => field.label === "Application reference"
+        )
+      );
+      assert.deepEqual(
+        automationPage.automationActions.map((action) => action.category),
+        [
+          "cookie_consent",
+          "welcome_banner",
+          "optional_auth",
+          "optional_offer",
+          "safe_disclosure",
+        ]
+      );
+      assert.ok(
+        automationPage.automationActions.every(
+          (action) =>
+            action.beforeFingerprint &&
+            action.afterFingerprint &&
+            !action.error
+        )
+      );
+
+      const captchaPage = pageAt("/fixtures/captcha-gate");
+      assert.equal(captchaPage.captchaDetected, true);
+      assert.equal(captchaPage.unresolvedGate, "captcha");
+      assert.deepEqual(captchaPage.automationActions, []);
+      assert.doesNotMatch(
+        captchaPage.html,
+        /<body[^>]*data-captcha-clicked/i
+      );
+
+      assert.ok(events.some((event) => event.kind === "state_wait_completed"));
+      assert.ok(events.some((event) => event.kind === "automation_action_completed"));
+      assert.ok(events.some((event) => event.kind === "read_like_post_allowed"));
+      assert.ok(events.some((event) => event.kind === "captcha_handoff_required"));
+
+      const nonReadRequests = fixture.requests.filter(
         (request) => !["GET", "HEAD", "OPTIONS"].includes(request.method)
       );
-      assert.deepEqual(writesAtServer, []);
+      assert.deepEqual(
+        nonReadRequests.map((request) => `${request.method} ${request.path}`),
+        ["POST /fixtures/aura"]
+      );
     } finally {
       await fixture.close();
     }

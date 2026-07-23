@@ -95,8 +95,11 @@ try {
     (sum, page) => sum + (page.blockedWriteRequests || 0),
     0
   );
-  const serverWrites = fixture.requests.filter(
+  const nonReadRequests = fixture.requests.filter(
     (request) => !["GET", "HEAD", "OPTIONS"].includes(request.method)
+  );
+  const unexpectedWrites = nonReadRequests.filter(
+    (request) => !(request.method === "POST" && request.path === "/fixtures/aura")
   );
   console.log("");
   console.log("Harness result");
@@ -104,14 +107,15 @@ try {
   console.log(`  Visible fields: ${visibleFields.length}`);
   console.log(`  Screenshots: ${output.pages.filter((page) => page.screenshot).length}`);
   console.log(`  Browser write requests blocked: ${blockedWrites}`);
-  console.log(`  Write requests reaching fixture server: ${serverWrites.length}`);
+  console.log(`  Read-like initialization requests allowed: ${nonReadRequests.length - unexpectedWrites.length}`);
+  console.log(`  Unexpected write requests reaching fixture server: ${unexpectedWrites.length}`);
   console.log(`  Report: ${path.join(outputRoot, "report.json")}`);
 
   if (
     output.pages.some((page) => page.error) ||
     !visibleFields.length ||
     output.pages.some((page) => !page.screenshot) ||
-    serverWrites.length
+    unexpectedWrites.length
   ) {
     process.exitCode = 1;
   }

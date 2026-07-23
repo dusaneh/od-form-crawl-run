@@ -88,6 +88,11 @@ export type CrawlStats = {
   fieldsFound: number;
   screenshotsCaptured: number;
   bytesFetched: number;
+  automationActions?: number;
+  stateExaminations?: number;
+  blockedWriteRequests?: number;
+  allowedReadLikeRequests?: number;
+  captchaPages?: number;
   startedAt: string;
   finishedAt?: string;
 };
@@ -117,10 +122,51 @@ export type CrawlReportPage = {
   frameCount?: number;
   shadowRootCount?: number;
   blockedWriteRequests?: number;
+  allowedReadLikeRequests?: number;
+  automationActions?: TraversalAction[];
+  captchaDetected?: boolean;
+  unresolvedGate?: string;
+  stateExaminations?: number;
   error?: string;
 };
 
 export type BrowserMode = "headless" | "headful";
+
+export type TraversalSettings = {
+  version: number;
+  cookieConsent: "reject_non_essential" | "accept_all" | "observe_only";
+  acceptCookiesWhenRequired: boolean;
+  closeWelcomeBanners: boolean;
+  dismissOptionalOffers: boolean;
+  dismissOptionalAuth: boolean;
+  expandSafeDisclosures: boolean;
+  advanceIntroScreens: boolean;
+  allowSameOriginReadLikePosts: boolean;
+  pointerAndScrollPriming: boolean;
+  unpredictablePopups: "observe_only";
+  captchaPolicy: "detect_and_handoff";
+  stableWindowMs: number;
+  maxStateWaitMs: number;
+  maxActionsPerPage: number;
+  updatedAt?: string;
+};
+
+export type TraversalAction = {
+  category:
+    | "cookie_consent"
+    | "welcome_banner"
+    | "optional_offer"
+    | "optional_auth"
+    | "safe_disclosure"
+    | "intro_advance";
+  label: string;
+  strategy: string;
+  beforeFingerprint: string;
+  afterFingerprint: string;
+  changed: boolean;
+  timestamp: string;
+  error?: string;
+};
 
 export type InferredField = {
   label: string;
@@ -159,6 +205,7 @@ export type CrawlReport = {
   findings: Finding[];
   browserMode?: BrowserMode;
   renderEngine?: string;
+  traversalSettings?: TraversalSettings;
   analysis?: CrawlAnalysis;
   artifacts?: {
     runDirectory: string;
@@ -179,6 +226,7 @@ export type FormRun = {
   progress: number;
   mode: "crawl" | "dry_run" | "live";
   browserMode?: BrowserMode;
+  traversalSettings?: TraversalSettings;
   nodes: FlowNode[];
   edges: FlowEdge[];
   findings: Finding[];

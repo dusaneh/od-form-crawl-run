@@ -151,6 +151,24 @@ const report = {
   },
   artifacts: run.artifacts,
 };
+const traversalSettings = {
+  version: 1,
+  cookieConsent: "reject_non_essential",
+  acceptCookiesWhenRequired: true,
+  closeWelcomeBanners: true,
+  dismissOptionalOffers: true,
+  dismissOptionalAuth: true,
+  expandSafeDisclosures: true,
+  advanceIntroScreens: true,
+  allowSameOriginReadLikePosts: true,
+  pointerAndScrollPriming: true,
+  unpredictablePopups: "observe_only",
+  captchaPolicy: "detect_and_handoff",
+  stableWindowMs: 700,
+  maxStateWaitMs: 12000,
+  maxActionsPerPage: 10,
+  updatedAt: now,
+};
 
 async function freePort() {
   const server = net.createServer();
@@ -180,7 +198,7 @@ async function waitForHttp(url, timeoutMs = 30_000) {
 
 test(
   "control-plane renders reports and sends the selected browser visibility mode",
-  { timeout: 90_000 },
+  { timeout: 120_000 },
   async () => {
     const port = await freePort();
     const child = spawn(
@@ -209,7 +227,9 @@ test(
       await waitForHttp(appUrl);
       browser = await chromium.launch({ headless: true });
       const page = await browser.newPage();
+      page.setDefaultTimeout(45_000);
       let launchPayload;
+      let savedSettingsPayload;
       const png = Buffer.from(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
         "base64"
@@ -245,6 +265,32 @@ test(
             status: 200,
             contentType: "application/json",
             body: JSON.stringify({ runs: [run] }),
+          });
+          return;
+        }
+        if (url.pathname === "/api/settings" && request.method() === "GET") {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              settings: traversalSettings,
+              settingsPath: "C:\\fixture\\data\\settings.json",
+            }),
+          });
+          return;
+        }
+        if (url.pathname === "/api/settings" && request.method() === "PUT") {
+          savedSettingsPayload = request.postDataJSON();
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              settings: {
+                ...savedSettingsPayload.settings,
+                updatedAt: new Date().toISOString(),
+              },
+              settingsPath: "C:\\fixture\\data\\settings.json",
+            }),
           });
           return;
         }
@@ -315,12 +361,41 @@ test(
           .getByRole("img", { name: "Captured public page for Fixture application" })
           .waitFor()
       );
+      const evidenceLink = page.getByRole("link", {
+        name: "Open full screenshot evidence for Fixture application",
+      });
+      assert.equal(await evidenceLink.getAttribute("target"), "_blank");
+      assert.equal(
+        await evidenceLink.getAttribute("href"),
+        "http://127.0.0.1:8787/api/runs/run_ui_fixture/evidence/page_01"
+      );
 
       await page.getByRole("tab", { name: /Diagnostics/ }).click();
       await assert.doesNotReject(() =>
         page.getByText("Rendered fixture verified", { exact: true }).waitFor()
       );
 
+      await page.getByRole("button", { name: "Settings" }).click();
+      await page
+        .getByRole("heading", { name: "Traversal settings", exact: true })
+        .waitFor();
+      await page.getByLabel("Default response").selectOption("accept_all");
+      await page
+        .getByText("Close welcome banners", { exact: true })
+        .click();
+      assert.equal(
+        await page.getByLabel(/Close welcome banners/).isChecked(),
+        false
+      );
+      await page.getByRole("button", { name: "Save traversal policy" }).click();
+      await page
+        .getByText("Traversal policy saved for new crawler sessions.")
+        .waitFor();
+      assert.equal(savedSettingsPayload.settings.cookieConsent, "accept_all");
+      assert.equal(savedSettingsPayload.settings.closeWelcomeBanners, false);
+      assert.equal(savedSettingsPayload.settings.captchaPolicy, "detect_and_handoff");
+
+      await page.getByRole("button", { name: "Runs" }).click();
       await page.getByRole("button", { name: "New crawl" }).click();
       const headful = page.getByRole("button", { name: /Headful/ });
       await headful.click();

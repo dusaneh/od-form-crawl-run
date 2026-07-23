@@ -8,6 +8,10 @@ import {
   validatePlaywrightTarget,
 } from "./playwright-crawler.mjs";
 import { analyzeCrawl, openAIConfiguration } from "./openai-analysis.mjs";
+import {
+  DEFAULT_TRAVERSAL_SETTINGS,
+  normalizeTraversalSettings,
+} from "./traversal-settings.mjs";
 
 const localDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(localDirectory, "..");
@@ -40,12 +44,39 @@ const dataRoot = path.resolve(
 const runsRoot = path.join(dataRoot, "runs");
 const logsRoot = path.join(dataRoot, "logs");
 const aggregateLogPath = path.join(logsRoot, "crawler.jsonl");
+const settingsPath = path.join(dataRoot, "settings.json");
 const runningTasks = new Map();
 
 await Promise.all([
   mkdir(runsRoot, { recursive: true }),
   mkdir(logsRoot, { recursive: true }),
 ]);
+
+async function readTraversalSettings() {
+  try {
+    const stored = await readJson(settingsPath);
+    return {
+      ...normalizeTraversalSettings(stored),
+      ...(stored.updatedAt ? { updatedAt: stored.updatedAt } : {}),
+    };
+  } catch {
+    const settings = {
+      ...DEFAULT_TRAVERSAL_SETTINGS,
+      updatedAt: new Date().toISOString(),
+    };
+    await writeJson(settingsPath, settings);
+    return settings;
+  }
+}
+
+async function writeTraversalSettings(value) {
+  const settings = {
+    ...normalizeTraversalSettings(value),
+    updatedAt: new Date().toISOString(),
+  };
+  await writeJson(settingsPath, settings);
+  return settings;
+}
 
 function runDirectory(runId) {
   if (!/^run_[a-z0-9]+$/i.test(runId)) throw new Error("Invalid run id.");
@@ -107,7 +138,7 @@ function apiHeaders(request, extra = {}) {
     /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/i.test(origin);
   return {
     "access-control-allow-origin": allowed && origin ? origin : "http://localhost:3000",
-    "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PUT,PATCH,OPTIONS",
     "access-control-allow-headers": "content-type",
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
@@ -148,7 +179,15 @@ async function listRuns() {
   return runs.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 }
 
-function initialRun(id, urls, name, mode, browserMode, now) {
+function initialRun(
+  id,
+  urls,
+  name,
+  mode,
+  browserMode,
+  traversalSettings,
+  now
+) {
   const nodes = urls.map((url, index) => ({
     id: `target_${String(index + 1).padStart(2, "0")}`,
     step: String(index + 1).padStart(2, "0"),
@@ -176,6 +215,7 @@ function initialRun(id, urls, name, mode, browserMode, now) {
     progress: 2,
     mode,
     browserMode,
+    traversalSettings,
     nodes,
     edges: [],
     findings: [
@@ -236,6 +276,7 @@ async function executeCrawl(run) {
     const output = await crawlTargetsWithPlaywright(run.urls, run.id, {
       browserMode: run.browserMode || "headless",
       allowLoopback: process.env.FORMWEAVE_ALLOW_LOCAL_TARGETS === "1",
+      traversalSettings: run.traversalSettings,
       onProgress: async ({ pages, queued }) => {
         await updateRun(run, {
           progress: Math.min(78, 12 + pages * 6),
@@ -303,6 +344,23 @@ async function executeCrawl(run) {
       fieldsFound: output.contract.filter((field) => !field.hidden).length,
       screenshotsCaptured,
       bytesFetched: fetchedPages.reduce((sum, page) => sum + page.bytesFetched, 0),
+      automationActions: output.pages.reduce(
+        (sum, page) => sum + (page.automationActions?.length || 0),
+        0
+      ),
+      stateExaminations: output.pages.reduce(
+        (sum, page) => sum + (page.stateExaminations || 0),
+        0
+      ),
+      blockedWriteRequests: output.pages.reduce(
+        (sum, page) => sum + (page.blockedWriteRequests || 0),
+        0
+      ),
+      allowedReadLikeRequests: output.pages.reduce(
+        (sum, page) => sum + (page.allowedReadLikeRequests || 0),
+        0
+      ),
+      captchaPages: output.pages.filter((page) => page.captchaDetected).length,
       startedAt,
       finishedAt,
     };
@@ -348,14 +406,26 @@ async function executeCrawl(run) {
       findings,
       browserMode: run.browserMode,
       renderEngine: "playwright-chromium",
+      traversalSettings: run.traversalSettings,
       analysis,
       artifacts,
     };
     await writeJson(artifacts.report, report);
     const allFailed = fetchedPages.length === 0;
+    const needsReview = output.pages.some(
+      (page) => page.captchaDetected || page.unresolvedGate
+    );
     await updateRun(run, {
-      status: allFailed ? "failed" : "completed",
-      stage: allFailed ? "Crawl failed" : "Crawl complete",
+      status: allFailed
+        ? "failed"
+        : needsReview
+          ? "awaiting_review"
+          : "completed",
+      stage: allFailed
+        ? "Crawl failed"
+        : needsReview
+          ? "Predictable traversal needs human review"
+          : "Crawl complete",
       progress: 100,
       findings,
       reportAvailable: true,
@@ -363,10 +433,14 @@ async function executeCrawl(run) {
     });
     await logEvent(
       run.id,
-      allFailed ? "crawl_failed" : "crawl_completed",
+      allFailed
+        ? "crawl_failed"
+        : needsReview
+          ? "crawl_needs_review"
+          : "crawl_completed",
       allFailed
         ? "Every target failed; the report and logs were retained."
-        : `Stored ${stats.fieldsFound} visible fields, ${screenshotsCaptured} screenshots, and the complete report locally.`,
+        : `Stored ${stats.fieldsFound} visible fields, ${screenshotsCaptured} screenshots, and the complete report locally.${needsReview ? " A gate requires human review." : ""}`,
       { report: artifacts.report }
     );
   } catch (error) {
@@ -427,12 +501,14 @@ async function createRun(request) {
     String(payload.name || "").trim().slice(0, 120) ||
     `${new URL(urls[0]).hostname.replace(/^www\./, "")} crawl`;
   const browserMode = payload.browserMode === "headful" ? "headful" : "headless";
+  const traversalSettings = await readTraversalSettings();
   const run = initialRun(
     id,
     urls,
     name,
     payload.mode === "dry_run" ? "dry_run" : "crawl",
     browserMode,
+    traversalSettings,
     now
   );
   await mkdir(runDirectory(id), { recursive: true });
@@ -440,6 +516,7 @@ async function createRun(request) {
   await logEvent(id, "run_created", "Created a filesystem-backed local crawl.", {
     targets: urls.length,
     browserMode,
+    traversalSettingsVersion: traversalSettings.version,
   });
   const task = executeCrawl(run);
   runningTasks.set(id, task);
@@ -483,7 +560,21 @@ async function route(request) {
         engine: "playwright-chromium",
         modes: ["headless", "headful"],
       },
+      traversalSettingsVersion: DEFAULT_TRAVERSAL_SETTINGS.version,
       activeCrawls: runningTasks.size,
+    });
+  }
+  if (url.pathname === "/api/settings" && request.method === "GET") {
+    return jsonResponse(request, {
+      settings: await readTraversalSettings(),
+      settingsPath,
+    });
+  }
+  if (url.pathname === "/api/settings" && request.method === "PUT") {
+    const payload = await bodyJson(request);
+    return jsonResponse(request, {
+      settings: await writeTraversalSettings(payload.settings || payload),
+      settingsPath,
     });
   }
   if (url.pathname === "/api/runs" && request.method === "GET") {

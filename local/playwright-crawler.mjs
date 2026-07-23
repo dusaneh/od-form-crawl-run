@@ -4,6 +4,13 @@ import {
   fingerprintPage,
   validateTargetUrl,
 } from "../worker/crawler.ts";
+import {
+  installReadOnlyGuards,
+  isSameOriginReadLikePost,
+  runPredictableAutomations,
+  sanitizedEndpoint,
+} from "./traversal-automation.mjs";
+import { normalizeTraversalSettings } from "./traversal-settings.mjs";
 
 const MAX_HTML_BYTES = 5_000_000;
 const MAX_PAGES = 12;
@@ -396,52 +403,80 @@ function failedPage(requestedUrl, error, durationMs) {
   };
 }
 
-async function crawlOne(context, url, browserMode, onBrowserEvent) {
+async function crawlOne(
+  context,
+  url,
+  browserMode,
+  traversalSettings,
+  onBrowserEvent
+) {
   const page = await context.newPage();
   const startedAt = Date.now();
   let blockedRequests = 0;
+  let allowedReadLikeRequests = 0;
+  const reportedBlockedEndpoints = new Set();
+  const reportedAllowedEndpoints = new Set();
   await page.route("**/*", async (route) => {
-    const method = route.request().method().toUpperCase();
+    const request = route.request();
+    const method = request.method().toUpperCase();
+    let frameOrigin = "";
+    try {
+      frameOrigin = new URL(request.frame().url() || url).origin;
+    } catch {
+      frameOrigin = new URL(url).origin;
+    }
+    if (
+      isSameOriginReadLikePost(request, frameOrigin, traversalSettings)
+    ) {
+      allowedReadLikeRequests += 1;
+      const endpoint = sanitizedEndpoint(request.url());
+      if (!reportedAllowedEndpoints.has(endpoint)) {
+        reportedAllowedEndpoints.add(endpoint);
+        await onBrowserEvent?.(
+          "read_like_post_allowed",
+          `Allowed a same-origin browser initialization request to ${endpoint}.`,
+          { method, endpoint, resourceType: request.resourceType() }
+        );
+      }
+      await route.continue();
+      return;
+    }
     if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
       blockedRequests += 1;
+      const endpoint = sanitizedEndpoint(request.url());
+      const key = `${method} ${endpoint}`;
+      if (!reportedBlockedEndpoints.has(key)) {
+        reportedBlockedEndpoints.add(key);
+        await onBrowserEvent?.(
+          "browser_write_request_blocked",
+          `Blocked browser request ${method} ${endpoint}.`,
+          { method, endpoint, resourceType: request.resourceType() }
+        );
+      }
       await route.abort("blockedbyclient");
       return;
     }
     await route.continue();
   });
-  await page.addInitScript(() => {
-    window.addEventListener(
-      "submit",
-      (event) => {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-      },
-      true
-    );
-    Object.defineProperty(HTMLFormElement.prototype, "submit", {
-      configurable: false,
-      value() {},
-    });
-    Object.defineProperty(HTMLFormElement.prototype, "requestSubmit", {
-      configurable: false,
-      value() {},
-    });
-  });
+  await installReadOnlyGuards(page);
 
   try {
     await onBrowserEvent?.("browser_page_opened", `Opening ${url} in local Chromium.`, {
       browserMode,
     });
     const response = await page.goto(url, {
-      timeout: 30_000,
+      timeout: 45_000,
       waitUntil: "domcontentloaded",
     });
-    await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
-    const settleMs = Number.parseInt(
-      process.env.FORMWEAVE_RENDER_SETTLE_MS || "700",
-      10
+    if (!response) throw new Error("The browser navigation returned no response.");
+    if (!response.ok()) {
+      throw new Error(`Target returned HTTP ${response.status()}.`);
+    }
+    const automation = await runPredictableAutomations(
+      page,
+      traversalSettings,
+      onBrowserEvent
     );
-    await page.waitForTimeout(Math.max(0, Math.min(settleMs, 5_000)));
     if (browserMode === "headful") {
       const headedPauseMs = Number.parseInt(
         process.env.FORMWEAVE_HEADFUL_PAUSE_MS || "1200",
@@ -449,13 +484,14 @@ async function crawlOne(context, url, browserMode, onBrowserEvent) {
       );
       await page.waitForTimeout(Math.max(300, Math.min(headedPauseMs, 10_000)));
     }
-    if (!response) throw new Error("The browser navigation returned no response.");
-    if (!response.ok()) {
-      throw new Error(`Target returned HTTP ${response.status()}.`);
-    }
     const pageResult = await extractRenderedPage(page, url, response, browserMode);
     pageResult.durationMs = Date.now() - startedAt;
     pageResult.blockedWriteRequests = blockedRequests;
+    pageResult.allowedReadLikeRequests = allowedReadLikeRequests;
+    pageResult.automationActions = automation.actions;
+    pageResult.captchaDetected = automation.captchaDetected;
+    pageResult.unresolvedGate = automation.unresolvedGate;
+    pageResult.stateExaminations = automation.stateExaminations;
     await onBrowserEvent?.(
       "browser_page_extracted",
       `Rendered and extracted ${pageResult.finalUrl}.`,
@@ -466,6 +502,11 @@ async function crawlOne(context, url, browserMode, onBrowserEvent) {
         frames: pageResult.frameCount,
         shadowRoots: pageResult.shadowRootCount,
         blockedWriteRequests: blockedRequests,
+        allowedReadLikeRequests,
+        automationActions: automation.actions.length,
+        captchaDetected: automation.captchaDetected,
+        unresolvedGate: automation.unresolvedGate || "",
+        stateExaminations: automation.stateExaminations,
       }
     );
     return pageResult;
@@ -482,6 +523,7 @@ export async function crawlTargetsWithPlaywright(
   {
     browserMode = "headless",
     allowLoopback = false,
+    traversalSettings = {},
     onProgress,
     onBrowserEvent,
   } = {}
@@ -489,6 +531,7 @@ export async function crawlTargetsWithPlaywright(
   if (!["headless", "headful"].includes(browserMode)) {
     throw new Error("Browser mode must be headless or headful.");
   }
+  const normalizedSettings = normalizeTraversalSettings(traversalSettings);
   const queue = urls.map((url) => ({
     url: validatePlaywrightTarget(url, { allowLoopback }),
     depth: 0,
@@ -523,6 +566,7 @@ export async function crawlTargetsWithPlaywright(
         context,
         candidate.url,
         browserMode,
+        normalizedSettings,
         onBrowserEvent
       );
       pages.push(page);

@@ -2,7 +2,7 @@
 
 Status snapshot for the canonical requirements in `FEATURES.md`.
 
-- Snapshot date: 2026-07-22 America/Los_Angeles
+- Snapshot date: 2026-07-23 America/Los_Angeles
 - Source state assessed: current local Playwright implementation
 - Legend: **Built** = implemented and verified; **Partial** = useful
   implementation exists but part of the requirement remains; **Not built** =
@@ -21,17 +21,28 @@ use the same crawler and safety pipeline; Headful simply opens visible local
 Chromium so the operator can watch it work. Local crawling no longer calls
 Thum.io or another screenshot service.
 
-The new fixture suite covers clean semantic forms, noisy pages with unrelated
-forms, delayed SPA rendering, iframe forms, shadow-DOM forms, and hidden or
-conditional fields. Automated tests prove those pages are rendered and
-extracted, that local artifacts are written, that interrupted records are
-reconciled at startup, and that attempted POST traffic never reaches the
-fixture server.
+The local crawler now has a persisted traversal policy and dedicated Settings
+surface. It can reject cookie gates, dismiss predictable welcome, offer, and
+optional-auth overlays, expand safe disclosures, and advance explicit
+non-submit intro controls. It waits for navigation, bounded network idle,
+fonts, and DOM mutation quiet, then performs a fixed hover/lazy-load priming
+sequence before examination. Every automatic action has before/after state
+fingerprints and JSONL events.
 
-The largest remaining crawl gap is safe exploration of conditional and
-multi-step UI states. Initial rendered state is real and verified, but the
-crawler does not yet click safe non-submit controls to enumerate alternate
-states.
+The PG&E failure mode is represented directly in the implementation: a narrow
+classifier can allow a same-origin framework initialization POST such as an
+Aura render request while consent receipts, analytics writes, and form
+submissions remain blocked. CAPTCHA and human-verification controls are never
+clicked; they produce screenshot evidence and an operator-review state.
+
+The expanded fixture suite proves the full gate sequence, initialization
+classification, and CAPTCHA handoff in addition to clean, noisy, SPA, iframe,
+shadow-DOM, hidden, and conditional forms.
+
+The largest remaining gap is the deterministic form runner itself. Crawl-time
+actions are captured in replay-ready records, but a separate runner does not
+yet consume them, and full branching enumeration of conditional/multi-step
+form states remains partial.
 
 ## Status by feature
 
@@ -50,13 +61,26 @@ states.
 | `F1.3.1` | **Built** | Limits are 12 pages, one discovery level, and eight discovered formish links per page. |
 | `F1.3.2` | **Built** | Discovered pages become graph nodes and report pages. |
 | `F1.3.3` | **Built** | Automated fixtures prove fields are extracted from a same-origin iframe and an open shadow root with frame provenance. |
-| `F1.3.4` | **Not built** | The crawler does not yet actuate safe non-submit controls to enumerate conditional or multi-step states. |
+| `F1.3.4` | **Partial** | The crawler actuates bounded safe disclosures and explicit non-submit intro controls, but it does not yet enumerate alternate value-dependent branches or a complete multi-step form graph. |
 | `F1.4` | **Built** | Deterministic extraction runs against the rendered browser DOM. |
 | `F1.4.1` | **Built** | Form counts and resolved actions include main-document, iframe, and open-shadow-root forms. |
 | `F1.4.2` | **Built** | Contracts include labels, semantic keys, controls, selectors, required/sensitive/hidden flags, option counts, origins, and frame URLs. |
 | `F1.4.3` | **Built** | Visible fields and hidden/system controls remain distinguishable. |
 | `F1.4.4` | **Built** | SPA controls are marked as rendered observations; LLM inference remains a separate report/UI section. |
 | `F1.5` | **Built** | Scripted pages explicitly disclose that unvisited conditional states still require review. |
+| `F1.6` | **Built** | New crawler sessions apply a persisted predictable-traversal policy before rendered-DOM extraction. |
+| `F1.6.1` | **Built** | `GET/PUT /api/settings`, `data/settings.json`, the Settings surface, and per-run policy snapshots are implemented and integration-tested. |
+| `F1.6.2` | **Built** | Cookie handling prefers OneTrust/accessible reject controls and supports a configurable accept-only fallback or observe-only mode. |
+| `F1.6.3` | **Built** | Accessible controls inside visible modal-like containers can dismiss welcome, optional offer, and optional-auth gates; fixture assertions verify the sequence. |
+| `F1.6.4` | **Built** | Safe `aria-expanded` disclosures and explicit `type=button` intro controls outside forms are bounded by `maxActionsPerPage`. |
+| `F1.6.5` | **Built** | Each examination attempts DOMContentLoaded, network idle, font readiness, and a configurable mutation quiet window under hard time limits. |
+| `F1.6.5.1` | **Built** | A post-gate form-surface wait plus final stable examination fixed PG&E’s delayed Aura mount; the proof run observed 29 visible raw controls before extracting its 20-field semantic contract. |
+| `F1.6.6` | **Built** | A deterministic pointer sweep and reversible scroll prime legitimate hover/lazy content and are explicitly separated from prohibited CAPTCHA evasion. |
+| `F1.6.7` | **Built** | Action category/label/strategy/time, before/after SHA state fingerprints, outcome, and start/completion/failure events are persisted. |
+| `F1.6.8` | **Partial** | Captured action records are replay-ready and distinguish predictable actions from observations, but the separate deterministic runner has not been implemented. |
+| `F1.6.9` | **Built** | Unpredictable popup policy is locked to observe-only; no unconditional action is captured for it. |
+| `F1.6.10` | **Built** | Structural/text CAPTCHA detection stops automation, captures the page, logs handoff, and sets `awaiting_review`; the fixture proves its control is not clicked. |
+| `F1.6.11` | **Built** | Only same-origin POST fetch/XHR endpoints matching Aura/bootstrap/init/component/render/config segments qualify; endpoint-classifier and full browser tests pass. |
 | `F2.1` | **Built** | Each successful page writes its serialized rendered DOM as a local HTML artifact. |
 | `F2.2` | **Built** | The same local Playwright page produces full-page PNG evidence. |
 | `F2.2.1` | **Built** | Evidence routes and filenames are scoped to the exact run and page. |
@@ -64,6 +88,7 @@ states.
 | `F2.2.3` | **Built** | A capture failure leaves extraction intact and is represented as unavailable evidence. |
 | `F2.2.4` | **Built** | Imported JSON reports disclose screenshot binaries that were absent from the import. |
 | `F2.2.5` | **Built** | Local crawler source and test output identify `playwright-local-<mode>`; no remote screenshot request exists in the local pipeline. |
+| `F2.2.6` | **Built** | Available evidence previews are links that open the full local PNG in a new tab; the UI test checks the exact evidence URL and target. |
 | `F2.3` | **Built** | Every finished local crawl writes a machine-readable `report.json`. |
 | `F2.3.1` | **Built** | Report content includes targets, stats, page facts, browser engine/mode, contract, findings, analysis, and artifact paths. |
 | `F2.3.2` | **Built** | UI rendering and download both read the same persisted report. |
@@ -88,6 +113,10 @@ states.
 | `F3.11.1` | **Built** | Headless is the default and launches background Chromium. |
 | `F3.11.2` | **Built** | Headful launches visible local Chromium with a short per-page observation pause. |
 | `F3.11.3` | **Built** | Browser mode is a launch option only; extraction, screenshots, storage, logs, and write blocking are shared. |
+| `F3.12` | **Built** | The sidebar now exposes a dedicated Traversal Settings surface. |
+| `F3.12.1` | **Built** | The operating-instructions table distinguishes automatic, observed, blocked, and human-review obstacles and documents locked safety boundaries. |
+| `F3.12.2` | **Built** | Policy version/path/save time, cookie choice, toggles, wait/action bounds, reset defaults, and local persistence are present. |
+| `F3.12.3` | **Built** | Reports show traversal action, state examination, allowed init, and blocked-write totals plus a per-action fingerprint audit list. |
 | `F4` | **Built** | Code, browser, API, UI, run data, reports, evidence, and logs operate locally. |
 | `F4.1` | **Built** | `npm run local` starts the web UI and filesystem API. |
 | `F4.1.1` | **Built** | Local UI is served at `http://127.0.0.1:3000`. |
@@ -121,74 +150,84 @@ states.
 | `F7` | **Built** | Browser setup contains no field-fill path and actively blocks write behavior. |
 | `F7.1` | **Built** | No crawler code enters values into controls. |
 | `F7.2` | **Built** | No crawler code submits forms. |
-| `F7.2.1` | **Built** | Playwright aborts every request method other than GET, HEAD, and OPTIONS. |
+| `F7.2.1` | **Built** | Playwright aborts non-read methods except narrowly classified same-origin read-like initialization fetch/XHR POSTs; submissions and consent receipts remain blocked. |
+| `F7.2.1.1` | **Built** | Allowed initialization and blocked write counts are reported, and unique sanitized endpoints are logged without query strings. |
 | `F7.2.2` | **Built** | An initialization script cancels submit events and disables `submit()` and `requestSubmit()` before page scripts run. |
 | `F7.3` | **Built** | Every crawl uses a new unauthenticated Playwright browser context. |
 | `F7.4` | **Built** | Target validation and documentation retain the public, non-tokenized boundary. |
 | `F7.5` | **Built** | UI trust copy, findings, and docs state the boundary and limitations. |
 | `F8.1` | **Built** | Parser, target validation, fingerprint, crawl output, and rendered-browser fixture tests pass. |
 | `F8.2` | **Built** | Automated tests cover local API/persistence/artifacts/restart behavior plus mocked OpenAI success, HTTP failure, malformed output, timeout, disabled mode, and secret-free events. |
-| `F8.3` | **Built** | A Playwright integration test verifies report totals/page inventory, field contract, evidence image, diagnostics, and that the launch dialog sends the selected Headful mode. |
+| `F8.3` | **Built** | The browser integration test covers report, contract, diagnostics, clickable full evidence, traversal Settings persistence, and Headful launch payload. |
 | `F8.4` | **Built** | `npm run crawl:harness` and the API test provide repeatable end-to-end browser/artifact assertions. |
 | `F8.5` | **Built** | README documents setup, browser installation/modes, storage, fixtures, harnesses, and boundaries. |
 | `F8.6` | **Built** | Both tracking files were updated with this implementation. |
 | `F8.7` | **Built** | Repository-owned fixture server removes third-party test-site dependence. |
-| `F8.7.1` | **Built** | Semantic, noisy multi-form, SPA, iframe, shadow-root, hidden, and conditional cases are present. |
+| `F8.7.1` | **Built** | Semantic, noisy multi-form, SPA, iframe, shadow-root, hidden, conditional, gated-overlay, read-like initialization, and CAPTCHA handoff cases are present. |
 | `F8.7.2` | **Built** | Headless harness writes HTML, PNGs, report, and JSONL events to `data/harness/<timestamp>/`. |
 | `F8.7.3` | **Built** | `npm run crawl:harness:headed` uses the same fixture crawl with visible Chromium. |
-| `F8.7.4` | **Built** | Fixture and API tests assert zero non-read requests reached the target server while the SPA’s attempted POST was blocked in-browser. |
+| `F8.7.4` | **Built** | Fixture/API tests prove only the classified `/fixtures/aura` POST reaches the server while the write probe remains blocked in-browser. |
+| `F8.7.5` | **Built** | Browser and API tests prove the full predictable gate sequence, fingerprint audit, CAPTCHA no-click handoff, Settings persistence, and full-evidence link. |
 
 ## What is built now
 
 - Local Playwright Chromium rendering and rendered-DOM form extraction.
 - Headless background crawling and visible Headful crawling from a UI switch.
 - SPA, same-origin iframe, and open shadow-root field discovery.
+- Persisted traversal settings with conservative cookie, overlay, disclosure,
+  intro, wait, and framework-initialization policies.
+- Fingerprinted predictable-action audit records and human-review handoff for
+  CAPTCHA or unresolved gates.
+- Clickable local screenshot evidence.
 - Local full-page screenshots with no Thum.io dependency in the localhost path.
 - Filesystem-backed reports, rendered HTML, PNG evidence, run state, and JSONL
   logs.
 - Restart reconciliation for abandoned `running` records.
 - Realistic local fixture sites plus repeatable headless and headful harnesses.
 - Network- and DOM-level form-submission safeguards verified against a write
-  probe.
+  probe while a narrowly classified framework bootstrap is allowed.
 - Server-side OpenAI enrichment through the populated root `.env`.
 
 ## What should be built next
 
-1. `F1.3.4`: explore bounded conditional and multi-step states by identifying
-   and actuating safe non-submit controls, recording before/after fingerprints,
-   and refusing any control that could submit or transmit data.
-2. Improve operational retries beyond `F6.6`’s current explicit interrupted
+1. `F1.6.8`: build the deterministic runner that consumes recorded predictable
+   traversal actions and treats nondeterministic observations as conditional
+   replay events.
+2. Complete `F1.3.4` with bounded alternate-state and multi-step enumeration
+   without selecting values, accepting terms, authenticating, or submitting.
+3. Improve operational retries beyond `F6.6`’s current explicit interrupted
    status, including an operator-visible safe retry action that creates a new
    run rather than mutating history.
 
 ## Verification recorded for this snapshot
 
-- `npm test`: passed production build and all 12 automated tests.
+- `npm test`: passed the production build and all 14 automated tests.
 - `npm run lint`: passed.
-- `npm run test:crawler`: passed, 2 tests.
-- Rendered fixture crawl: 7/7 pages, 7/7 screenshots, SPA/iframe/shadow fields
-  observed, 24 visible fields extracted, attempted browser POST blocked, zero
-  writes reached the fixture server.
-- `npm run crawl:harness`: passed and wrote report, events, seven rendered HTML
-  files, and seven PNGs under `data/harness/2026-07-23T07-11-09Z/`.
-- `npm run crawl:harness:headed`: passed through the same 7/7 pages in visible
-  Chromium and wrote artifacts under
-  `data/harness/2026-07-23T07-11-29Z/`; the noisy multi-form capture was
-  visually inspected.
-- `npm run test:api`: passed, 1 integration test.
-- API integration: report, rendered HTML, screenshots, events, health browser
-  metadata, browser-origin CORS, and restart reconciliation verified in an
-  isolated local data directory.
-- `npm run test:ui`: passed, 1 browser integration test covering report,
-  contract, evidence, diagnostics, and Headful launch payload.
-- `npm run test:openai`: passed, 4 mocked model-path tests covering success,
-  HTTP failure, malformed output, timeout, disabled mode, and event redaction.
-- Live localhost health: online at `127.0.0.1:8787`, storage rooted at
-  `C:\pp2\FCR\data`, Playwright Chromium reports Headless/Headful support, and
-  OpenAI is configured through `OPENAI_KEY`.
-- Live browser QA: `http://127.0.0.1:3000` reports “Local crawler · AI ready,”
-  the Headless/Headful launch dialog is visible, and the browser console has no
-  errors.
-- Public proof run `run_1c6233c7121046`: completed through the live API with 1
-  W3C page, 2 forms, 4 visible rendered fields, 1 local PNG, rendered HTML,
-  JSON report/events, and completed `gpt-5.6` analysis.
+- Traversal/settings unit coverage proves policy bounds, locked CAPTCHA
+  handoff, narrow same-origin initialization classification, and query-free
+  endpoint logging.
+- Rendered fixture test: 9/9 pages and screenshots, 27 visible fields,
+  SPA/iframe/shadow extraction, five fingerprinted gate actions, one allowed
+  `/fixtures/aura` initialization POST, two blocked write attempts, and zero
+  unexpected writes reaching the server.
+- `npm run crawl:harness`: passed and wrote nine rendered HTML files, nine
+  PNGs, report, and events under
+  `data/harness/2026-07-23T16-14-13Z/`.
+- API integration: policy GET/PUT/persistence, immutable CAPTCHA behavior,
+  awaiting-review status, report/HTML/PNG/events, CORS including PUT,
+  read-like/blocked request counts, and restart reconciliation all passed.
+- UI integration: report, contract, diagnostics, full-image evidence link,
+  Settings edit/save, and Headful launch payload passed.
+- OpenAI path: four mocked success/failure/timeout/disabled tests passed; the
+  live PG&E proof also completed `gpt-5.6` analysis with the configured
+  `OPENAI_KEY`.
+- Live localhost health: UI `127.0.0.1:3000` and API `127.0.0.1:8787` are
+  online, storage is `C:\pp2\FCR\data`, Playwright reports Headless/Headful
+  support, traversal policy v1 is active, and OpenAI is ready.
+- PG&E proof run `run_7f0016c4358342`: completed in headless Chromium after
+  rejecting non-necessary cookies, blocking the external OneTrust consent
+  receipt, allowing three same-origin Aura initialization requests, waiting
+  for 29 visible raw controls, and extracting a 20-visible-field/29-total
+  semantic contract. It stored rendered HTML, one full-page PNG, JSON report,
+  JSONL events, and completed OpenAI analysis without entering or submitting
+  values.

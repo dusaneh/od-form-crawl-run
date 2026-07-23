@@ -107,6 +107,7 @@ test(
       const health = await waitForJson(`${baseUrl}/api/health`);
       assert.equal(health.browser.engine, "playwright-chromium");
       assert.deepEqual(health.browser.modes, ["headless", "headful"]);
+      assert.equal(health.traversalSettingsVersion, 1);
       const corsResponse = await fetch(`${baseUrl}/api/health`, {
         headers: { origin: "http://127.0.0.1:3000" },
       });
@@ -114,6 +115,41 @@ test(
         corsResponse.headers.get("access-control-allow-origin"),
         "http://127.0.0.1:3000"
       );
+      assert.match(
+        corsResponse.headers.get("access-control-allow-methods"),
+        /PUT/
+      );
+
+      const settingsResponse = await fetch(`${baseUrl}/api/settings`);
+      assert.equal(settingsResponse.status, 200);
+      const settingsPayload = await settingsResponse.json();
+      assert.equal(settingsPayload.settings.cookieConsent, "reject_non_essential");
+      assert.equal(settingsPayload.settings.captchaPolicy, "detect_and_handoff");
+      assert.equal(settingsPayload.settings.maxStateWaitMs, 12000);
+      assert.equal(
+        settingsPayload.settingsPath,
+        path.join(dataRoot, "settings.json")
+      );
+
+      const saveSettingsResponse = await fetch(`${baseUrl}/api/settings`, {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://127.0.0.1:3000",
+        },
+        body: JSON.stringify({
+          settings: {
+            ...settingsPayload.settings,
+            stableWindowMs: 600,
+            captchaPolicy: "click_and_bypass",
+          },
+        }),
+      });
+      assert.equal(saveSettingsResponse.status, 200);
+      const savedSettings = await saveSettingsResponse.json();
+      assert.equal(savedSettings.settings.stableWindowMs, 600);
+      assert.equal(savedSettings.settings.captchaPolicy, "detect_and_handoff");
+      assert.ok(savedSettings.settings.updatedAt);
 
       const reconciled = JSON.parse(
         await readFile(path.join(interruptedDirectory, "run.json"), "utf8")
@@ -137,23 +173,30 @@ test(
       const created = await createResponse.json();
       const runId = created.run.id;
       assert.equal(created.run.browserMode, "headless");
+      assert.equal(created.run.traversalSettings.stableWindowMs, 600);
 
       const list = await waitForJson(
         `${baseUrl}/api/runs`,
         (value) =>
           value.runs.some(
             (run) =>
-              run.id === runId && ["completed", "failed"].includes(run.status)
+              run.id === runId &&
+              ["completed", "awaiting_review", "failed"].includes(run.status)
           )
       );
       const finished = list.runs.find((run) => run.id === runId);
-      assert.equal(finished.status, "completed", output.join(""));
+      assert.equal(finished.status, "awaiting_review", output.join(""));
       assert.equal(finished.reportAvailable, true);
-      assert.ok(finished.stats.pagesFetched >= 7);
+      assert.ok(finished.stats.pagesFetched >= 9);
       assert.equal(
         finished.stats.screenshotsCaptured,
         finished.stats.pagesFetched
       );
+      assert.ok(finished.stats.automationActions >= 5);
+      assert.ok(finished.stats.stateExaminations >= finished.stats.pagesFetched);
+      assert.ok(finished.stats.allowedReadLikeRequests >= 1);
+      assert.ok(finished.stats.blockedWriteRequests >= 1);
+      assert.equal(finished.stats.captchaPages, 1);
 
       const runDirectory = path.join(dataRoot, "runs", runId);
       const report = JSON.parse(
@@ -170,6 +213,13 @@ test(
         report.contract.some((field) => field.label === "Member number")
       );
       assert.ok(report.contract.some((field) => field.label === "Case ID"));
+      assert.ok(
+        report.contract.some(
+          (field) => field.label === "Application reference"
+        )
+      );
+      assert.equal(report.traversalSettings.stableWindowMs, 600);
+      assert.ok(report.pages.some((page) => page.captchaDetected));
 
       const events = await readFile(
         path.join(runDirectory, "events.jsonl"),
@@ -177,12 +227,18 @@ test(
       );
       assert.match(events, /"kind":"browser_launched"/);
       assert.match(events, /"kind":"evidence_captured"/);
-      assert.match(events, /"kind":"crawl_completed"/);
+      assert.match(events, /"kind":"automation_action_completed"/);
+      assert.match(events, /"kind":"read_like_post_allowed"/);
+      assert.match(events, /"kind":"captcha_handoff_required"/);
+      assert.match(events, /"kind":"crawl_needs_review"/);
 
-      const writesAtServer = fixture.requests.filter(
+      const nonReadRequests = fixture.requests.filter(
         (request) => !["GET", "HEAD", "OPTIONS"].includes(request.method)
       );
-      assert.deepEqual(writesAtServer, []);
+      assert.deepEqual(
+        nonReadRequests.map((request) => `${request.method} ${request.path}`),
+        ["POST /fixtures/aura"]
+      );
     } finally {
       child.kill();
       await Promise.race([

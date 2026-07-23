@@ -50,6 +50,38 @@ additional numeric segment identifies a sub-requirement of its parent.
   distinguishable from raw response HTML and LLM inference.
 - `F1.5` Script-driven or otherwise uncertified states are explicitly flagged
   for review.
+- `F1.6` The crawler must automatically traverse predictable, low-risk
+  obstacles according to a persisted operator policy.
+- `F1.6.1` A Settings surface documents and configures the traversal policy,
+  and every new run snapshots the policy it used.
+- `F1.6.2` Cookie gates prefer rejecting non-essential cookies, with a
+  separately configurable accept-only fallback when needed to reveal a public
+  form.
+- `F1.6.3` Predictable welcome banners, optional offers, and optional
+  registration or sign-in prompts may be dismissed without entering values,
+  accepting terms, or creating an account.
+- `F1.6.4` Safe disclosures and explicit non-submit intro controls outside a
+  form may be advanced within a bounded action budget.
+- `F1.6.5` State examination waits for DOM content, a bounded network-idle
+  attempt, fonts, and a configurable DOM-mutation quiet window.
+- `F1.6.5.1` After a predictable gate action, the crawler performs a bounded
+  wait for a visible form surface and a final stable-state examination so
+  delayed framework initialization cannot race extraction.
+- `F1.6.6` A fixed pointer sweep and reversible scroll may prime legitimate
+  hover and lazy-load behavior before examination; it must not be represented
+  or used as CAPTCHA or bot-detection evasion.
+- `F1.6.7` Every automatic action records category, label, strategy,
+  timestamp, before/after state fingerprints, outcome, and an append-only
+  event.
+- `F1.6.8` A deterministic runner must be able to replay captured predictable
+  actions while treating nondeterministic observations as conditional events.
+- `F1.6.9` Unpredictable ads and popups are observed and captured but are not
+  made unconditional replay steps.
+- `F1.6.10` CAPTCHA or human-verification gates are detected, captured, and
+  handed to a person; FormWeave does not click, solve, or bypass them.
+- `F1.6.11` Same-origin fetch/XHR POST requests may be allowed only when a
+  narrow endpoint classifier identifies framework rendering or initialization
+  behavior and form-submit guards remain active.
 
 ## F2. Evidence and provenance
 
@@ -65,6 +97,8 @@ additional numeric segment identifies a sub-requirement of its parent.
   the imported file did not contain them.
 - `F2.2.5` Local screenshot capture uses the same local Playwright page and
   must not depend on a third-party screenshot service.
+- `F2.2.6` Every available screenshot preview in the UI opens the full local
+  evidence image when clicked.
 - `F2.3` Every crawl produces a complete machine-readable JSON report.
 - `F2.3.1` The report includes targets, timestamps, aggregate statistics,
   per-page facts, the full field contract, findings, analysis, and artifact
@@ -109,6 +143,14 @@ additional numeric segment identifies a sub-requirement of its parent.
   watch pages render.
 - `F3.11.3` Both visibility modes use the same extraction, screenshot,
   persistence, logging, and safety pipeline.
+- `F3.12` The UI provides a dedicated traversal Settings surface.
+- `F3.12.1` Settings explain what is automatic, observed only, or requires
+  human review.
+- `F3.12.2` Settings persist locally and show the policy version, local path,
+  saved time, recommended defaults, and bounded wait/action controls.
+- `F3.12.3` Reports expose automatic-action, state-examination, allowed
+  initialization, and blocked-write counts plus the per-action fingerprint
+  audit trail.
 
 ## F4. Local-first operation and ownership
 
@@ -175,7 +217,10 @@ additional numeric segment identifies a sub-requirement of its parent.
 - `F7.1` The crawler never enters form values.
 - `F7.2` The crawler never submits a form.
 - `F7.2.1` Browser requests using methods other than GET, HEAD, or OPTIONS are
-  blocked before they reach the target server.
+  blocked before they reach the target server except narrowly classified
+  same-origin fetch/XHR initialization POSTs allowed by `F1.6.11`.
+- `F7.2.1.1` Allowed initialization requests and blocked non-read requests are
+  both counted and logged with sanitized endpoints.
 - `F7.2.2` Submit events and programmatic form submission APIs are disabled in
   every crawled page before site scripts execute.
 - `F7.3` Screenshots use a fresh unauthenticated public-page context.
@@ -202,10 +247,16 @@ additional numeric segment identifies a sub-requirement of its parent.
   variation and page noise without depending on third-party websites.
 - `F8.7.1` Fixtures include clean semantic HTML, multiple unrelated forms,
   noisy page chrome, delayed SPA rendering, same-origin iframe forms, open
-  shadow-DOM forms, hidden controls, and conditional fields.
+  shadow-DOM forms, hidden controls, conditional fields, predictable consent
+  and overlay gates, classified framework initialization, and a
+  human-verification handoff.
 - `F8.7.2` A headless harness writes its report, rendered HTML, screenshots,
   and events below local `data/harness/`.
 - `F8.7.3` A headful harness runs the same fixtures and assertions while
   showing the local browser.
-- `F8.7.4` Automated assertions prove that browser-initiated write requests do
-  not reach the fixture server.
+- `F8.7.4` Automated assertions prove that browser-initiated writes do not
+  reach the fixture server while a specifically classified same-origin
+  initialization request can complete.
+- `F8.7.5` Automated assertions prove predictable gates are traversed and
+  fingerprinted, CAPTCHA controls are not clicked, Settings persist, and
+  screenshot evidence links open the full local image.

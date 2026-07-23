@@ -52,6 +52,16 @@ The **New crawl** dialog has a browser visibility switch:
 Both modes use the same rendered-DOM extraction, local screenshot, logging,
 persistence, and read-only safety pipeline.
 
+The sidebar **Settings** surface controls predictable obstacle traversal for
+new sessions. Settings are stored locally in `data/settings.json`, and each run
+snapshots the exact policy it used. Recommended defaults reject non-essential
+cookies, close predictable welcome and optional-offer overlays, continue as a
+guest when sign-in is clearly optional, expand safe disclosures, and advance
+only explicit non-submit intro controls outside forms.
+
+CAPTCHA or human-verification controls are never clicked or solved. They are
+captured as evidence and the run stops in **Needs review**.
+
 You can also run the two processes separately:
 
 ```bash
@@ -66,6 +76,7 @@ git-ignored:
 
 ```text
 data/
+  settings.json
   logs/
     crawler.jsonl
   runs/
@@ -107,10 +118,17 @@ Rerun the target locally to create new local screenshot evidence.
   option counts, hidden controls, frame origins, and potentially sensitive
   field indicators
 - fingerprints observed form facts so later crawls can be compared
+- waits for DOM content, a bounded network-idle attempt, fonts, and DOM
+  mutation quiet; a fixed pointer sweep and reversible scroll prime legitimate
+  hover and lazy-load state before examination
+- traverses configured predictable cookie, welcome, optional-auth/offer,
+  disclosure, and intro gates, recording before/after state fingerprints and
+  events for every action
 - captures a fresh unauthenticated full-page screenshot from the same
   Playwright page without entering values
-- blocks non-read browser requests, submit events, and programmatic form-submit
-  APIs
+- blocks non-read browser requests except narrowly classified same-origin
+  framework initialization fetch/XHR POSTs; submit events, programmatic submit
+  APIs, consent receipts, analytics writes, and ordinary POSTs remain blocked
 - stores rendered HTML, screenshot, report, run state, and JSONL events locally
 - optionally sends crawl facts and up to three screenshots to the OpenAI
   Responses API for structured, clearly separated visual inference
@@ -123,9 +141,10 @@ unauthenticated browser page; the localhost pipeline does not call Thum.io or
 another screenshot service. OpenAI analysis uses the configured server-side
 key and is explicitly labeled as inference in the UI.
 
-JavaScript-created initial state is observed. Alternate conditional or
-multi-step states are not yet explored automatically, so scripted pages still
-carry a limitation finding.
+JavaScript-created initial state and configured predictable gates are observed.
+Safe disclosures and explicit non-submit intro controls can be traversed, but
+complete alternate value-dependent or multi-step form branches are not yet
+enumerated automatically, so scripted pages still carry a limitation finding.
 
 Do not crawl private, authenticated, personalized, or tokenized URLs.
 
@@ -144,9 +163,10 @@ tests.
 
 The repository includes intentionally varied pages under `test-sites/`:
 semantic HTML, noisy pages with unrelated forms, delayed SPA rendering,
-same-origin iframe forms, open shadow-DOM forms, and hidden/conditional fields.
-They contain a write probe so tests can prove that attempted POST traffic is
-blocked before it reaches the site.
+same-origin iframe forms, open shadow-DOM forms, hidden/conditional fields, a
+cookie/bootstrap/welcome/optional-auth/offer gate sequence, and a fake CAPTCHA
+handoff. They contain a write probe so tests can prove that attempted writes
+are blocked while the deliberately classified framework bootstrap succeeds.
 
 Run the complete fixture crawl in the background:
 

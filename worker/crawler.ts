@@ -38,6 +38,20 @@ export type CrawlPage = ParsedPage & {
   frameCount?: number;
   shadowRootCount?: number;
   blockedWriteRequests?: number;
+  allowedReadLikeRequests?: number;
+  automationActions?: {
+    category: string;
+    label: string;
+    strategy: string;
+    beforeFingerprint: string;
+    afterFingerprint: string;
+    changed: boolean;
+    timestamp: string;
+    error?: string;
+  }[];
+  captchaDetected?: boolean;
+  unresolvedGate?: string;
+  stateExaminations?: number;
   error?: string;
 };
 
@@ -510,6 +524,9 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
               ? "Client-side scripts executed; unvisited conditional state transitions still require operator review."
               : "Client-side scripts are present; dynamic states require operator review."
             : "No client-side script tag was observed in the fetched HTML.",
+          page.automationActions?.length
+            ? `${page.automationActions.length} predictable traversal action${page.automationActions.length === 1 ? "" : "s"} completed before extraction.`
+            : "No predictable traversal action was required before extraction.",
         ];
     if (!page.screenshot) notes.push("Screenshot capture was unavailable; crawl data is still preserved.");
 
@@ -521,7 +538,10 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
         ? "Fetch failed"
         : `${page.httpStatus} · ${page.forms} forms · ${visibleFields.length} fields`,
       fingerprint: page.fingerprint,
-      status: page.error ? "review" : "complete",
+      status:
+        page.error || page.captchaDetected || page.unresolvedGate
+          ? "review"
+          : "complete",
       fields: visibleFields.length,
       branches: page.formActions.length,
       x: 34 + index * 224,
@@ -611,6 +631,62 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
       time: "now",
     });
   }
+  const automationActions = pages.flatMap(
+    (page) => page.automationActions || []
+  );
+  if (automationActions.length) {
+    findings.push({
+      id: `${runId}_automation`,
+      tone: automationActions.some((action) => action.error)
+        ? "warning"
+        : "success",
+      code: "predictable_traversal_completed",
+      title: `${automationActions.length} predictable traversal action${automationActions.length === 1 ? "" : "s"} recorded`,
+      detail:
+        "Cookie, welcome, optional-offer, disclosure, and intro actions are applied only through configured deterministic policies; every action is retained in the event log.",
+      time: "now",
+    });
+  }
+  const allowedReadLikeRequests = pages.reduce(
+    (sum, page) => sum + (page.allowedReadLikeRequests || 0),
+    0
+  );
+  if (allowedReadLikeRequests) {
+    findings.push({
+      id: `${runId}_read_like_posts`,
+      tone: "info",
+      code: "read_like_initialization_allowed",
+      title: `${allowedReadLikeRequests} read-oriented initialization request${allowedReadLikeRequests === 1 ? "" : "s"} allowed`,
+      detail:
+        "Only same-origin XHR/fetch POSTs matching configured framework initialization endpoints were allowed; form submission guards remained active.",
+      time: "now",
+    });
+  }
+  pages
+    .filter((page) => page.captchaDetected)
+    .forEach((page, index) => {
+      findings.push({
+        id: `${runId}_captcha_${index}`,
+        tone: "warning",
+        code: "captcha_handoff",
+        title: "Human verification requires operator handoff",
+        detail: `A CAPTCHA or human-verification gate was detected at ${page.finalUrl}. FormWeave captured the state and did not attempt to solve or bypass it.`,
+        time: "now",
+      });
+    });
+  pages
+    .filter((page) => page.unresolvedGate && !page.captchaDetected)
+    .forEach((page, index) => {
+      const gate = page.unresolvedGate || "unknown";
+      findings.push({
+        id: `${runId}_gate_${index}`,
+        tone: "warning",
+        code: "traversal_gate_unresolved",
+        title: "A traversal gate remains visible",
+        detail: `The ${gate.replaceAll("_", " ")} gate at ${page.finalUrl} was not cleared by the configured predictable policies.`,
+        time: "now",
+      });
+    });
   failed.forEach((page, index) => {
     findings.push({
       id: `${runId}_failed_${index}`,

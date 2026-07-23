@@ -8,10 +8,30 @@ import type {
   FlowNode,
   FormRun,
   RunStatus,
+  TraversalSettings,
 } from "../lib/models";
 
 const tabs = ["Report", "Flow map", "Field contract", "Evidence", "Diagnostics"] as const;
 type Tab = (typeof tabs)[number];
+type Surface = "runs" | "settings";
+
+const defaultTraversalSettings: TraversalSettings = {
+  version: 1,
+  cookieConsent: "reject_non_essential",
+  acceptCookiesWhenRequired: true,
+  closeWelcomeBanners: true,
+  dismissOptionalOffers: true,
+  dismissOptionalAuth: true,
+  expandSafeDisclosures: true,
+  advanceIntroScreens: true,
+  allowSameOriginReadLikePosts: true,
+  pointerAndScrollPriming: true,
+  unpredictablePopups: "observe_only",
+  captchaPolicy: "detect_and_handoff",
+  stableWindowMs: 700,
+  maxStateWaitMs: 12000,
+  maxActionsPerPage: 10,
+};
 
 type RuntimeStatus = {
   status: "online";
@@ -26,6 +46,7 @@ type RuntimeStatus = {
     engine: string;
     modes: BrowserMode[];
   };
+  traversalSettingsVersion?: number;
   activeCrawls: number;
 };
 
@@ -67,9 +88,18 @@ function relativeTime(value: string) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function Sidebar() {
+function Sidebar({
+  surface,
+  onChange,
+}: {
+  surface: Surface;
+  onChange: (surface: Surface) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const nav = [["⌁", "Runs"]];
+  const nav: { icon: string; label: string; surface: Surface }[] = [
+    { icon: "⌁", label: "Runs", surface: "runs" },
+    { icon: "⚙", label: "Settings", surface: "settings" },
+  ];
 
   return (
     <aside className={`sidebar ${expanded ? "sidebar-expanded" : ""}`}>
@@ -81,12 +111,18 @@ function Sidebar() {
         <span>F</span>
       </button>
       <nav aria-label="Primary navigation">
-        {nav.map(([icon, label], index) => (
-          <button className={`nav-item ${index === 0 ? "active" : ""}`} key={label}>
+        {nav.map((item) => (
+          <button
+            className={`nav-item ${surface === item.surface ? "active" : ""}`}
+            key={item.surface}
+            onClick={() => onChange(item.surface)}
+            aria-current={surface === item.surface ? "page" : undefined}
+            title={item.label}
+          >
             <span className="nav-glyph" aria-hidden="true">
-              {icon}
+              {item.icon}
             </span>
-            <span className="nav-label">{label}</span>
+            <span className="nav-label">{item.label}</span>
           </button>
         ))}
       </nav>
@@ -249,14 +285,24 @@ function EvidencePreview({ node }: { node: FlowNode }) {
   return (
     <div className={`evidence-preview evidence-${node.id}`}>
       {node.evidenceAvailable && node.evidence ? (
-        // The evidence route is private and cannot be delegated to the public image optimizer.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          className="evidence-image"
-          src={apiUrl(node.evidence)}
-          alt={`Captured public page for ${node.title}`}
-          loading="lazy"
-        />
+        <a
+          className="evidence-open-link"
+          href={apiUrl(node.evidence)}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`Open full screenshot evidence for ${node.title}`}
+          title="Open full screenshot"
+        >
+          {/* The evidence route is private and cannot be delegated to the public image optimizer. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            className="evidence-image"
+            src={apiUrl(node.evidence)}
+            alt={`Captured public page for ${node.title}`}
+            loading="lazy"
+          />
+          <span className="evidence-open-hint">Open full image ↗</span>
+        </a>
       ) : (
         <div className="evidence-empty">
           <span>NO CAPTURE</span>
@@ -465,6 +511,12 @@ function ReportPanel({
   const visibleFields = report.contract.filter((field) => !field.hidden);
   const hiddenFields = report.contract.length - visibleFields.length;
   const localScreenshots = report.pages.filter((page) => page.screenshotArtifact).length;
+  const traversalActions = report.pages.flatMap((page) =>
+    (page.automationActions ?? []).map((action) => ({
+      ...action,
+      page: page.heading || page.title || shortHost(page.finalUrl),
+    }))
+  );
 
   return (
     <div className="report-panel">
@@ -504,7 +556,38 @@ function ReportPanel({
           <small>{report.stats.screenshotsCaptured} reported by source crawl</small>
         </div>
         <div><span>{isRendered ? "DOM bytes" : "Source bytes"}</span><strong>{formatBytes(report.stats.bytesFetched)}</strong><small>{isRendered ? "Serialized rendered HTML" : "Reported by the source crawl"}</small></div>
+        <div><span>Traversal actions</span><strong>{report.stats.automationActions ?? 0}</strong><small>Fingerprint-audited decisions</small></div>
+        <div><span>State examinations</span><strong>{report.stats.stateExaminations ?? 0}</strong><small>Bounded stable-state waits</small></div>
+        <div><span>Read-like init</span><strong>{report.stats.allowedReadLikeRequests ?? 0}</strong><small>Classified same-origin requests</small></div>
+        <div><span>Writes blocked</span><strong>{report.stats.blockedWriteRequests ?? 0}</strong><small>Submission safety guard</small></div>
       </section>
+
+      {traversalActions.length ? (
+        <section className="report-section">
+          <div className="section-title">
+            <span>Predictable traversal audit</span>
+            <span>{traversalActions.length}</span>
+          </div>
+          <div className="automation-audit-list">
+            {traversalActions.map((action, index) => (
+              <article key={`${action.timestamp}-${action.category}-${index}`}>
+                <span className="policy-badge automatic">
+                  {action.category.replaceAll("_", " ")}
+                </span>
+                <div>
+                  <strong>{action.label}</strong>
+                  <small>
+                    {action.page} · {action.strategy}
+                  </small>
+                </div>
+                <code title="Before and after page-state fingerprints">
+                  {action.beforeFingerprint} → {action.afterFingerprint}
+                </code>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="report-section">
         <div className="section-title">
@@ -524,6 +607,13 @@ function ReportPanel({
                   <span>{page.fields.filter((field) => !field.hidden).length} visible fields</span>
                   <span>{formatBytes(page.bytesFetched)}</span>
                   <span>{page.durationMs} ms</span>
+                  {(page.automationActions?.length ?? 0) > 0 && (
+                    <span>{page.automationActions?.length} traversal actions</span>
+                  )}
+                  {page.captchaDetected && <span>CAPTCHA · review required</span>}
+                  {page.unresolvedGate && !page.captchaDetected && (
+                    <span>{page.unresolvedGate.replaceAll("_", " ")} unresolved</span>
+                  )}
                 </div>
               </div>
               <div className="page-report-artifacts">
@@ -859,7 +949,410 @@ function LaunchModal({
   );
 }
 
+function SettingsToggle({
+  checked,
+  label,
+  detail,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  detail: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="settings-toggle-row">
+      <span>
+        <strong>{label}</strong>
+        <small>{detail}</small>
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <i aria-hidden="true" />
+    </label>
+  );
+}
+
+function TraversalSettingsPanel({
+  settings,
+  settingsPath,
+  saving,
+  onSave,
+}: {
+  settings: TraversalSettings | null;
+  settingsPath: string;
+  saving: boolean;
+  onSave: (settings: TraversalSettings) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<TraversalSettings>(
+    settings ?? defaultTraversalSettings
+  );
+
+  function setBoolean(
+    key:
+      | "acceptCookiesWhenRequired"
+      | "closeWelcomeBanners"
+      | "dismissOptionalOffers"
+      | "dismissOptionalAuth"
+      | "expandSafeDisclosures"
+      | "advanceIntroScreens"
+      | "allowSameOriginReadLikePosts"
+      | "pointerAndScrollPriming",
+    value: boolean
+  ) {
+    setDraft((current) => ({ ...current, [key]: value }));
+  }
+
+  const policyRows = [
+    {
+      obstacle: "Cookie consent",
+      behavior:
+        draft.cookieConsent === "reject_non_essential"
+          ? "Reject non-essential cookies; accept only when it is the sole safe path"
+          : draft.cookieConsent === "accept_all"
+            ? "Accept cookies"
+            : "Observe and request review",
+      disposition: draft.cookieConsent === "observe_only" ? "Review" : "Automatic",
+    },
+    {
+      obstacle: "Welcome banners and optional offers",
+      behavior: "Close predictable overlays and continue as guest when clearly optional",
+      disposition:
+        draft.closeWelcomeBanners && draft.dismissOptionalOffers
+          ? "Automatic"
+          : "Observed",
+    },
+    {
+      obstacle: "Intro and disclosure screens",
+      behavior: "Expand safe disclosures and advance explicit non-submit intro controls",
+      disposition:
+        draft.expandSafeDisclosures && draft.advanceIntroScreens
+          ? "Automatic"
+          : "Observed",
+    },
+    {
+      obstacle: "App initialization",
+      behavior:
+        "Allow only same-origin fetch/XHR POSTs classified as render or initialization; continue blocking submissions",
+      disposition: draft.allowSameOriginReadLikePosts ? "Automatic" : "Blocked",
+    },
+    {
+      obstacle: "CAPTCHA / human verification",
+      behavior: "Detect, capture evidence, log the gate, and stop for a person",
+      disposition: "Human review",
+    },
+    {
+      obstacle: "Unpredictable ads or popups",
+      behavior: "Observe and capture; do not add a nondeterministic replay action",
+      disposition: "Observed",
+    },
+    {
+      obstacle: "Terms, age, payment, or required authentication",
+      behavior: "Never agree, attest, pay, sign in, or create an account automatically",
+      disposition: "Human review",
+    },
+  ];
+
+  return (
+    <section className="settings-page">
+      <div className="settings-hero">
+        <div>
+          <span className="eyebrow">PREDICTABLE TRAVERSAL POLICY</span>
+          <h2>Automate safe obstacles. Preserve every decision.</h2>
+          <p>
+            New crawler sessions snapshot this policy. Every predictable action is
+            fingerprinted and logged so the deterministic runner can replay it; uncertain
+            or consequential gates stop for review.
+          </p>
+        </div>
+        <div className="settings-snapshot">
+          <span>POLICY VERSION</span>
+          <strong>v{draft.version}</strong>
+          <small>
+            {settings?.updatedAt
+              ? `Saved ${relativeTime(settings.updatedAt)}`
+              : "Loading local policy"}
+          </small>
+        </div>
+      </div>
+
+      <div className="settings-grid">
+        <article className="settings-section">
+          <div className="settings-section-heading">
+            <div>
+              <span className="eyebrow">CONSENT</span>
+              <h3>Cookie gates</h3>
+            </div>
+            <span className="policy-badge automatic">Predictable</span>
+          </div>
+          <label className="settings-field">
+            Default response
+            <select
+              value={draft.cookieConsent}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  cookieConsent: event.target
+                    .value as TraversalSettings["cookieConsent"],
+                }))
+              }
+            >
+              <option value="reject_non_essential">
+                Reject non-essential cookies (recommended)
+              </option>
+              <option value="accept_all">Accept cookies</option>
+              <option value="observe_only">Observe only and request review</option>
+            </select>
+            <small>
+              A consent click is recorded only when its label and visible gate are
+              predictable.
+            </small>
+          </label>
+          <SettingsToggle
+            checked={draft.acceptCookiesWhenRequired}
+            label="Allow accept-only fallback"
+            detail="Use Accept only when no reject or necessary-only route exists and it is required to reveal the public form."
+            onChange={(value) => setBoolean("acceptCookiesWhenRequired", value)}
+          />
+        </article>
+
+        <article className="settings-section">
+          <div className="settings-section-heading">
+            <div>
+              <span className="eyebrow">OVERLAYS</span>
+              <h3>Predictable blockers</h3>
+            </div>
+            <span className="policy-badge automatic">Audited</span>
+          </div>
+          <SettingsToggle
+            checked={draft.closeWelcomeBanners}
+            label="Close welcome banners"
+            detail="Dismiss clearly labeled welcome, tour, announcement, and informational overlays."
+            onChange={(value) => setBoolean("closeWelcomeBanners", value)}
+          />
+          <SettingsToggle
+            checked={draft.dismissOptionalOffers}
+            label="Dismiss optional offers"
+            detail="Use No thanks, Not now, Skip, or equivalent when the offer is not required."
+            onChange={(value) => setBoolean("dismissOptionalOffers", value)}
+          />
+          <SettingsToggle
+            checked={draft.dismissOptionalAuth}
+            label="Continue without optional sign-in"
+            detail="Choose Continue as guest or equivalent; never create an account or enter credentials."
+            onChange={(value) => setBoolean("dismissOptionalAuth", value)}
+          />
+        </article>
+
+        <article className="settings-section">
+          <div className="settings-section-heading">
+            <div>
+              <span className="eyebrow">PAGE STATE</span>
+              <h3>Reveal the stable form</h3>
+            </div>
+            <span className="policy-badge automatic">Deterministic</span>
+          </div>
+          <SettingsToggle
+            checked={draft.expandSafeDisclosures}
+            label="Expand safe disclosures"
+            detail="Open collapsed help and detail regions that do not submit, consent, authenticate, or mutate form data."
+            onChange={(value) => setBoolean("expandSafeDisclosures", value)}
+          />
+          <SettingsToggle
+            checked={draft.advanceIntroScreens}
+            label="Advance explicit intro screens"
+            detail="Click only non-submit Start, Continue, or Next controls outside a form."
+            onChange={(value) => setBoolean("advanceIntroScreens", value)}
+          />
+          <SettingsToggle
+            checked={draft.pointerAndScrollPriming}
+            label="Prime hover and lazy-load state"
+            detail="Use a fixed pointer sweep and reversible scroll before examination to trigger legitimate hover and viewport loading."
+            onChange={(value) => setBoolean("pointerAndScrollPriming", value)}
+          />
+        </article>
+
+        <article className="settings-section">
+          <div className="settings-section-heading">
+            <div>
+              <span className="eyebrow">NETWORK SAFETY</span>
+              <h3>Read-like initialization</h3>
+            </div>
+            <span className="policy-badge review">Narrow allowlist</span>
+          </div>
+          <SettingsToggle
+            checked={draft.allowSameOriginReadLikePosts}
+            label="Allow classified initialization POSTs"
+            detail="Permit only same-origin fetch/XHR endpoints named for render, bootstrap, init, component, config, or Aura. Submissions remain blocked."
+            onChange={(value) => setBoolean("allowSameOriginReadLikePosts", value)}
+          />
+          <div className="settings-locked">
+            <span>LOCKED</span>
+            <p>
+              Form submit events and submit APIs are disabled in the page. Every other
+              non-read request is blocked and logged with a sanitized endpoint.
+            </p>
+          </div>
+        </article>
+
+        <article className="settings-section settings-advanced">
+          <div className="settings-section-heading">
+            <div>
+              <span className="eyebrow">WAIT STRATEGY</span>
+              <h3>State examination</h3>
+            </div>
+            <span className="policy-badge automatic">Bounded</span>
+          </div>
+          <div className="settings-number-grid">
+            <label className="settings-field">
+              DOM quiet window
+              <input
+                type="number"
+                min={300}
+                max={3000}
+                step={100}
+                value={draft.stableWindowMs}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    stableWindowMs: Number(event.target.value),
+                  }))
+                }
+              />
+              <small>Milliseconds without a DOM mutation before examination.</small>
+            </label>
+            <label className="settings-field">
+              Maximum state wait
+              <input
+                type="number"
+                min={3000}
+                max={30000}
+                step={1000}
+                value={draft.maxStateWaitMs}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    maxStateWaitMs: Number(event.target.value),
+                  }))
+                }
+              />
+              <small>Hard bound for navigation, fonts, network, and DOM settling.</small>
+            </label>
+            <label className="settings-field">
+              Actions per page
+              <input
+                type="number"
+                min={1}
+                max={25}
+                value={draft.maxActionsPerPage}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    maxActionsPerPage: Number(event.target.value),
+                  }))
+                }
+              />
+              <small>Ceiling that prevents loops or runaway overlay handling.</small>
+            </label>
+          </div>
+        </article>
+
+        <article className="settings-section settings-review">
+          <div className="settings-section-heading">
+            <div>
+              <span className="eyebrow">HUMAN BOUNDARY</span>
+              <h3>Never bypass verification</h3>
+            </div>
+            <span className="policy-badge human">Human review</span>
+          </div>
+          <div className="settings-boundary">
+            <strong>CAPTCHA and “are you human” checks</strong>
+            <p>
+              Detect the challenge, take a screenshot, record the state, and mark the run
+              for review. The crawler does not click, solve, or disguise itself to bypass
+              bot protection.
+            </p>
+          </div>
+          <div className="settings-boundary">
+            <strong>Unpredictable or consequential choices</strong>
+            <p>
+              Ads, legal acceptance, age attestations, payment, required login, and
+              account creation are evidence-only gates until a person decides.
+            </p>
+          </div>
+        </article>
+      </div>
+
+      <article className="settings-policy-table">
+        <div className="settings-section-heading">
+          <div>
+            <span className="eyebrow">OPERATING INSTRUCTIONS</span>
+            <h3>What the crawler may traverse</h3>
+          </div>
+          <span className="settings-path" title={settingsPath}>
+            {settingsPath || "data/settings.json"}
+          </span>
+        </div>
+        <div className="policy-table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Obstacle</th>
+                <th>Instruction</th>
+                <th>Disposition</th>
+              </tr>
+            </thead>
+            <tbody>
+              {policyRows.map((row) => (
+                <tr key={row.obstacle}>
+                  <td>{row.obstacle}</td>
+                  <td>{row.behavior}</td>
+                  <td>
+                    <span
+                      className={`policy-badge ${
+                        row.disposition === "Human review"
+                          ? "human"
+                          : row.disposition === "Review"
+                            ? "review"
+                            : "automatic"
+                      }`}
+                    >
+                      {row.disposition}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <div className="settings-actions">
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => setDraft({ ...defaultTraversalSettings })}
+        >
+          Reset recommended defaults
+        </button>
+        <button
+          className="primary-button"
+          type="button"
+          disabled={saving || !settings}
+          onClick={() => onSave(draft)}
+        >
+          {saving ? "Saving…" : "Save traversal policy"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export function ControlPlane() {
+  const [surface, setSurface] = useState<Surface>("runs");
   const [runs, setRuns] = useState<FormRun[]>([]);
   const [activeRun, setActiveRun] = useState<FormRun | null>(null);
   const [selectedNode, setSelectedNode] = useState("");
@@ -870,6 +1363,10 @@ export function ControlPlane() {
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launching, setLaunching] = useState(false);
+  const [traversalSettings, setTraversalSettings] =
+    useState<TraversalSettings | null>(null);
+  const [settingsPath, setSettingsPath] = useState("");
+  const [settingsSaving, setSettingsSaving] = useState(false);
   const [toast, setToast] = useState("");
   const [apiState, setApiState] = useState<"connecting" | "online" | "offline">(
     "connecting"
@@ -932,17 +1429,50 @@ export function ControlPlane() {
 
   useEffect(() => {
     let disposed = false;
+    async function loadSettings() {
+      try {
+        const response = await fetch(apiUrl("/api/settings"), {
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error("Settings API unavailable.");
+        const data = (await response.json()) as {
+          settings: TraversalSettings;
+          settingsPath: string;
+        };
+        if (!disposed) {
+          setTraversalSettings(data.settings);
+          setSettingsPath(data.settingsPath);
+        }
+      } catch (error) {
+        if (!disposed) {
+          setToast(
+            error instanceof Error
+              ? error.message
+              : "Unable to read the local traversal policy."
+          );
+        }
+      }
+    }
+    loadSettings();
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
     const runId = activeRun?.id;
     if (!runId || !activeRun.reportAvailable) {
       return;
     }
+    const selectedRunId = runId;
 
     async function loadReport() {
       setReportLoading(true);
       setReportError("");
       try {
         const response = await fetch(
-          apiUrl(`/api/runs/${encodeURIComponent(runId)}/report`),
+          apiUrl(`/api/runs/${encodeURIComponent(selectedRunId)}/report`),
           { cache: "no-store" }
         );
         if (!response.ok) throw new Error(`Report API returned ${response.status}.`);
@@ -1020,6 +1550,34 @@ export function ControlPlane() {
     }
   }
 
+  async function saveTraversalSettings(settings: TraversalSettings) {
+    setSettingsSaving(true);
+    try {
+      const response = await fetch(apiUrl("/api/settings"), {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ settings }),
+      });
+      const data = (await response.json()) as {
+        settings?: TraversalSettings;
+        settingsPath?: string;
+        error?: string;
+      };
+      if (!response.ok || !data.settings) {
+        throw new Error(data.error ?? "Unable to save traversal policy.");
+      }
+      setTraversalSettings(data.settings);
+      if (data.settingsPath) setSettingsPath(data.settingsPath);
+      setToast("Traversal policy saved for new crawler sessions.");
+    } catch (error) {
+      setToast(
+        error instanceof Error ? error.message : "Unable to save traversal policy."
+      );
+    } finally {
+      setSettingsSaving(false);
+    }
+  }
+
   function chooseRun(run: FormRun) {
     setActiveRun(run);
     setReport(null);
@@ -1042,12 +1600,14 @@ export function ControlPlane() {
 
   return (
     <div className="app-shell">
-      <Sidebar />
+      <Sidebar surface={surface} onChange={setSurface} />
       <main className="app-main">
         <header className="topbar">
           <div>
-            <span className="breadcrumb">FORM OPERATIONS / RUNS</span>
-            <h1>Form intelligence</h1>
+            <span className="breadcrumb">
+              FORM OPERATIONS / {surface === "runs" ? "RUNS" : "SETTINGS"}
+            </span>
+            <h1>{surface === "runs" ? "Form intelligence" : "Traversal settings"}</h1>
           </div>
           <div className="topbar-actions">
             <div className={`environment-pill ${apiState}`}>
@@ -1060,12 +1620,16 @@ export function ControlPlane() {
                   ? "Connecting"
                   : "Crawler API unavailable"}
             </div>
-            <button className="primary-button" onClick={() => setLaunchOpen(true)}>
-              <span className="plus">+</span> New crawl
-            </button>
+            {surface === "runs" && (
+              <button className="primary-button" onClick={() => setLaunchOpen(true)}>
+                <span className="plus">+</span> New crawl
+              </button>
+            )}
           </div>
         </header>
 
+        {surface === "runs" ? (
+          <>
         <section className="stats-grid" aria-label="Run summary">
           <StatCard label="Active crawls" value={String(runningCount).padStart(2, "0")} detail="Fetching public targets" tone="green" />
           <StatCard label="Completed" value={String(completedCount).padStart(2, "0")} detail="Reports available" tone="blue" />
@@ -1209,6 +1773,16 @@ export function ControlPlane() {
         )}
 
         <Queue runs={runs} onSelect={chooseRun} />
+          </>
+        ) : (
+          <TraversalSettingsPanel
+            key={traversalSettings?.updatedAt ?? "loading"}
+            settings={traversalSettings}
+            settingsPath={settingsPath}
+            saving={settingsSaving}
+            onSave={saveTraversalSettings}
+          />
+        )}
         <footer className="app-footer">
           <span>FORMWEAVE CONTROL PLANE</span>
           <span>

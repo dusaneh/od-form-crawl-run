@@ -59,6 +59,8 @@ const routes = new Map([
             <li><a href="/fixtures/iframe-request">Embedded service request</a></li>
             <li><a href="/fixtures/shadow-form">Web-component contact form</a></li>
             <li><a href="/fixtures/conditional-wizard">Conditional multi-step form</a></li>
+            <li><a href="/fixtures/automation-gates">Consent and overlay gated application</a></li>
+            <li><a href="/fixtures/captcha-gate">Human-verification review fixture</a></li>
           </ul>
           <a href="/about">Read our annual report</a>
         </main>`
@@ -254,6 +256,148 @@ const routes = new Map([
       ),
   ],
   [
+    "/fixtures/automation-gates",
+    () =>
+      layout(
+        "Predictable traversal gates",
+        `<div id="onetrust-consent-sdk">
+          <section
+            id="onetrust-banner-sdk"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Cookie preferences"
+            style="position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:rgba(10,30,22,.66)"
+          >
+            <div style="width:min(560px,90vw);padding:24px;border-radius:12px;background:white">
+              <h2>Cookie choices</h2>
+              <p>Choose how this synthetic public application stores browser cookies.</p>
+              <button id="onetrust-reject-all-handler" type="button">Reject Non-Essential Cookies</button>
+              <button id="onetrust-accept-btn-handler" type="button">Accept All Cookies</button>
+            </div>
+          </section>
+        </div>
+        <main>
+          <h1>Energy assistance application</h1>
+          <p>This noisy app requires a same-origin component bootstrap and several predictable dismissals.</p>
+          <div class="ad">Sponsored message: save energy by testing your crawl policy.</div>
+          <div id="application-root" aria-live="polite">Loading application shell…</div>
+        </main>`,
+        {
+          scripts: `<script>
+            const state = { initialized: false, consent: false, stage: "cookie" };
+            const root = document.querySelector("#application-root");
+            const showWelcome = () => {
+              if (!state.initialized || !state.consent || state.stage !== "cookie") return;
+              state.stage = "welcome";
+              root.innerHTML = \`
+                <section class="welcome-modal" role="dialog" aria-modal="true" aria-label="Welcome">
+                  <h2>Welcome to the application</h2>
+                  <p>This short tour is optional.</p>
+                  <button type="button" id="close-welcome">Got it</button>
+                </section>\`;
+              document.querySelector("#close-welcome").addEventListener("click", () => {
+                state.stage = "auth";
+                root.innerHTML = \`
+                  <section class="registration-popup" role="dialog" aria-modal="true" aria-label="Registration offer">
+                    <h2>Save your progress?</h2>
+                    <p>Creating an account is optional for this public form.</p>
+                    <button type="button" id="continue-guest">Continue as guest</button>
+                  </section>\`;
+                document.querySelector("#continue-guest").addEventListener("click", showOffer);
+              });
+            };
+            const showOffer = () => {
+              state.stage = "offer";
+              root.innerHTML = \`
+                <section class="promo-popup" role="dialog" aria-modal="true" aria-label="Optional updates">
+                  <h2>Get program updates</h2>
+                  <p>This newsletter offer is optional.</p>
+                  <button type="button" id="decline-offer">No thanks</button>
+                </section>\`;
+              document.querySelector("#decline-offer").addEventListener("click", showForm);
+            };
+            const showForm = () => {
+              state.stage = "form";
+              root.innerHTML = \`
+                <button type="button" aria-expanded="false" aria-controls="eligibility-help" id="help-toggle">More eligibility details</button>
+                <p id="eligibility-help" hidden>Household income documentation may be requested later.</p>
+                <form method="post" action="/fixtures/write-probe">
+                  <label>Application reference <input name="application_reference" required></label>
+                  <label>Service ZIP code <input name="service_zip" inputmode="numeric" required></label>
+                  <label>Assistance program
+                    <select name="assistance_program" required>
+                      <option value="">Choose one</option>
+                      <option>CARE</option>
+                      <option>FERA</option>
+                    </select>
+                  </label>
+                  <button type="submit">Review application</button>
+                </form>\`;
+              const toggle = document.querySelector("#help-toggle");
+              toggle.addEventListener("click", () => {
+                const help = document.querySelector("#eligibility-help");
+                help.hidden = false;
+                toggle.setAttribute("aria-expanded", "true");
+              });
+            };
+            const consent = () => {
+              state.consent = true;
+              document.querySelector("#onetrust-consent-sdk").remove();
+              fetch("/fixtures/write-probe", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ analyticsConsentReceipt: true })
+              }).catch(() => {});
+              showWelcome();
+            };
+            document.querySelector("#onetrust-reject-all-handler").addEventListener("click", consent);
+            document.querySelector("#onetrust-accept-btn-handler").addEventListener("click", consent);
+            setTimeout(() => {
+              fetch("/fixtures/aura", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ descriptor: "markup://fixture:application" })
+              })
+                .then((response) => response.json())
+                .then(() => {
+                  state.initialized = true;
+                  showWelcome();
+                })
+                .catch(() => {
+                  root.textContent = "Application initialization was blocked.";
+                });
+            }, 120);
+          </script>`,
+        }
+      ),
+  ],
+  [
+    "/fixtures/captcha-gate",
+    () =>
+      layout(
+        "Human verification gate",
+        `<main>
+          <h1>Permit application verification</h1>
+          <p>This fixture proves that a challenge is captured for review and never clicked.</p>
+          <section role="dialog" aria-modal="true" aria-label="Security check">
+            <h2>Verify that you are human</h2>
+            <div class="g-recaptcha" data-sitekey="fixture-only">
+              <button type="button" id="human-check">I am human</button>
+            </div>
+            <p id="challenge-result">Waiting for a person.</p>
+          </section>
+        </main>`,
+        {
+          scripts: `<script>
+            document.querySelector("#human-check").addEventListener("click", () => {
+              document.querySelector("#challenge-result").textContent = "AUTOMATION CLICKED THE CAPTCHA";
+              document.body.dataset.captchaClicked = "true";
+            });
+          </script>`,
+        }
+      ),
+  ],
+  [
     "/about",
     () =>
       layout(
@@ -295,6 +439,15 @@ export async function startFixtureServer({ host = "127.0.0.1", port = 0 } = {}) 
         response,
         409,
         JSON.stringify({ error: "A crawler write reached the fixture server." }),
+        "application/json; charset=utf-8"
+      );
+      return;
+    }
+    if (url.pathname === "/fixtures/aura" && request.method === "POST") {
+      send(
+        response,
+        200,
+        JSON.stringify({ ready: true, component: "fixture:application" }),
         "application/json; charset=utf-8"
       );
       return;
