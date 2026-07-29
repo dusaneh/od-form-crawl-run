@@ -1,302 +1,609 @@
-# FormWeave API quick start
+# FormWeave API client quick start
 
-This guide covers the common end-to-end workflow:
+This guide shows the standard client workflow:
 
-1. crawl a form;
+1. start a crawl;
 2. poll the crawl;
-3. inspect its report and screenshot evidence;
-4. retrieve the client input schema;
-5. approve the exact crawled form;
-6. populate it without submission, or explicitly submit it;
-7. poll the execution result.
+3. retrieve and review the report, schema, and screenshots;
+4. approve the exact crawled form;
+5. start a form run with client data;
+6. poll the form run and interpret the result.
 
-The examples use PowerShell and the local API at `http://127.0.0.1:8787`.
-They intentionally show the shortest useful path. See the linked OpenAPI
-contracts for every field and error.
+Use the FormWeave base URL supplied for your environment. Examples below use:
 
-## Before you start
-
-Start FormWeave from the repository root:
-
-```powershell
-.\restart-formweave.bat
+```text
+<FORMWEAVE_BASE_URL>
 ```
 
-Then confirm the API is online:
+## ID and payload flow
 
-```powershell
-$base = "http://127.0.0.1:8787"
-Invoke-RestMethod "$base/api/health"
+The highlighted values must be carried into later calls. Treat them as opaque
+server-generated identifiers; do not create or modify them.
+
+```mermaid
+flowchart TD
+    A["POST /api/runs<br/>Start crawl"] --> B["Response: run.id"]
+    B --> C["GET /api/runs/{runId}<br/>Poll crawl"]
+    C -->|"reportAvailable = true"| D["GET /api/runs/{runId}/report"]
+    D --> E["Response: formDefinitions[].formId"]
+    E --> F["GET /api/forms/{formId}<br/>Get exact inputSchema"]
+    F --> G["Response: inputSchema property keys"]
+    E --> H["POST /api/forms/{formId}/approval"]
+    G --> I["POST /api/forms/{formId}/runs<br/>data uses exact schema keys"]
+    H --> I
+    I --> J["Response: execution.executionId"]
+    J --> K["GET /api/executions/{executionId}<br/>Poll form run"]
+
+    classDef critical fill:#fff0c2,stroke:#b77700,stroke-width:3px,color:#442a00;
+    class B,E,G,J critical;
 ```
 
-The current service is local and does not implement API authentication. Treat
-it as a development service: do not expose port `8787` to an untrusted network.
+| Value | Produced by | Used by |
+| --- | --- | --- |
+| `run.id` | Start crawl | Crawl polling and report retrieval |
+| `formDefinitions[].formId` | Crawl report | Schema retrieval, approval, and form runs |
+| `form.inputSchema` property keys | Form schema | Keys and validation rules for the run `data` object |
+| `execution.executionId` | Start form run | Form-run status polling |
+
+Every recrawl creates a new `run.id` and new crawl-scoped `formId`. Approval of
+an older `formId` does not approve a newer crawl.
 
 ## 1. Start a crawl
 
-This public-form example traverses toward the terminal boundary but does not
-submit:
-
-```powershell
-$crawlRequest = @{
-  urls = @("https://example.org/application")
-  name = "Example application"
-  mode = "probe"
-  browserMode = "headless"
-  discoverRelatedPages = $false
-} | ConvertTo-Json
-
-$createdCrawl = Invoke-RestMethod `
-  -Method Post `
-  -Uri "$base/api/runs" `
-  -ContentType "application/json" `
-  -Body $crawlRequest
-
-$crawlId = $createdCrawl.run.id
-$crawlId
+```http
+POST <FORMWEAVE_BASE_URL>/api/runs
+Content-Type: application/json
 ```
 
-`201 Created` means the crawl was queued; it does not mean it succeeded. Each
-crawl gets a unique `run_...` ID. Every successfully registered form in a
-recrawl also gets a new crawl-scoped `form_...` ID.
+Request:
 
-For every start-crawl option, see
-[Start Crawl OpenAPI](./openapi-crawl-start.json).
-
-## 2. Poll crawl status
-
-Poll the exact crawl ID returned by the kickoff call:
-
-```powershell
-do {
-  Start-Sleep -Seconds 2
-  $crawl = (Invoke-RestMethod "$base/api/runs/$crawlId").run
-  $crawl | Select-Object id, status, progress, failureCode, detail
-} while ($crawl.status -notin @(
-  "completed",
-  "awaiting_review",
-  "disqualified",
-  "certified",
-  "failed"
-))
-```
-
-The status summary is intentionally compact. It does **not** return the complete
-field contract or all evidence metadata. Fetch the report after completion.
-
-See [Check Crawl OpenAPI](./openapi-crawl-status.json) for the status response.
-
-## 3. Get the report and evidence
-
-```powershell
-$report = Invoke-RestMethod "$base/api/runs/$crawlId/report"
-```
-
-Review at least:
-
-- `contract` and page field metadata;
-- `formDefinitions`;
-- flow/state information and findings;
-- eligibility or disqualification reasons;
-- generated-script identity and version;
-- state-transition evidence.
-
-Each available page or state screenshot contains an `evidence` URL. For
-example, list the state screenshots:
-
-```powershell
-$evidence = $report.pages |
-  ForEach-Object { $_.stateEvidence } |
-  Where-Object { $_.evidenceAvailable }
-
-$evidence | Select-Object id, kind, evidence
-```
-
-Download one by following the exact URL returned by the report:
-
-```powershell
-$evidencePath = $evidence[0].evidence
-$evidenceUri = if ($evidencePath -match "^https?://") {
-  $evidencePath
-} else {
-  "$base$evidencePath"
-}
-
-Invoke-WebRequest $evidenceUri -OutFile ".\crawl-evidence.png"
-```
-
-Evidence should be reviewed as proof of entered values and successful state
-transitions, not merely as page snapshots. The local UI at
-`http://127.0.0.1:3000` provides a more convenient report viewer.
-
-## 4. Select a form and get its input schema
-
-A completed crawl may identify more than one form. Select the intended
-definition rather than assuming the first one:
-
-```powershell
-$report.formDefinitions |
-  Select-Object formId, title, targetUrl, status, eligibility
-```
-
-For a single-form crawl:
-
-```powershell
-$formId = $report.formDefinitions[0].formId
-$formResponse = Invoke-RestMethod "$base/api/forms/$formId"
-$form = $formResponse.form
-$schema = $form.inputSchema
-
-$schema.properties | ConvertTo-Json -Depth 20
-$schema.required
-```
-
-Build your client form and execution payload from this exact `inputSchema`:
-
-- use the exact property keys;
-- honor property types and enums;
-- honor the base `required` list;
-- evaluate `allOf` conditional requirements for supported same-page branches;
-- use FormWeave annotations such as `x-formweave-label`,
-  `x-formweave-control`, `x-formweave-sensitive`, and legal-acceptance or
-  branch metadata;
-- represent file values with `filename`, `contentType`, and `contentBase64`.
-
-Do not reuse a schema from an older crawl with a newly generated `formId`.
-
-See
-[Report, Schema, and Screenshots OpenAPI](./openapi-crawl-artifacts.json).
-
-## 5. Review and approve the exact form
-
-Before approval, a human or trusted review service should compare the report,
-flow, schema, warnings, script identity, and screenshot evidence with the
-source form. Then approve or reject this exact `formId`:
-
-```powershell
-$approvalRequest = @{
-  decision = "approved"
-  actor = "operator@example.test"
-  notes = "Schema, flow, eligibility, and transition evidence reviewed."
-} | ConvertTo-Json
-
-$approval = Invoke-RestMethod `
-  -Method Post `
-  -Uri "$base/api/forms/$formId/approval" `
-  -ContentType "application/json" `
-  -Body $approvalRequest
-```
-
-Approval pins the exact generated-script artifact, version, and source hash.
-Recrawling creates a new `formId` and requires a new decision.
-
-See [Approve or Reject Form OpenAPI](./openapi-form-approval.json).
-
-`PATCH /api/runs/{runId}` with `request_review` is **not** approval. It is a
-legacy status marker with no reviewer queue or certification workflow behind
-it.
-
-## 6. Run using the returned schema
-
-Construct `data` from the exact schema. The keys below are illustrative; real
-keys come from `$schema.properties`.
-
-Start with `submit = $false` to populate and verify without activating the
-terminal action:
-
-```powershell
-$formData = @{
-  first_name = "Alex"
-  email = "alex@example.test"
-  service_requested = "Housing navigation"
-  terms_accepted = $true
-}
-
-$runRequest = @{
-  data = $formData
-  submit = $false
-  browserMode = "headless"
-} | ConvertTo-Json -Depth 20
-
-$createdExecution = Invoke-RestMethod `
-  -Method Post `
-  -Uri "$base/api/forms/$formId/runs" `
-  -ContentType "application/json" `
-  -Body $runRequest
-
-$executionId = $createdExecution.execution.executionId
-```
-
-When you intend to submit, send the same shape with `submit = $true`.
-Submission authority is explicit and is never inferred:
-
-```powershell
-$liveRequest = @{
-  data = $formData
-  submit = $true
-  browserMode = "headless"
-} | ConvertTo-Json -Depth 20
-
-$createdExecution = Invoke-RestMethod `
-  -Method Post `
-  -Uri "$base/api/forms/$formId/runs" `
-  -ContentType "application/json" `
-  -Body $liveRequest
-
-$executionId = $createdExecution.execution.executionId
-```
-
-For a file field declared by the schema:
-
-```powershell
-$bytes = [System.IO.File]::ReadAllBytes("C:\path\supporting-document.pdf")
-$formData.supporting_document = @{
-  filename = "supporting-document.pdf"
-  contentType = "application/pdf"
-  contentBase64 = [Convert]::ToBase64String($bytes)
+```json
+{
+  "urls": ["https://example.org/application"],
+  "name": "Example application",
+  "mode": "probe",
+  "browserMode": "headless",
+  "allowLocalTargets": false,
+  "discoverRelatedPages": false
 }
 ```
 
-The focused run/insert contract is
-[Run Approved Form OpenAPI](./openapi-form-run.json).
+Request fields:
 
-## 7. Poll the execution
-
-```powershell
-do {
-  Start-Sleep -Seconds 2
-  $executionResponse = Invoke-RestMethod "$base/api/executions/$executionId"
-  $execution = $executionResponse.execution
-  $execution |
-    Select-Object status, outcome, fieldsAttempted, fieldsVerified,
-      fieldsFailed, submitted, failureCode, detail
-} while ($execution.status -eq "running")
-```
-
-Interpret the terminal result:
-
-| `status` | `outcome` | Meaning |
+| Field | Required | Meaning |
 | --- | --- | --- |
-| `completed` | `dry_run_completed` | Fields were populated and verified through the terminal boundary; final submit was not activated. |
-| `completed` | `submission_verified` | Final submit ran and the stored success criteria verified success. |
-| `failed` | `validation_blocked` | Input did not satisfy the exact contract or active branch; inspect `issues`. |
-| `failed` | `actuation_failed` | A scripted field action could not be located or verified; inspect `failureCode` and `issues`. |
-| `failed` | `submission_unverified` | Submit may have run, but success could not be verified. Do not assume success or blindly retry. |
-| `failed` | `unsupported_cross_page_branch` | The run encountered cross-page branching, which is currently detected but unsupported. |
-| `failed` | `disqualified` | A disqualifying condition such as interactive CAPTCHA was encountered. |
-| `failed` | `execution_error` | An unexpected browser, script, or local runtime error occurred. |
+| `urls` | Yes | One to twelve HTTP or HTTPS starting URLs. |
+| `name` | No | Client-facing crawl label. It is not artifact identity. |
+| `mode` | No | Use `probe` to traverse with synthetic values without terminal submission. `fixture_submit` is restricted to explicitly permitted loopback fixtures. |
+| `browserMode` | No | `headless` or `headful`; defaults to `headless`. |
+| `allowLocalTargets` | No | Must be `true` for loopback targets. It does not allow other private networks. |
+| `discoverRelatedPages` | No | Enables bounded same-origin page discovery. |
 
-`submitted = true` only reports that the terminal action was activated. Treat
-the submission as successful only when `status = completed`, `outcome =
-submission_verified`, and `submissionResult.verified = true`.
+Response: `201 Created`
 
-The execution response returns field counts, issues, and failure diagnostics,
-but not the supplied values. FormWeave persists the supplied field names and
-explicitly records `sensitiveInputPersisted = false`.
+```json
+{
+  "run": {
+    "id": "run_8c3f09d1865c4f",
+    "crawlId": "run_8c3f09d1865c4f",
+    "status": "running",
+    "stage": "Queued for local browser crawl",
+    "progress": 2,
+    "reportAvailable": false
+  }
+}
+```
 
-See [Check Form Run OpenAPI](./openapi-execution-status.json).
+Critical response field:
 
-## Contract index
+- Save `run.id`. The API console may call it the **Run ID** or **Crawl ID**.
+  `crawlId` is an alias, but clients should consistently use `run.id`.
+
+`201 Created` means the crawl was accepted and started asynchronously. It does
+not mean crawling or script generation succeeded.
+
+Full contract: [Kick Off Crawl](./openapi-crawl-start.json).
+
+## 2. Poll the crawl
+
+Pass the exact `run.id` returned above:
+
+```http
+GET <FORMWEAVE_BASE_URL>/api/runs/run_8c3f09d1865c4f
+```
+
+In-progress response:
+
+```json
+{
+  "run": {
+    "id": "run_8c3f09d1865c4f",
+    "status": "running",
+    "stage": "Generating and verifying form script",
+    "progress": 68,
+    "reportAvailable": false,
+    "formIds": []
+  }
+}
+```
+
+Terminal response:
+
+```json
+{
+  "run": {
+    "id": "run_8c3f09d1865c4f",
+    "status": "awaiting_review",
+    "stage": "Scripted traversal needs human review",
+    "progress": 100,
+    "reportAvailable": true,
+    "formIds": ["form_5b6288d171cb4f23a87d39e9"],
+    "findings": [
+      {
+        "code": "crawl_finished",
+        "title": "Form traversal captured",
+        "detail": "Report and evidence are available."
+      }
+    ]
+  }
+}
+```
+
+Poll while `status` is `queued` or `running`. Stop polling when it becomes one
+of:
+
+- `completed`
+- `awaiting_review`
+- `disqualified`
+- `failed`
+
+Critical response fields:
+
+| Field | What the client should do |
+| --- | --- |
+| `status` | Determines whether to keep polling and whether the crawl may proceed to review. |
+| `progress` | Display only; do not treat `100` alone as success. |
+| `reportAvailable` | Fetch the report only when this is `true`. |
+| `formIds` | Candidate crawl-scoped form IDs. Confirm the intended form in the report. |
+| `stage` | Human-readable current stage or failure summary. |
+| `findings[].code` | Machine-readable diagnostics such as `quality_floor`, `script_missing`, `challenge_detected`, or `cross_page_branching`. |
+
+A `failed` crawl may have no report or form ID. A `disqualified` crawl may have
+a report for inspection but cannot be approved for execution.
+
+Full contract: [Check Crawl](./openapi-crawl-status.json).
+
+## 3. Get the report, schema, and screenshots
+
+### 3.1 Get the report
+
+```http
+GET <FORMWEAVE_BASE_URL>/api/runs/run_8c3f09d1865c4f/report
+```
+
+Abbreviated response:
+
+```json
+{
+  "id": "run_8c3f09d1865c4f",
+  "stats": {
+    "pagesFetched": 3,
+    "formsFound": 1,
+    "fieldsFound": 14,
+    "screenshotsCaptured": 9,
+    "fieldsEntered": 14,
+    "entryFailures": 0
+  },
+  "contract": [
+    {
+      "key": "full_name",
+      "label": "Full name",
+      "control": "text",
+      "required": true
+    }
+  ],
+  "pages": [
+    {
+      "title": "Application",
+      "stateEvidence": [
+        {
+          "id": "page_01_state_02_populated",
+          "kind": "populated",
+          "evidenceAvailable": true,
+          "evidence": "/api/runs/run_8c3f09d1865c4f/evidence/page_01_state_02_populated"
+        }
+      ]
+    }
+  ],
+  "formDefinitions": [
+    {
+      "formId": "form_5b6288d171cb4f23a87d39e9",
+      "title": "Example application",
+      "targetUrl": "https://example.org/application",
+      "status": "observed",
+      "eligibility": {
+        "status": "eligible",
+        "reasons": []
+      },
+      "script": {
+        "artifactId": "form_artifact_243a",
+        "scriptVersion": 1,
+        "sourceHash": "7dd57f..."
+      }
+    }
+  ],
+  "findings": []
+}
+```
+
+Critical report fields:
+
+| Field | Why it matters |
+| --- | --- |
+| `formDefinitions[].formId` | Select the intended form and pass this exact ID to schema, approval, and run calls. |
+| `formDefinitions[].targetUrl` | Confirms which discovered form the ID represents. |
+| `formDefinitions[].eligibility.status` | Must be `eligible` before approval. |
+| `formDefinitions[].script` | Identifies the generated script that approval will pin. |
+| `contract` | Review detected fields, labels, types, options, required status, and sensitive classifications. |
+| `pages` and state flow | Confirm that traversal reached all supported states and stopped at the intended boundary. |
+| `pages[].stateEvidence` | Contains screenshot URLs and evidence metadata for populated states and transitions. |
+| `findings` | Review warnings, blockers, incomplete coverage, and disqualifying conditions. |
+| `stats.entryFailures` | Nonzero values require investigation before approval. |
+
+Do not automatically select the first form definition when a report contains
+multiple forms. Match the intended `targetUrl`, title, eligibility, and flow.
+
+### 3.2 Get screenshot evidence
+
+Use the exact relative URL returned in an evidence record:
+
+```http
+GET <FORMWEAVE_BASE_URL>/api/runs/run_8c3f09d1865c4f/evidence/page_01_state_02_populated
+```
+
+The response body is PNG, JPEG, or WebP image data. It is not JSON.
+
+Evidence should demonstrate entered values and a successful state transition,
+not merely that the page rendered.
+
+### 3.3 Get the exact form schema
+
+Pass the selected `formId`:
+
+```http
+GET <FORMWEAVE_BASE_URL>/api/forms/form_5b6288d171cb4f23a87d39e9
+```
+
+Abbreviated response:
+
+```json
+{
+  "form": {
+    "formId": "form_5b6288d171cb4f23a87d39e9",
+    "status": "observed",
+    "eligibility": {
+      "status": "eligible",
+      "reasons": []
+    },
+    "script": {
+      "artifactId": "form_artifact_243a",
+      "scriptVersion": 1,
+      "sourceHash": "7dd57f..."
+    },
+    "approval": null,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "full_name": {
+          "type": "string",
+          "x-formweave-label": "Full name"
+        },
+        "housing_type": {
+          "type": "string",
+          "enum": ["Rent", "Own"],
+          "x-formweave-label": "Housing type"
+        },
+        "landlord_name": {
+          "type": "string",
+          "x-formweave-label": "Landlord name",
+          "x-formweave-branch": {
+            "fieldKey": "housing_type",
+            "value": "Rent",
+            "classification": "same_page_branch"
+          }
+        }
+      },
+      "required": ["full_name", "housing_type"],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "housing_type": {
+                "const": "Rent"
+              }
+            },
+            "required": ["housing_type"]
+          },
+          "then": {
+            "required": ["landlord_name"]
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
+  }
+}
+```
+
+Critical schema fields:
+
+- Use the exact keys under `inputSchema.properties` in the future `data`
+  object.
+- Enforce each property’s `type`, `enum`, `pattern`, and numeric or length
+  limits.
+- Enforce the base `required` list.
+- Evaluate conditional requirements in `allOf`.
+- Use `x-formweave-label` and `x-formweave-control` to render client fields.
+- Use `x-formweave-branch` to show only fields active for the selected branch.
+- Observe sensitivity and legal-acceptance annotations returned on properties.
+- Send a file field as:
+
+```json
+{
+  "filename": "supporting-document.pdf",
+  "contentType": "application/pdf",
+  "contentBase64": "JVBERi0xLjQK..."
+}
+```
+
+Never combine a `formId` from one crawl with a schema from another crawl.
+
+Full contract:
+[Get Report, Schema, and Screenshots](./openapi-crawl-artifacts.json).
+
+## 4. Approve or reject the crawled form
+
+Approval applies to one exact `formId` and pins its generated-script identity.
+
+```http
+POST <FORMWEAVE_BASE_URL>/api/forms/form_5b6288d171cb4f23a87d39e9/approval
+Content-Type: application/json
+```
+
+Request:
+
+```json
+{
+  "decision": "approved",
+  "actor": "reviewer@example.org",
+  "notes": "Schema, flow, eligibility, and transition evidence reviewed."
+}
+```
+
+Request fields:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `decision` | Yes | `approved` or `rejected`. |
+| `actor` | No | Reviewer identity. Defaults to `local-operator` if omitted. |
+| `notes` | No | Review notes retained with the decision. |
+
+Response:
+
+```json
+{
+  "form": {
+    "formId": "form_5b6288d171cb4f23a87d39e9",
+    "status": "approved",
+    "approval": {
+      "approvalId": "approval_3013e759afbe423f80314122513203b4",
+      "decision": "approved",
+      "actor": "reviewer@example.org",
+      "pinnedScript": {
+        "artifactId": "form_artifact_243a",
+        "scriptVersion": 1,
+        "sourceHash": "7dd57f..."
+      }
+    }
+  },
+  "approval": {
+    "approvalId": "approval_3013e759afbe423f80314122513203b4",
+    "decision": "approved",
+    "actor": "reviewer@example.org",
+    "pinnedScript": {
+      "artifactId": "form_artifact_243a",
+      "scriptVersion": 1,
+      "sourceHash": "7dd57f..."
+    }
+  }
+}
+```
+
+Critical response fields:
+
+- Confirm `form.formId` matches the reviewed form.
+- Confirm `form.status` and `approval.decision` are `approved`.
+- `approval.approvalId` is an audit identifier. The client does not pass it
+  into the run call.
+- `approval.pinnedScript` shows the immutable script identity authorized by
+  this decision.
+
+Reapprove after every recrawl because the new crawl produces a new `formId`.
+
+Full contract:
+[Approve or Reject Form](./openapi-form-approval.json).
+
+## 5. Start a form run
+
+Pass the approved `formId`. Build `data` from that exact form’s `inputSchema`.
+
+```http
+POST <FORMWEAVE_BASE_URL>/api/forms/form_5b6288d171cb4f23a87d39e9/runs
+Content-Type: application/json
+```
+
+Request:
+
+```json
+{
+  "data": {
+    "full_name": "Alex Example",
+    "housing_type": "Rent",
+    "landlord_name": "Example Property Management"
+  },
+  "submit": true,
+  "browserMode": "headless"
+}
+```
+
+Request fields:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `data` | Yes | Values keyed exactly by `inputSchema.properties`. |
+| `submit` | Yes | `false` populates and verifies without terminal submission. `true` authorizes the pinned terminal submit action. |
+| `browserMode` | No | `headless` or `headful`; defaults to `headless`. |
+
+Response: `201 Created`
+
+```json
+{
+  "execution": {
+    "executionId": "exec_2082914c56194509b646f30a26de1a23",
+    "formId": "form_5b6288d171cb4f23a87d39e9",
+    "status": "running",
+    "outcome": "pending",
+    "submit": true,
+    "fieldsAttempted": 0,
+    "fieldsVerified": 0,
+    "fieldsFailed": 0,
+    "submitted": false
+  }
+}
+```
+
+Critical response field:
+
+- Save `execution.executionId`. It identifies this individual form-run attempt
+  and is required for status polling.
+
+`201 Created` means execution was queued. It does not prove that fields were
+populated or that submission succeeded.
+
+Common request failures:
+
+| HTTP status/code | Meaning |
+| --- | --- |
+| `400` | `data` or `submit` has an invalid top-level shape. |
+| `404` | The `formId` does not exist. |
+| `409 form_not_approved` | This exact crawl-scoped form was not approved. |
+| `409 approval_version_mismatch` | Approval does not pin the form’s current immutable script identity. |
+
+Full contract: [Kick Off Form Run](./openapi-form-run.json).
+
+## 6. Poll the form run
+
+Pass the exact `execution.executionId` returned above:
+
+```http
+GET <FORMWEAVE_BASE_URL>/api/executions/exec_2082914c56194509b646f30a26de1a23
+```
+
+Poll while `execution.status` is `queued` or `running`.
+
+Successful submission response:
+
+```json
+{
+  "execution": {
+    "executionId": "exec_2082914c56194509b646f30a26de1a23",
+    "formId": "form_5b6288d171cb4f23a87d39e9",
+    "status": "completed",
+    "outcome": "submission_verified",
+    "fieldsAttempted": 3,
+    "fieldsVerified": 3,
+    "fieldsFailed": 0,
+    "submitted": true,
+    "submissionResult": {
+      "verified": true,
+      "outcome": "success",
+      "detail": "Configured success markers were present in the rendered result."
+    },
+    "issues": [],
+    "failureCode": null,
+    "detail": "Submission success was verified."
+  }
+}
+```
+
+Failed response:
+
+```json
+{
+  "execution": {
+    "executionId": "exec_2082914c56194509b646f30a26de1a23",
+    "formId": "form_5b6288d171cb4f23a87d39e9",
+    "status": "failed",
+    "outcome": "failed",
+    "fieldsAttempted": 3,
+    "fieldsVerified": 2,
+    "fieldsFailed": 1,
+    "submitted": false,
+    "submissionResult": null,
+    "issues": [
+      {
+        "fieldKey": "landlord_name",
+        "code": "actuation_unverified",
+        "detail": "The scripted field action could not be verified."
+      }
+    ],
+    "failureCode": "actuation_unverified",
+    "detail": "One field failed browser readback."
+  }
+}
+```
+
+Critical response fields:
+
+| Field | How to interpret it |
+| --- | --- |
+| `status` | `completed` or `failed` is terminal. |
+| `outcome` | High-level result, such as `dry_run_completed` or `submission_verified`. |
+| `fieldsAttempted`, `fieldsVerified`, `fieldsFailed` | Verify that expected field actuation was complete. |
+| `submitted` | Indicates that the terminal action was activated; it does not alone prove success. |
+| `submissionResult.verified` | Must be `true` before treating a submitted form as successfully completed. |
+| `issues` | Field-level or action-level diagnostics. |
+| `failureCode` | Primary machine-readable failure classification. |
+| `detail` | Human-readable explanation. |
+
+For a live submission, treat the run as successful only when all three are
+true:
+
+```text
+execution.status == "completed"
+execution.outcome == "submission_verified"
+execution.submissionResult.verified == true
+```
+
+Do not blindly retry when `submitted` is `true` but submission verification
+failed; the target may have received the form.
+
+Common terminal failure codes include:
+
+- `validation_blocked`
+- `challenge_detected`
+- `actuation_unverified`
+- `cross_page_branching`
+- `advance_no_navigation`
+- `terminal_submission_unverified`
+- `execution_error`
+
+The execution response does not return supplied field values. It records field
+keys and explicitly reports that sensitive input was not persisted.
+
+Full contract: [Check Form Run](./openapi-execution-status.json).
+
+## OpenAPI contracts
 
 - [Kick Off Crawl](./openapi-crawl-start.json)
 - [Check Crawl](./openapi-crawl-status.json)

@@ -138,7 +138,7 @@
           },
           "status": {
             "type": "string",
-            "example": "queued"
+            "example": "running"
           },
           "stage": {
             "type": "string"
