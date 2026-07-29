@@ -91,6 +91,7 @@ test(
         FORMWEAVE_API_HOST: "127.0.0.1",
         FORMWEAVE_API_PORT: String(port),
         FORMWEAVE_DATA_DIR: dataRoot,
+        FORMWEAVE_STORAGE: "filesystem",
         FORMWEAVE_DISABLE_OPENAI: "1",
         OPENAI_KEY: "",
         OPENAI_API_KEY: "",

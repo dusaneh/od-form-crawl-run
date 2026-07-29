@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { appendFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -22,38 +21,40 @@ import {
   readFormRecord,
   registerCrawledForms,
 } from "./form-registry.mjs";
+import { loadEnvFile } from "./env.mjs";
+import { createFormWeaveDatabase } from "./postgres/database.mjs";
 
 const localDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(localDirectory, "..");
-
-function loadEnvFile(filePath) {
-  if (!existsSync(filePath)) return;
-  const source = readFileSync(filePath, "utf8");
-  for (const line of source.split(/\r?\n/)) {
-    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
-    if (!match || process.env[match[1]] !== undefined) continue;
-    let value = match[2].trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    process.env[match[1]] = value;
-  }
-}
 
 loadEnvFile(path.join(projectRoot, ".env"));
 
 const port = Number.parseInt(process.env.FORMWEAVE_API_PORT || "8787", 10);
 const host = process.env.FORMWEAVE_API_HOST || "127.0.0.1";
-const dataRoot = path.resolve(
+const filesystemDataRoot = path.resolve(
   projectRoot,
   process.env.FORMWEAVE_DATA_DIR || "data"
 );
+const requestedStorage = String(process.env.FORMWEAVE_STORAGE || "").toLowerCase();
+const postgresEnabled =
+  requestedStorage === "postgres" ||
+  (!requestedStorage && Boolean(process.env.POSTGRES_URI));
+if (requestedStorage === "postgres" && !process.env.POSTGRES_URI) {
+  throw new Error("FORMWEAVE_STORAGE=postgres requires POSTGRES_URI.");
+}
+const dataRoot = postgresEnabled
+  ? path.resolve(
+      projectRoot,
+      process.env.FORMWEAVE_CACHE_DIR || ".formweave-cache",
+    )
+  : filesystemDataRoot;
 const runsRoot = path.join(dataRoot, "runs");
 const formsRoot = path.join(dataRoot, "forms");
 const executionsRoot = path.join(dataRoot, "executions");
+const generatedScriptsRoot = path.join(dataRoot, "generated-scripts");
+const database = postgresEnabled
+  ? await createFormWeaveDatabase(process.env.POSTGRES_URI)
+  : null;
 
 function isLoopbackUrl(value) {
   try {
@@ -163,9 +164,28 @@ await Promise.all([
   mkdir(formsRoot, { recursive: true }),
   mkdir(executionsRoot, { recursive: true }),
   mkdir(logsRoot, { recursive: true }),
+  mkdir(generatedScriptsRoot, { recursive: true }),
 ]);
+if (database) {
+  await database.materializeScriptRegistry(generatedScriptsRoot);
+}
 
 async function readTraversalSettings() {
+  if (database) {
+    const stored = await database.getSettings();
+    if (stored) {
+      return {
+        ...normalizeTraversalSettings(stored),
+        ...(stored.updatedAt ? { updatedAt: stored.updatedAt } : {}),
+      };
+    }
+    const settings = {
+      ...DEFAULT_TRAVERSAL_SETTINGS,
+      updatedAt: new Date().toISOString(),
+    };
+    await database.putSettings(settings);
+    return settings;
+  }
   try {
     const stored = await readJson(settingsPath);
     return {
@@ -187,7 +207,8 @@ async function writeTraversalSettings(value) {
     ...normalizeTraversalSettings(value),
     updatedAt: new Date().toISOString(),
   };
-  await writeJson(settingsPath, settings);
+  if (database) await database.putSettings(settings);
+  else await writeJson(settingsPath, settings);
   return settings;
 }
 
@@ -200,8 +221,12 @@ function artifactsFor(runId) {
   const directory = runDirectory(runId);
   return {
     runDirectory: directory,
-    report: path.join(directory, "report.json"),
-    events: path.join(directory, "events.jsonl"),
+    report: database
+      ? `postgres://run/${encodeURIComponent(runId)}/report`
+      : path.join(directory, "report.json"),
+    events: database
+      ? `postgres://run/${encodeURIComponent(runId)}/events`
+      : path.join(directory, "events.jsonl"),
     pagesDirectory: path.join(directory, "pages"),
     evidenceDirectory: path.join(directory, "evidence"),
   };
@@ -229,11 +254,19 @@ async function retainedPlanForReport(report) {
     .find(
       (candidate) =>
         candidate?.lifecycle === "retained_replay" && candidate?.path
-    );
+  );
   if (!artifact) return null;
   try {
+    const artifactPath =
+      database && artifact.artifactId && artifact.scriptVersion
+        ? path.join(
+            generatedScriptsRoot,
+            artifact.artifactId,
+            `v${artifact.scriptVersion}`,
+          )
+        : artifact.path;
     const source = await readFile(
-      path.join(artifact.path, "generated.mjs"),
+      path.join(artifactPath, "generated.mjs"),
       "utf8"
     );
     const encoded = source.match(
@@ -252,6 +285,25 @@ async function retainedPlanForReport(report) {
 async function evidenceImageFacts(evidence) {
   if (!evidence?.screenshotArtifact) {
     return { sha256: "", byteLength: 0 };
+  }
+  if (database && String(evidence.screenshotArtifact).startsWith("postgres://")) {
+    try {
+      const artifactUrl = new URL(evidence.screenshotArtifact);
+      const segments = artifactUrl.pathname
+        .split("/")
+        .filter(Boolean)
+        .map(decodeURIComponent);
+      const stored = await database.getObject(
+        artifactUrl.hostname,
+        segments.shift(),
+        segments.join("/"),
+      );
+      return stored
+        ? { sha256: stored.sha256, byteLength: stored.byteLength }
+        : { sha256: "", byteLength: 0 };
+    } catch {
+      return { sha256: "", byteLength: 0 };
+    }
   }
   try {
     const bytes = await readFile(evidence.screenshotArtifact);
@@ -473,6 +525,14 @@ async function retainedArchitectureExchangesFor(report) {
 
 async function architectureExchangesFor(runId, report) {
   const generatedRoot = path.join(runDirectory(runId), "generated");
+  if (database) {
+    await database.materializeObjects({
+      ownerType: "run",
+      ownerId: runId,
+      destination: generatedRoot,
+      keyPrefix: "generated/",
+    });
+  }
   const semanticRoot = path.join(generatedRoot, "semantic-generation");
   const statePlanRoot = path.join(generatedRoot, "state-plans");
   const semanticDirectories = (await readdir(semanticRoot, { withFileTypes: true }).catch(
@@ -688,7 +748,10 @@ async function architectureExchangesFor(runId, report) {
 }
 
 async function enrichedReportFor(runId) {
-  const report = await readJson(artifactsFor(runId).report);
+  const report = database
+    ? await database.getReport(runId)
+    : await readJson(artifactsFor(runId).report);
+  if (!report) throw new Error("Report not found.");
   return {
     ...report,
     architectureExchanges: await architectureExchangesFor(runId, report),
@@ -715,12 +778,16 @@ async function logEvent(runId, kind, message, metadata = {}) {
     message,
     metadata: safeMetadata(metadata),
   };
-  const line = `${JSON.stringify(event)}\n`;
-  await mkdir(runDirectory(runId), { recursive: true });
-  await Promise.all([
-    appendFile(path.join(runDirectory(runId), "events.jsonl"), line, "utf8"),
-    appendFile(aggregateLogPath, line, "utf8"),
-  ]);
+  if (database) {
+    await database.appendEvent("run", runId, event);
+  } else {
+    const line = `${JSON.stringify(event)}\n`;
+    await mkdir(runDirectory(runId), { recursive: true });
+    await Promise.all([
+      appendFile(path.join(runDirectory(runId), "events.jsonl"), line, "utf8"),
+      appendFile(aggregateLogPath, line, "utf8"),
+    ]);
+  }
   console.log(
     `[${event.timestamp}] ${runId} ${kind}: ${message}`,
     Object.keys(event.metadata).length ? event.metadata : ""
@@ -759,6 +826,7 @@ async function bodyJson(request, maxBytes = 100_000) {
 }
 
 async function listRuns() {
+  if (database) return database.listRuns();
   const entries = await readdir(runsRoot, { withFileTypes: true });
   const runs = [];
   await Promise.all(
@@ -851,7 +919,8 @@ function initialRun(
 }
 
 async function saveRun(run) {
-  await writeJson(path.join(runDirectory(run.id), "run.json"), run);
+  if (database) await database.putRun(run);
+  else await writeJson(path.join(runDirectory(run.id), "run.json"), run);
 }
 
 async function updateRun(run, patch) {
@@ -997,6 +1066,38 @@ function extensionFor(contentType) {
   return ".png";
 }
 
+async function persistGeneratedScripts(output) {
+  if (!database) return;
+  const seen = new Set();
+  for (const page of output.pages || []) {
+    const artifact = page.generatedArtifact;
+    if (
+      !artifact?.path ||
+      !artifact?.artifactId ||
+      !Number.isInteger(Number(artifact.scriptVersion))
+    ) {
+      continue;
+    }
+    const key = `${artifact.artifactId}@${artifact.scriptVersion}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    await database.importScriptDirectory(artifact.path, {
+      artifactId: artifact.artifactId,
+      version: Number(artifact.scriptVersion),
+    });
+  }
+}
+
+async function persistRunGeneratedCache(runId) {
+  if (!database) return;
+  await database.importDirectory({
+    ownerType: "run",
+    ownerId: runId,
+    directory: path.join(runDirectory(runId), "generated"),
+    keyPrefix: "generated/",
+  });
+}
+
 async function executeCrawl(run) {
   const startedAt = run.createdAt;
   const artifacts = artifactsFor(run.id);
@@ -1024,7 +1125,7 @@ async function executeCrawl(run) {
           process.env.FORMWEAVE_DISABLE_OPENAI !== "1"
       ),
       artifactRunDirectory: artifacts.runDirectory,
-      generatedScriptRoot: path.join(dataRoot, "generated-scripts"),
+      generatedScriptRoot: generatedScriptsRoot,
       traversalSettings: run.traversalSettings,
       reconScriptResolver,
       onProgress: async ({ pages, queued }) => {
@@ -1040,8 +1141,35 @@ async function executeCrawl(run) {
       onBrowserEvent: async (kind, message, metadata = {}) => {
         await logEvent(run.id, kind, message, metadata);
         await updateLiveTraversal(run, kind, message, metadata);
+        if (
+          database &&
+          /(?:generated_script.*stored|semantic|choice_coverage|dynamics)/i.test(
+            kind,
+          )
+        ) {
+          await persistRunGeneratedCache(run.id);
+        }
+        if (
+          database &&
+          kind === "generated_script_published" &&
+          metadata.id &&
+          Number.isInteger(Number(metadata.version))
+        ) {
+          await database.importScriptDirectory(
+            path.join(
+              generatedScriptsRoot,
+              String(metadata.id),
+              `v${Number(metadata.version)}`,
+            ),
+            {
+              artifactId: String(metadata.id),
+              version: Number(metadata.version),
+            },
+          );
+        }
       },
     });
+    await persistGeneratedScripts(output);
     const fetchedBeforePersistence = output.pages.filter((page) => !page.error);
     const visibleFieldsBeforePersistence = output.contract.filter(
       (field) => !field.hidden
@@ -1080,11 +1208,18 @@ async function executeCrawl(run) {
       );
       return;
     }
-    await Promise.all([
-      mkdir(artifacts.pagesDirectory, { recursive: true }),
-      mkdir(artifacts.evidenceDirectory, { recursive: true }),
-    ]);
-    await updateRun(run, { progress: 82, stage: "Persisting local evidence" });
+    if (!database) {
+      await Promise.all([
+        mkdir(artifacts.pagesDirectory, { recursive: true }),
+        mkdir(artifacts.evidenceDirectory, { recursive: true }),
+      ]);
+    }
+    await updateRun(run, {
+      progress: 82,
+      stage: database
+        ? "Persisting evidence to PostgreSQL"
+        : "Persisting local evidence",
+    });
 
     let screenshotsCaptured = 0;
     const reportPages = [];
@@ -1096,19 +1231,53 @@ async function executeCrawl(run) {
       let screenshotArtifact;
 
       if (page.html) {
-        htmlArtifact = path.join(artifacts.pagesDirectory, `page_${pageNumber}.html`);
-        await writeFile(htmlArtifact, page.html, "utf8");
+        const objectKey = `pages/page_${pageNumber}.html`;
+        if (database) {
+          htmlArtifact = (
+            await database.putObject({
+              ownerType: "run",
+              ownerId: run.id,
+              objectKey,
+              bytes: Buffer.from(page.html, "utf8"),
+              contentType: "text/html; charset=utf-8",
+              metadata: { finalUrl: page.finalUrl },
+            })
+          ).uri;
+        } else {
+          htmlArtifact = path.join(
+            artifacts.pagesDirectory,
+            `page_${pageNumber}.html`,
+          );
+          await writeFile(htmlArtifact, page.html, "utf8");
+        }
         await logEvent(run.id, "html_stored", `Stored rendered HTML for ${page.finalUrl}.`, {
           path: htmlArtifact,
           bytes: page.bytesFetched,
         });
       }
       if (page.screenshot) {
-        screenshotArtifact = path.join(
-          artifacts.evidenceDirectory,
-          `${node.id}${extensionFor(page.screenshotContentType)}`
-        );
-        await writeFile(screenshotArtifact, page.screenshot);
+        const evidenceName = `${node.id}${extensionFor(page.screenshotContentType)}`;
+        if (database) {
+          screenshotArtifact = (
+            await database.putObject({
+              ownerType: "run",
+              ownerId: run.id,
+              objectKey: `evidence/${evidenceName}`,
+              bytes: page.screenshot,
+              contentType: page.screenshotContentType || "image/png",
+              metadata: {
+                evidenceId: node.id,
+                provider: page.screenshotProvider || "unknown",
+              },
+            })
+          ).uri;
+        } else {
+          screenshotArtifact = path.join(
+            artifacts.evidenceDirectory,
+            evidenceName,
+          );
+          await writeFile(screenshotArtifact, page.screenshot);
+        }
         screenshotsCaptured += 1;
         node.evidence = `/api/runs/${encodeURIComponent(run.id)}/evidence/${encodeURIComponent(node.id)}`;
         node.evidenceAvailable = true;
@@ -1131,8 +1300,28 @@ async function executeCrawl(run) {
           artifacts.evidenceDirectory,
           `${evidenceId}${extensionFor(state.screenshotContentType)}`
         );
+        let storedStateArtifact = stateArtifact;
         if (state.screenshot) {
-          await writeFile(stateArtifact, state.screenshot);
+          if (database) {
+            storedStateArtifact = (
+              await database.putObject({
+                ownerType: "run",
+                ownerId: run.id,
+                objectKey: `evidence/${evidenceId}${extensionFor(
+                  state.screenshotContentType,
+                )}`,
+                bytes: state.screenshot,
+                contentType: state.screenshotContentType || "image/png",
+                metadata: {
+                  evidenceId,
+                  stateId: state.id,
+                  kind: state.kind,
+                },
+              })
+            ).uri;
+          } else {
+            await writeFile(stateArtifact, state.screenshot);
+          }
           screenshotsCaptured += 1;
         }
         const {
@@ -1146,7 +1335,9 @@ async function executeCrawl(run) {
           ...serializableState,
           evidence: `/api/runs/${encodeURIComponent(run.id)}/evidence/${encodeURIComponent(evidenceId)}`,
           evidenceAvailable: Boolean(state.screenshot),
-          screenshotArtifact: state.screenshot ? stateArtifact : undefined,
+          screenshotArtifact: state.screenshot
+            ? storedStateArtifact
+            : undefined,
         };
         reportStateEvidence.push(storedState);
         node.stateEvidence.push(storedState);
@@ -1164,7 +1355,7 @@ async function executeCrawl(run) {
           {
             stateId: state.id,
             evidenceId,
-            path: stateArtifact,
+            path: storedStateArtifact,
             values: state.values.length,
           }
         );
@@ -1292,7 +1483,7 @@ async function executeCrawl(run) {
       analysis,
       artifacts,
     };
-    const lineage = await updateArtifactLineage(report, dataRoot);
+    const lineage = await updateArtifactLineage(report, dataRoot, { database });
     report.lineage = lineage;
     findings.push({
       id: `${run.id}_lineage`,
@@ -1309,6 +1500,7 @@ async function executeCrawl(run) {
       formsRoot,
       run,
       report,
+      database,
     });
     await logEvent(
       run.id,
@@ -1318,7 +1510,8 @@ async function executeCrawl(run) {
         formIds: formDefinitions.map((definition) => definition.formId),
       },
     );
-    await writeJson(artifacts.report, report);
+    if (database) await database.putReport(run.id, report);
+    else await writeJson(artifacts.report, report);
     const allFailed = fetchedPages.length === 0;
     const disqualified = output.pages.some(
       (page) =>
@@ -1380,7 +1573,7 @@ async function executeCrawl(run) {
           : "crawl_completed",
       allFailed
         ? "Every target failed; the report and logs were retained."
-        : `Stored ${stats.fieldsFound} visible fields, ${screenshotsCaptured} screenshots, and the complete report locally.${disqualified ? " The form is disqualified from approval and execution." : requiresReview ? " The artifact requires review." : ""}`,
+        : `Stored ${stats.fieldsFound} visible fields, ${screenshotsCaptured} screenshots, and the complete report ${database ? "in PostgreSQL" : "locally"}.${disqualified ? " The form is disqualified from approval and execution." : requiresReview ? " The artifact requires review." : ""}`,
       { report: artifacts.report }
     );
   } catch (error) {
@@ -1403,6 +1596,21 @@ async function executeCrawl(run) {
     });
     await logEvent(run.id, "crawl_failed", message);
   } finally {
+    if (database) {
+      await database
+        .importDirectory({
+          ownerType: "run",
+          ownerId: run.id,
+          directory: artifacts.runDirectory,
+          exclude: new Set(["run.json", "report.json", "events.jsonl"]),
+        })
+        .catch((error) =>
+          console.error(
+            `Could not persist run-local generated artifacts for ${run.id}:`,
+            error,
+          ),
+        );
+    }
     runningTasks.delete(run.id);
   }
 }
@@ -1516,7 +1724,13 @@ async function createRun(request) {
   );
   await mkdir(runDirectory(id), { recursive: true });
   await saveRun(run);
-  await logEvent(id, "run_created", "Created a filesystem-backed local crawl.", {
+  await logEvent(
+    id,
+    "run_created",
+    database
+      ? "Created a PostgreSQL-backed local crawl."
+      : "Created a filesystem-backed local crawl.",
+    {
     targets: urls.length,
     browserMode,
     executionMode,
@@ -1525,7 +1739,8 @@ async function createRun(request) {
     discoverRelatedPages,
     fixtureAuthorities,
     traversalSettingsVersion: traversalSettings.version,
-  });
+    },
+  );
   const task = executeCrawl(run);
   runningTasks.set(id, task);
   return jsonResponse(request, { run }, 201);
@@ -1548,6 +1763,18 @@ async function serveFile(request, filePath, contentType, downloadName) {
   }
 }
 
+function serveBytes(request, body, contentType, downloadName) {
+  const disposition = downloadName
+    ? `attachment; filename="${downloadName.replaceAll('"', "")}"`
+    : "inline";
+  return new Response(body, {
+    headers: apiHeaders(request, {
+      "content-type": contentType,
+      "content-disposition": disposition,
+    }),
+  });
+}
+
 function executionDirectory(executionId) {
   if (!/^exec_[a-z0-9]+$/i.test(String(executionId || ""))) {
     throw new Error("Invalid execution id.");
@@ -1556,14 +1783,22 @@ function executionDirectory(executionId) {
 }
 
 async function readExecution(executionId) {
+  if (database) {
+    const record = await database.getExecution(executionId);
+    if (!record) throw new Error("Execution not found.");
+    return record;
+  }
   return readJson(path.join(executionDirectory(executionId), "execution.json"));
 }
 
 async function writeExecution(record) {
-  await writeJson(
-    path.join(executionDirectory(record.executionId), "execution.json"),
-    record,
-  );
+  if (database) await database.putExecution(record);
+  else {
+    await writeJson(
+      path.join(executionDirectory(record.executionId), "execution.json"),
+      record,
+    );
+  }
 }
 
 async function logExecutionEvent(executionId, kind, message, metadata = {}) {
@@ -1574,18 +1809,28 @@ async function logExecutionEvent(executionId, kind, message, metadata = {}) {
     message,
     metadata,
   };
-  await appendFile(
-    path.join(executionDirectory(executionId), "events.jsonl"),
-    `${JSON.stringify(event)}\n`,
-    "utf8",
-  );
+  if (database) {
+    await database.appendEvent("execution", executionId, event);
+  } else {
+    await appendFile(
+      path.join(executionDirectory(executionId), "events.jsonl"),
+      `${JSON.stringify(event)}\n`,
+      "utf8",
+    );
+  }
 }
 
 async function executeApprovedRun(record, form, inputData) {
   try {
     const result = await executeApprovedForm({
       targetUrl: form.targetUrl,
-      scriptPath: form.script.path,
+      scriptPath: database
+        ? path.join(
+            generatedScriptsRoot,
+            form.script.artifactId,
+            `v${form.script.scriptVersion}`,
+          )
+        : form.script.path,
       inputData,
       submit: record.submit,
       browserMode: record.browserMode,
@@ -1632,7 +1877,7 @@ async function executeApprovedRun(record, form, inputData) {
 async function createApprovedRun(request, formId) {
   let form;
   try {
-    form = await readFormRecord(formsRoot, formId);
+    form = await readFormRecord(formsRoot, formId, database);
   } catch {
     return jsonResponse(request, { error: "Form not found." }, 404);
   }
@@ -1708,7 +1953,9 @@ async function createApprovedRun(request, formId) {
     createdAt: now,
     updatedAt: now,
   };
-  await mkdir(executionDirectory(executionId), { recursive: false });
+  if (!database) {
+    await mkdir(executionDirectory(executionId), { recursive: false });
+  }
   await writeExecution(record);
   await logExecutionEvent(
     executionId,
@@ -1733,10 +1980,22 @@ async function route(request) {
   }
   if (url.pathname === "/api/health" && request.method === "GET") {
     const openai = openAIConfiguration();
+    const postgres = database ? await database.ping() : null;
     return jsonResponse(request, {
       status: "online",
-      runtime: "local-filesystem",
-      storageRoot: dataRoot,
+      runtime: database ? "postgresql" : "local-filesystem",
+      ...(!database ? { storageRoot: dataRoot } : {}),
+      storage: database
+        ? {
+            engine: "postgresql",
+            database: postgres.database,
+            role: postgres.role,
+            connected: postgres.connected,
+          }
+        : {
+            engine: "filesystem",
+            root: dataRoot,
+          },
       openai: {
         configured: openai.configured,
         keySource: openai.keySource,
@@ -1758,14 +2017,14 @@ async function route(request) {
   if (url.pathname === "/api/settings" && request.method === "GET") {
     return jsonResponse(request, {
       settings: await readTraversalSettings(),
-      settingsPath,
+      settingsPath: database ? "postgres://settings/traversal" : settingsPath,
     });
   }
   if (url.pathname === "/api/settings" && request.method === "PUT") {
     const payload = await bodyJson(request);
     return jsonResponse(request, {
       settings: await writeTraversalSettings(payload.settings || payload),
-      settingsPath,
+      settingsPath: database ? "postgres://settings/traversal" : settingsPath,
     });
   }
   if (
@@ -1781,7 +2040,9 @@ async function route(request) {
     return createRun(request);
   }
   if (url.pathname === "/api/forms" && request.method === "GET") {
-    return jsonResponse(request, { forms: await listFormRecords(formsRoot) });
+    return jsonResponse(request, {
+      forms: await listFormRecords(formsRoot, database),
+    });
   }
 
   const formMatch = url.pathname.match(/^\/api\/forms\/([^/]+)$/);
@@ -1791,6 +2052,7 @@ async function route(request) {
         form: await readFormRecord(
           formsRoot,
           decodeURIComponent(formMatch[1]),
+          database,
         ),
       });
     } catch {
@@ -1810,6 +2072,7 @@ async function route(request) {
         decision: payload.decision,
         actor: payload.actor,
         notes: payload.notes,
+        database,
       });
       return jsonResponse(request, { form, approval: form.approval });
     } catch (error) {
@@ -1853,6 +2116,17 @@ async function route(request) {
     if (!/^page_\d+(?:_[a-z0-9]+)*$/i.test(nodeId)) {
       return jsonResponse(request, { error: "Invalid evidence id." }, 400);
     }
+    if (database) {
+      const stored = await database.findObject(
+        "run",
+        runId,
+        `evidence/${nodeId}.`,
+      );
+      if (!stored) {
+        return jsonResponse(request, { error: "Evidence is unavailable." }, 404);
+      }
+      return serveBytes(request, stored.bytes, stored.contentType);
+    }
     const directory = artifactsFor(runId).evidenceDirectory;
     const entries = await readdir(directory).catch(() => []);
     const name = entries.find((entry) => entry.startsWith(`${nodeId}.`));
@@ -1886,6 +2160,23 @@ async function route(request) {
   const logsMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/logs$/);
   if (logsMatch && request.method === "GET") {
     const runId = decodeURIComponent(logsMatch[1]);
+    if (database) {
+      const events = await database.listEvents("run", runId);
+      if (!(await database.getRun(runId))) {
+        return jsonResponse(request, { error: "Run not found." }, 404);
+      }
+      const body =
+        events.map((event) => JSON.stringify(event)).join("\n") +
+        (events.length ? "\n" : "");
+      return serveBytes(
+        request,
+        body,
+        "application/x-ndjson; charset=utf-8",
+        url.searchParams.get("download") === "1"
+          ? `formweave-${runId}-events.jsonl`
+          : undefined,
+      );
+    }
     return serveFile(
       request,
       artifactsFor(runId).events,
@@ -1900,8 +2191,12 @@ async function route(request) {
   if (runMatch && request.method === "GET") {
     const runId = decodeURIComponent(runMatch[1]);
     try {
+      const storedRun = database
+        ? await database.getRun(runId)
+        : await readJson(path.join(runDirectory(runId), "run.json"));
+      if (!storedRun) throw new Error("Run not found.");
       return jsonResponse(request, {
-        run: await readJson(path.join(runDirectory(runId), "run.json")),
+        run: storedRun,
       });
     } catch {
       return jsonResponse(request, { error: "Run not found." }, 404);
@@ -1909,9 +2204,11 @@ async function route(request) {
   }
   if (runMatch && request.method === "PATCH") {
     const runId = decodeURIComponent(runMatch[1]);
-    const filePath = path.join(runDirectory(runId), "run.json");
     try {
-      const run = await readJson(filePath);
+      const run = database
+        ? await database.getRun(runId)
+        : await readJson(path.join(runDirectory(runId), "run.json"));
+      if (!run) throw new Error("Run not found.");
       const payload = await bodyJson(request);
       if (payload.action !== "request_review") {
         return jsonResponse(request, { error: "Unsupported run action." }, 400);

@@ -26,11 +26,17 @@ export function formDirectory(formsRoot, formId) {
   return path.join(formsRoot, safeFormId(formId));
 }
 
-export async function readFormRecord(formsRoot, formId) {
+export async function readFormRecord(formsRoot, formId, database = null) {
+  if (database) {
+    const record = await database.getForm(safeFormId(formId));
+    if (!record) throw new Error("Form not found.");
+    return record;
+  }
   return readJson(path.join(formDirectory(formsRoot, formId), "form.json"));
 }
 
-export async function listFormRecords(formsRoot) {
+export async function listFormRecords(formsRoot, database = null) {
+  if (database) return database.listForms();
   const entries = await readdir(formsRoot, { withFileTypes: true }).catch(
     () => [],
   );
@@ -95,8 +101,9 @@ export async function registerCrawledForms({
   formsRoot,
   run,
   report,
+  database = null,
 }) {
-  await mkdir(formsRoot, { recursive: true });
+  if (!database) await mkdir(formsRoot, { recursive: true });
   const definitions = [];
   for (const [pageIndex, page] of report.pages.entries()) {
     const artifact = page.generatedArtifact;
@@ -171,9 +178,13 @@ export async function registerCrawledForms({
       approval: null,
       traversalSettings: report.traversalSettings,
     };
-    const directory = formDirectory(formsRoot, formId);
-    await mkdir(directory, { recursive: false });
-    await writeJson(path.join(directory, "form.json"), record);
+    if (database) {
+      await database.putForm(record);
+    } else {
+      const directory = formDirectory(formsRoot, formId);
+      await mkdir(directory, { recursive: false });
+      await writeJson(path.join(directory, "form.json"), record);
+    }
     page.crawlFormId = formId;
     const definition = {
       formId,
@@ -199,9 +210,10 @@ export async function decideFormApproval({
   decision,
   actor,
   notes = "",
+  database = null,
 }) {
   const directory = formDirectory(formsRoot, formId);
-  const record = await readFormRecord(formsRoot, formId);
+  const record = await readFormRecord(formsRoot, formId, database);
   if (!["approved", "rejected"].includes(decision)) {
     throw Object.assign(
       new Error("decision must be approved or rejected."),
@@ -237,11 +249,15 @@ export async function decideFormApproval({
     updatedAt: now,
     approval,
   };
-  await writeJson(path.join(directory, "form.json"), updated);
-  await writeFile(
-    path.join(directory, `${approval.approvalId}.json`),
-    `${JSON.stringify(approval, null, 2)}\n`,
-    { encoding: "utf8", flag: "wx" },
-  );
+  if (database) {
+    await database.putForm(updated);
+  } else {
+    await writeJson(path.join(directory, "form.json"), updated);
+    await writeFile(
+      path.join(directory, `${approval.approvalId}.json`),
+      `${JSON.stringify(approval, null, 2)}\n`,
+      { encoding: "utf8", flag: "wx" },
+    );
+  }
   return updated;
 }

@@ -165,6 +165,51 @@ npm run local:import-report -- C:\path\to\report.json
 Downloaded reports do not contain their original screenshot bytes. An import
 retains the JSON facts and marks unavailable images honestly.
 
+## PostgreSQL storage
+
+Set `POSTGRES_URI` in `.env` to make PostgreSQL the durable application store.
+The URI is consumed only by the server and database commands and is never
+returned by the health API or written to logs. `FORMWEAVE_STORAGE=filesystem`
+can be used explicitly for isolated filesystem tests.
+Remote database connections use certificate-verified TLS automatically.
+`POSTGRES_SSL=require` is available only for providers whose certificate chain
+cannot be verified by the local runtime.
+
+Apply the versioned schema:
+
+```bash
+npm run db:migrate
+```
+
+Import the existing application state beneath `FORMWEAVE_DATA_DIR`:
+
+```bash
+npm run db:import
+```
+
+Verify every stored report, generated script, and binary blob hash:
+
+```bash
+npm run db:verify
+```
+
+The importer is idempotent and imports settings, runs, reports, events, forms,
+approvals, executions, lineages, retained generated scripts, rendered HTML,
+screenshots, and run-local semantic/generated artifacts. Use
+`npm run db:import -- --metadata-only` only when binary and file artifacts
+should intentionally be omitted.
+
+Structured records remain intact in `jsonb` columns. Generated script plans are
+also decoded into readable `jsonb`, while the exact generated module source and
+its SHA-256 hash are retained for verification. Images and other files are
+stored in content-addressed `bytea` rows and deduplicated by SHA-256.
+Script versions, approvals, events, and blob content are append-only at the
+database level.
+
+When PostgreSQL is active, `.formweave-cache/` contains disposable Playwright
+materializations. Retained scripts are hash-checked after materialization and
+before loading; authoritative records remain in PostgreSQL.
+
 ## What a Phase 1 probe does
 
 - validates public HTTP/HTTPS targets and rejects credentials, private

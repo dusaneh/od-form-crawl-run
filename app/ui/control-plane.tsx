@@ -56,8 +56,15 @@ const defaultTraversalSettings: TraversalSettings = {
 
 type RuntimeStatus = {
   status: "online";
-  runtime: "local-filesystem";
-  storageRoot: string;
+  runtime: "local-filesystem" | "postgresql";
+  storageRoot?: string;
+  storage?: {
+    engine: "filesystem" | "postgresql";
+    root?: string;
+    database?: string;
+    role?: string;
+    connected?: boolean;
+  };
   openai: {
     configured: boolean;
     keySource: string;
@@ -3011,7 +3018,7 @@ export function ControlPlane() {
               {apiState === "online"
                 ? runtime?.runtime === "local-filesystem"
                   ? `Local crawler · ${runtime.openai.configured ? "AI ready" : "AI key missing"}`
-                  : "Crawler API online"
+                  : `PostgreSQL crawler · ${runtime?.openai.configured ? "AI ready" : "AI key missing"}`
                 : apiState === "connecting"
                   ? "Connecting"
                   : "Crawler API unavailable"}
@@ -3090,7 +3097,7 @@ export function ControlPlane() {
                   Download report
                 </a>
               )}
-              {runtime?.runtime === "local-filesystem" && (
+              {runtime && (
                 <a
                   className="secondary-button button-link"
                   href={apiUrl(`/api/runs/${encodeURIComponent(activeRun.id)}/logs?download=1`)}
@@ -3224,7 +3231,9 @@ export function ControlPlane() {
           <span>FORMWEAVE CONTROL PLANE</span>
           <span>
             {runtime
-              ? `Local storage · ${runtime.storageRoot} · ${runtime.openai.model}`
+              ? runtime.runtime === "postgresql"
+                ? `PostgreSQL · ${runtime.storage?.database || "connected"} · ${runtime.openai.model}`
+                : `Local storage · ${runtime.storageRoot || runtime.storage?.root || "data"} · ${runtime.openai.model}`
               : "Read-only crawler v1 · Fingerprints use fetched form facts"}
           </span>
         </footer>

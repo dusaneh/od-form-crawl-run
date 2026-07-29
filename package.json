@@ -11,6 +11,9 @@
     "local:api": "node local/server.mjs",
     "local:web": "vinext dev --hostname 127.0.0.1 --port 3000",
     "local:import-report": "node local/import-report.mjs",
+    "db:migrate": "node local/postgres/migrate.mjs",
+    "db:import": "node local/postgres/import-filesystem.mjs",
+    "db:verify": "node local/postgres/verify.mjs",
     "fixtures": "node test-sites/server.mjs",
     "crawl:harness": "node test-sites/harness.mjs",
     "crawl:harness:headed": "node test-sites/harness.mjs --headed",
@@ -37,6 +40,7 @@
   },
   "dependencies": {
     "next": "16.2.6",
+    "pg": "^8.22.0",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },

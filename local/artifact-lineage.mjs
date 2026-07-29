@@ -13,12 +13,27 @@ function lineageKey(url) {
   return createHash("sha256").update(url).digest("hex").slice(0, 24);
 }
 
-async function readExisting(filePath) {
+async function readExisting(filePath, database = null, key = "") {
+  if (database) return database.getLineage(key);
   try {
     return JSON.parse(await readFile(filePath, "utf8"));
   } catch (error) {
     if (error?.code === "ENOENT") return null;
     throw error;
+  }
+}
+
+async function writeLineage({
+  database,
+  key,
+  normalizedUrl,
+  filePath,
+  payload,
+}) {
+  if (database) {
+    await database.putLineage(key, normalizedUrl, payload);
+  } else {
+    await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   }
 }
 
@@ -30,12 +45,19 @@ function sameValues(left, right) {
   return JSON.stringify(sortedUnique(left)) === JSON.stringify(sortedUnique(right));
 }
 
-export async function updateArtifactLineage(report, dataRoot) {
+export async function updateArtifactLineage(
+  report,
+  dataRoot,
+  { database = null } = {},
+) {
   const normalizedUrl = normalizeArtifactUrl(report.targets[0]);
   const root = path.join(dataRoot, "lineages");
-  const filePath = path.join(root, `${lineageKey(normalizedUrl)}.json`);
-  await mkdir(root, { recursive: true });
-  const existing = await readExisting(filePath);
+  const key = lineageKey(normalizedUrl);
+  const filePath = database
+    ? `postgres://lineage/${key}`
+    : path.join(root, `${key}.json`);
+  if (!database) await mkdir(root, { recursive: true });
+  const existing = await readExisting(filePath, database, key);
   const generatedStateCount = Math.max(
     1,
     ...report.pages.map((page) =>
@@ -94,7 +116,13 @@ export async function updateArtifactLineage(report, dataRoot) {
       versions: [{ version: 1, predecessor: null, ...artifactRecord }],
       expansions: [],
     };
-    await writeFile(filePath, `${JSON.stringify(lineage, null, 2)}\n`, "utf8");
+    await writeLineage({
+      database,
+      key,
+      normalizedUrl,
+      filePath,
+      payload: lineage,
+    });
     return {
       outcome: "created",
       version: 1,
@@ -130,7 +158,13 @@ export async function updateArtifactLineage(report, dataRoot) {
       ),
       request,
     ];
-    await writeFile(filePath, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
+    await writeLineage({
+      database,
+      key,
+      normalizedUrl,
+      filePath,
+      payload: existing,
+    });
     return {
       outcome: "algorithm_rebaseline_required",
       version: existing.currentVersion,
@@ -155,11 +189,13 @@ export async function updateArtifactLineage(report, dataRoot) {
         ...(current.variantFingerprints || []),
         ...variantFingerprints,
       ]);
-      await writeFile(
+      await writeLineage({
+        database,
+        key,
+        normalizedUrl,
         filePath,
-        `${JSON.stringify(existing, null, 2)}\n`,
-        "utf8"
-      );
+        payload: existing,
+      });
       return {
         outcome: "expanded",
         version: existing.currentVersion,
@@ -170,7 +206,13 @@ export async function updateArtifactLineage(report, dataRoot) {
     }
     current.lastObservedRunId = report.id;
     current.lastObservedAt = observedAt;
-    await writeFile(filePath, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
+    await writeLineage({
+      database,
+      key,
+      normalizedUrl,
+      filePath,
+      payload: existing,
+    });
     return {
       outcome: "unchanged",
       version: existing.currentVersion,
@@ -188,7 +230,13 @@ export async function updateArtifactLineage(report, dataRoot) {
     predecessor: existing.currentVersion - 1,
     ...artifactRecord,
   });
-  await writeFile(filePath, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
+  await writeLineage({
+    database,
+    key,
+    normalizedUrl,
+    filePath,
+    payload: existing,
+  });
   return {
     outcome: "structural_change",
     version: nextVersion,
