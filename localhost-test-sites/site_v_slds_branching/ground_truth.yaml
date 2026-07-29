@@ -1,0 +1,126 @@
+site_id: site_v_slds_branching
+org_name: Bayshore Utility Assistance
+intake_url: http://localhost:9000/site_v_slds_branching/intake
+has_intake_form: true
+form_type: utility_assistance
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# SLDS BRANCHING SITE (BR-1 regression fixture, PG&E CARE/FERA shape) —
+# choice controls are SLDS-style: the real radio/checkbox input is visually
+# hidden under a styled label that intercepts pointer events, so a raw
+# el.check() times out (CF-2/BR-1 failure mode). The LLM-authored probes must
+# actuate the declared options, observe the reveals, and generate/execute the
+# one-level revealed states.
+#   qual_method  (radio Income/Program) → reveals income fields OR program checkboxes
+#   helper_group (radio YES/NO)         → reveals worker_id
+# Feature: slds_branching_interception (t_slds_branching_interception).
+expected_branching:
+  same_page: true
+  max_supported_depth: 1
+  cross_page: false
+  trigger_fields: [qual_method, helper_group]
+
+expected_red_flag_codes: []
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+# Field inventory is scored after the production crawl terminates.
+fields:
+  - name: full_name
+    label: Full Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null   # no full-name canonical key exists
+
+  - name: email
+    label: Email Address
+    field_type: email
+    required: false
+    is_sensitive: false
+    expected_canonical_key: email
+
+  - name: zip_code
+    label: ZIP Code
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: zip_code
+
+  # SLDS radio group — branch trigger 1.
+  - name: qual_method
+    label: Qualification Method (Choose One)
+    field_type: radio
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+
+  - name: income_amount
+    label: Annual Household Income (whole dollars)
+    field_type: text
+    required: false
+    is_sensitive: true             # income amount → always sensitive
+    conditional: true
+    expected_canonical_key: null   # annual, not monthly_income — no exact key
+
+  - name: fixed_income
+    label: I am currently on a fixed income
+    field_type: checkbox
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  # SLDS program checkboxes (revealed by qual_method=Program).
+  - name: prog_snap
+    label: SNAP (Food Assistance)
+    field_type: checkbox
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: prog_ssi
+    label: Supplemental Security Income (SSI)
+    field_type: checkbox
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: prog_medicaid
+    label: Medicaid
+    field_type: checkbox
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: prog_liheap
+    label: Energy Assistance (LIHEAP)
+    field_type: checkbox
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  # SLDS radio group — branch trigger 2 (assisted enrollment).
+  - name: helper_group
+    label: Assisted Enrollment
+    field_type: radio
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+
+  - name: worker_id
+    label: Outreach Worker ID
+    field_type: text
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null   # admin-ish helper field

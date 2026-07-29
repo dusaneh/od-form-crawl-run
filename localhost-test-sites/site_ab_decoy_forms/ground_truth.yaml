@@ -1,0 +1,80 @@
+site_id: site_ab_decoy_forms
+org_name: Foothill Family Alliance
+intake_url: http://localhost:9000/site_ab_decoy_forms/intake
+has_intake_form: true
+form_type: family_assistance
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# DECOY FORMS SITE (United Way pattern) — THREE decoy widget forms surround
+# the real intake form in document order: a header site-search form and a
+# newsletter signup BEFORE it, and a footer search AFTER it. Extraction must
+# RANK forms (non-widget first, then by real-field count) instead of taking
+# the first N in document order — a naive forms[:2] cap captures only the
+# search + newsletter widgets. Required behavior: the config carries the
+# intake form's fields, contains NO widget field (s / nl_email), and the dry
+# run completes.
+# Feature: decoy_form_ranking (t_decoy_form_ranking).
+expected_abort: null
+
+# Widget fields that must NOT appear in the emitted config.
+expected_absent_field_names: [s, nl_email]
+
+expected_red_flag_codes: []
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+fields:
+  - name: full_name
+    label: Full Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null   # no full-name canonical key exists
+
+  - name: current_address
+    label: Street Address
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: current_address
+
+  - name: zip_code
+    label: ZIP Code
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: zip_code
+
+  - name: email
+    label: Email Address
+    field_type: email
+    required: false
+    is_sensitive: false
+    expected_canonical_key: email
+
+  - name: household_size
+    label: Number of people in household
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: household_size
+    expected_options:
+      - {value: "1", label: "1"}
+      - {value: "2", label: "2"}
+      - {value: "3", label: "3"}
+      - {value: "4", label: "4"}
+      - {value: "5", label: "5"}
+      - {value: "6", label: "6+"}
+
+  - name: agree_terms
+    label: I certify the information provided is accurate.
+    field_type: checkbox
+    required: true
+    is_sensitive: false
+    expected_is_consent: true
+    expected_canonical_key: null

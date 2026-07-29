@@ -1,0 +1,96 @@
+site_id: site_u_other_specify
+org_name: Lakeside Community Resources
+intake_url: http://localhost:9000/site_u_other_specify/intake
+has_intake_form: true
+form_type: general_intake
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# No blocking conditions — a single-page form the Runner can dry-run end to end.
+# The two "Other" options each reveal a single free-text companion; this is an
+# "Other, specify" reveal, NOT branching, so the Builder must PROCEED (not abort).
+expected_red_flag_codes: []
+
+expected_form_metadata:
+  needs_consent: false
+  has_file_upload: false
+  contains_other_specify: true      # ≥1 field is an "Other, specify" companion
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+# The two reveals. Each parent choice field has an "Other" option that opens a single
+# free-text companion. The harness asserts the companion is captured (not aborted) and
+# tagged with revealed_by_key + reveal_values + is_specify_field.
+expected_other_specify:
+  - parent_name: referral_source
+    parent_type: radio
+    other_value: other
+    specify_name: referral_other
+  - parent_name: accommodation
+    parent_type: select
+    other_value: other
+    specify_name: accommodation_other
+
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+
+  - name: email
+    label: Email Address
+    field_type: email
+    required: false
+    is_sensitive: false
+    expected_canonical_key: email
+
+  - name: referral_source
+    label: How did you hear about us?
+    field_type: radio
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+    # Parent of the "Other, specify" reveal.
+    expected_other_option_value: other
+
+  - name: referral_other
+    label: Please specify
+    field_type: text
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+    # Free-text companion revealed only when referral_source == other.
+    expected_is_specify_field: true
+    expected_revealed_by: referral_source
+    expected_reveal_values: ["other"]
+
+  - name: accommodation
+    label: Do you need any accommodations?
+    field_type: select
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+    expected_other_option_value: other
+
+  - name: accommodation_other
+    label: Please describe your accommodation need
+    field_type: text
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+    expected_is_specify_field: true
+    expected_revealed_by: accommodation
+    expected_reveal_values: ["other"]

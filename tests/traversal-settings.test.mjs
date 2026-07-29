@@ -31,10 +31,10 @@ test("traversal settings normalize bounded values and lock the CAPTCHA policy", 
     agentInstructions: "too short",
   });
 
-  assert.equal(normalized.version, 2);
+  assert.equal(normalized.version, 4);
   assert.equal(normalized.cookieConsent, "accept_all");
   assert.equal(normalized.closeWelcomeBanners, false);
-  assert.equal(normalized.captchaPolicy, "detect_and_handoff");
+  assert.equal(normalized.captchaPolicy, "detect_and_disqualify");
   assert.equal(normalized.stableWindowMs, 300);
   assert.equal(normalized.maxStateWaitMs, 30_000);
   assert.equal(normalized.maxActionsPerPage, 1);

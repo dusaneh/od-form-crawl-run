@@ -1,0 +1,93 @@
+site_id: site_ai_fee_verify
+org_name: Sunrise Transitional Services
+intake_url: http://localhost:9000/site_ai_fee_verify/intake
+has_intake_form: true
+form_type: transitional_housing
+requires_login: false
+has_captcha: true              # /intake carries a score-badge; /intake_challenge carries widgets
+pdf_links: []
+
+# TWO FLOWS.
+#
+# /intake — "Standard Application": program select + name/email, then a
+#   "Processing Fee ($25)" fieldset asking for card number, expiration, and
+#   CVC (autocomplete cc-* attributes). A fixed corner badge reads
+#   "protected by SiteVerify v3 — invisible verification"; no challenge widget
+#   appears anywhere on the page.
+#
+# /intake_challenge — "Verified Application": two human-verification steps.
+#   Verification 1 is a question rendered as plain page text ("What is 6 + 3?")
+#   with a labeled answer input. Verification 2 renders its characters ONLY
+#   inside an <img> (a data: URI of distorted text; the drawn characters are
+#   R4WNQ) followed by an input with no label or placeholder text. Any
+#   non-empty answers are accepted client-side.
+expected_abort: null
+expected_captcha_type: invisible     # for /intake; the badge is the only signal
+
+expected_red_flag_codes:
+  - payment_field
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+# For tests that fetch the alternate flow directly.
+alternate_flows:
+  intake_challenge:
+    url: http://localhost:9000/site_ai_fee_verify/intake_challenge
+    expected_red_flag_codes: [interactive_captcha]
+    image_challenge:
+      input_name: verify_code
+      drawn_text: R4WNQ            # used only to verify the fixture rendered; never shown as text
+    text_challenge:
+      input_name: verify_answer
+      question: "What is 6 + 3?"
+      answer: "9"
+
+fields:
+  - name: full_name
+    label: Full Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null   # no full-name canonical key exists
+
+  - name: email
+    label: Email Address
+    field_type: email
+    required: false
+    is_sensitive: false
+    expected_canonical_key: email
+
+  - name: program
+    label: Program
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: services_requested
+    expected_options:
+      - {value: "bridge",       label: "Bridge Housing (30–90 days)"}
+      - {value: "transitional", label: "Transitional Housing (up to 24 months)"}
+      - {value: "rapid",        label: "Rapid Re-Housing"}
+
+  - name: card_number
+    label: Card Number
+    field_type: text
+    required: true
+    is_sensitive: true
+    expected_canonical_key: null   # payment card data
+
+  - name: card_expiry
+    label: Expiration (MM/YY)
+    field_type: text
+    required: true
+    is_sensitive: true
+    expected_canonical_key: null
+
+  - name: card_cvc
+    label: Security Code (CVC)
+    field_type: text
+    required: true
+    is_sensitive: true
+    expected_canonical_key: null

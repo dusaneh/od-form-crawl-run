@@ -1,0 +1,134 @@
+site_id: site_ad_wizard_links
+org_name: Blue Spruce Employment Alliance
+intake_url: http://localhost:9000/site_ad_wizard_links/intake
+has_intake_form: true
+form_type: employment_enrollment
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# LINK-ADVANCED WIZARD — a three-step flow with a "Step N of 3" progress line
+# on every page. Steps 1 and 2 have NO <form> element: their inputs sit in
+# plain divs and each page advances through a styled <a> link ("Continue →"),
+# not a submit button. Only step 3 is a real <form>; its submit navigates to
+# /confirmation.
+#
+# Step 2 contains:
+#   - a benign readback of a step-1 answer as short numeric display text
+#     ("You told us your household size: 3")
+#   - a repeatable "Recent Jobs" section: one employer/months row plus an
+#     "Add another job" button that appends rows up to a cap of 4
+#   - a fixed "References" block with exactly two slots (reference_1_name,
+#     reference_2_name) and no control that adds more
+# Step 3 holds the staff-assisted questions (referral source, staff-helper
+# checkbox, typed signature, review confirmation).
+expected_abort: null
+
+expected_red_flag_codes: []
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: false
+    advance_is_server_roundtrip: true    # <a> navigation to /intake_p2
+  - page_index: 1
+    is_terminal_submit: false
+    advance_is_server_roundtrip: true    # <a> navigation to /intake_p3
+  - page_index: 2
+    is_terminal_submit: true
+    advance_is_server_roundtrip: true    # GET action to /confirmation
+
+expected_sections:
+  - text: Recent Jobs
+    multiple_rows: true                  # add-row control, cap 4
+  - text: References
+    multiple_rows: false                 # fixed two slots, no add control
+
+fields:
+  # ---- step 1 ----
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+
+  - name: household_size
+    label: Household Size
+    field_type: number
+    required: true
+    is_sensitive: false
+    expected_canonical_key: household_size
+
+  # ---- step 2 ----
+  - name: job_1_employer
+    label: Employer
+    field_type: text
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null    # repeatable row
+
+  - name: job_1_months
+    label: Months employed
+    field_type: number
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null    # repeatable row
+
+  - name: reference_1_name
+    label: Reference 1 — Name
+    field_type: text
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+
+  - name: reference_2_name
+    label: Reference 2 — Name
+    field_type: text
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+
+  # ---- step 3 (staff-assisted questions) ----
+  - name: referral_source
+    label: How did you hear about Blue Spruce?
+    field_type: select
+    required: false
+    is_sensitive: false
+    expected_admin_field: true
+    expected_canonical_key: null    # admin field → unmappable
+    expected_options:
+      - {value: "agency", label: "Another agency referred me"}
+      - {value: "friend", label: "Friend or family"}
+      - {value: "online", label: "Online search"}
+      - {value: "flyer",  label: "Flyer or poster"}
+
+  - name: staff_helper
+    label: A staff member helped me complete this enrollment.
+    field_type: checkbox
+    required: false
+    is_sensitive: false
+    expected_admin_field: true
+    expected_canonical_key: null
+
+  - name: applicant_signature
+    label: Applicant signature (type your full name)
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_admin_field: true
+    expected_canonical_key: null
+
+  - name: review_confirm
+    label: I have reviewed my answers and confirm they are complete.
+    field_type: checkbox
+    required: true
+    is_sensitive: false
+    expected_admin_field: true
+    expected_canonical_key: null

@@ -1,0 +1,91 @@
+site_id: site_ak_flow_dependent
+org_name: Aspen Grove Housing Cooperative
+intake_url: http://localhost:9000/site_ak_flow_dependent/intake
+has_intake_form: true
+form_type: utility_assistance
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# TWO FLOWS, both two-step with a shared /confirmation page.
+#
+# /intake — "Utility Assistance": step 1 is deliberately MALFORMED HTML
+#   (uppercase <Form>/<INPUT>/<SELECT> tags, unquoted attributes, unclosed <p>
+#   and <label> elements, an <INPUT type=submit> control). It collects name
+#   fields and a heat-source select, then advances by GET to /intake_p2.
+#   Step 2's questions are phrased in terms of the step-1 heating answer
+#   ("Because you said your home is heated with electricity…", "Since your
+#   heat is electric…"). Step 1 itself contains no conditional visibility.
+#
+# /intake_echo — "Residency Update": step 1 is clean HTML collecting first and
+#   last name. Step 2 repeats the distinctive step-1 last name verbatim as
+#   display text ("Updating residency record for: Testerson") with NO
+#   conditional phrasing, then asks one household question.
+expected_abort: cross_page_branching   # applies to the /intake flow
+
+expected_branching:
+  same_page: false
+  cross_page: true
+  trigger_fields: [heat_source]
+  confidence: high                     # explicit conditional phrasing on step 2
+
+expected_red_flag_codes:
+  - cross_page_branching
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: false
+    advance_is_server_roundtrip: true  # GET action to /intake_p2
+  - page_index: 1
+    is_terminal_submit: true
+    advance_is_server_roundtrip: true  # GET action to /confirmation
+
+alternate_flows:
+  intake_echo:
+    url: http://localhost:9000/site_ak_flow_dependent/intake_echo
+    # Step 2 echoes the step-1 last name verbatim with no conditional phrasing.
+    echoed_value: Testerson
+
+# Field inventory for the /intake flow.
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+
+  - name: heat_source
+    label: Primary heating source
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+    expected_options:
+      - {value: "electric", label: "Electricity"}
+      - {value: "gas",      label: "Natural gas"}
+      - {value: "wood",     label: "Wood or pellet stove"}
+
+  # ---- step 2 (phrased around the step-1 answer) ----
+  - name: monthly_electric_bill
+    label: Since your heat is electric, what is your average monthly electric bill?
+    field_type: text
+    required: true
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: utility_provider
+    label: Electric utility provider
+    field_type: text
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null

@@ -2,6 +2,7 @@ export type RunStatus =
   | "running"
   | "paused"
   | "awaiting_review"
+  | "disqualified"
   | "completed"
   | "certified"
   | "failed";
@@ -14,14 +15,15 @@ export type NodeStatus =
   | "locked";
 
 export type ReasonCode =
+  | "fetch_failed"
   | "locator_unresolved"
-  | "type_mismatch"
   | "actuation_unverified"
+  | "could_not_test"
   | "advance_no_navigation"
-  | "validation_blocked"
+  | "challenge_detected"
+  | "login_or_payment_detected"
   | "drift_fingerprint"
-  | "captcha_handoff"
-  | "ambiguous_advance";
+  | "quality_floor";
 
 export type FlowNode = {
   id: string;
@@ -36,6 +38,7 @@ export type FlowNode = {
   y: number;
   evidence: string;
   evidenceAvailable?: boolean;
+  evidenceValueCount?: number;
   sourceUrl?: string;
   pageTitle?: string;
   httpStatus?: number;
@@ -68,6 +71,8 @@ export type Finding = {
 };
 
 export type FieldContract = {
+  name?: string;
+  id?: string;
   key: string;
   label: string;
   control: string;
@@ -75,7 +80,11 @@ export type FieldContract = {
   sensitive: boolean;
   hidden: boolean;
   options: number;
+  optionSet?: { value: string; label: string }[];
+  groupLabel?: string;
+  optionValues?: string[];
   selector: string;
+  selectorCandidates?: string[];
   originState: string;
   originUrl: string;
   frameUrl?: string;
@@ -85,6 +94,70 @@ export type FieldContract = {
   testValueSource?: "llm" | "deterministic" | "unavailable";
   entryStatus?: "entered" | "skipped" | "failed";
   entryError?: string;
+  requiredSource?: "required_attribute" | "aria_required" | "aria_or_runtime" | "not_observed";
+  validation?: {
+    pattern?: string;
+    min?: string;
+    max?: string;
+    minLength?: string;
+    maxLength?: string;
+  };
+  upload?: {
+    accept?: string;
+    maxSize?: string;
+    maxFiles?: string;
+    multiple?: boolean;
+  };
+  consent?: boolean;
+  adminAssisted?: boolean;
+  legalAcceptanceType?:
+    | "acknowledgement"
+    | "consent"
+    | "reviewConfirmation"
+    | "signature";
+  canonicalProfileKey?: string;
+  repeatableSection?: string;
+  addRowControl?: string;
+  otherSpecifyFor?: string;
+  sectionText?: string;
+  sectionId?: string;
+  guidanceIds?: string[];
+  formId?: string;
+};
+
+export type GuidanceRecord = {
+  id: string;
+  kind:
+    | "instruction"
+    | "eligibility"
+    | "definition"
+    | "warning"
+    | "example"
+    | "privacy"
+    | "other";
+  scope: "form" | "section" | "question";
+  scopeId: string;
+  text: string;
+  provenance: {
+    source:
+      | "aria-describedby"
+      | "aria-labelledby"
+      | "nearby-dom"
+      | "section-dom";
+    selector: string;
+    frameUrl: string;
+  };
+};
+
+export type SectionRecord = {
+  id: string;
+  parentId?: string;
+  label: string;
+  ordinal: number;
+  selector: string;
+  frameUrl: string;
+  questionKeys: string[];
+  guidanceIds: string[];
 };
 
 export type CrawlStats = {
@@ -119,8 +192,24 @@ export type CrawlReportPage = {
   durationMs: number;
   bytesFetched: number;
   fingerprint: string;
+  fingerprintAlgorithmVersion?: string;
+  fingerprintInput?: {
+    algorithmVersion: string;
+    normalizedUrl: string;
+    fields: {
+      nameOrId: string;
+      type: string;
+      required: boolean;
+      optionValues: string[];
+      sectionText: string;
+    }[];
+    stateCount: number;
+    uploadPresence: boolean;
+  };
   forms: number;
   fields: Omit<FieldContract, "originState" | "originUrl">[];
+  guidanceRecords?: GuidanceRecord[];
+  sections?: SectionRecord[];
   formActions: string[];
   links: { url: string; text: string }[];
   hasScripts: boolean;
@@ -144,12 +233,81 @@ export type CrawlReportPage = {
   fieldsEntered?: number;
   entryFailures?: number;
   branchStates?: number;
-  finalSubmission?: "blocked" | "submitted" | "not_found" | "not_requested";
+  finalSubmission?:
+    | "blocked"
+    | "submitted"
+    | "submitted_unverified"
+    | "not_found"
+    | "not_requested";
+  submissionResult?: {
+    verified: boolean;
+    outcome: "success" | "failure" | "unknown";
+    source: string;
+    detail: string;
+    criteria?: {
+      assessmentId: string;
+      confidence: "high" | "medium" | "low";
+      markers: string[];
+      rationale: string;
+    } | null;
+    provenance?: {
+      generatedAt: string;
+      model: string;
+      promptVersion: string;
+      responseId?: string | null;
+      durationMs?: number;
+    } | null;
+    transport?: {
+      clicked?: boolean;
+      submitEventObserved?: boolean;
+      writeRequestObserved?: boolean;
+      verified: boolean;
+      navigationStatus: number | null;
+      stateChanged: boolean;
+      detail: string;
+    } | null;
+  } | null;
+  certificationStatus?:
+    | "probe_completed"
+    | "generated_script_validated"
+    | "fixture_submitted"
+    | "could_not_test"
+    | "branching_logic_detected"
+    | "script_missing"
+    | "no_form";
+  reconScriptId?: string;
+  reconScriptVersion?: number;
+  generatedArtifact?: {
+    artifactId: string;
+    scriptVersion: number;
+    sourceHash: string;
+    path: string;
+    modelCalls: number;
+    modelCallsThisRun?: number;
+    states: number;
+    lifecycle?:
+      | "generated_and_validated"
+      | "generated_and_published"
+      | "generated_not_published"
+      | "retained_replay";
+  } | null;
+  journeyUrls?: string[];
+  entryMode?: "canonical" | "mid_flow" | "unknown";
+  entryDetail?: string;
+  journeyComplete?: boolean;
+  haltReason?: string;
   error?: string;
 };
 
 export type BrowserMode = "headless" | "headful";
-export type ExecutionMode = "dry_run" | "live";
+export type ExecutionMode = "probe" | "fixture_submit";
+export type FixtureAuthorities = {
+  acknowledgement: boolean;
+  consent: boolean;
+  reviewConfirmation: boolean;
+  signature: boolean;
+  upload: boolean;
+};
 
 export type TraversalSettings = {
   version: number;
@@ -163,7 +321,7 @@ export type TraversalSettings = {
   allowSameOriginReadLikePosts: boolean;
   pointerAndScrollPriming: boolean;
   unpredictablePopups: "observe_only";
-  captchaPolicy: "detect_and_handoff";
+  captchaPolicy: "detect_and_disqualify";
   stableWindowMs: number;
   maxStateWaitMs: number;
   maxActionsPerPage: number;
@@ -186,20 +344,29 @@ export type TraversalAction = {
     | "intro_advance"
     | "field_entry"
     | "branch_probe"
+    | "choice_probe"
+    | "branch_reveal"
     | "form_advance"
-    | "final_submit"
     | "final_submit_blocked";
   label: string;
   strategy: string;
-  beforeFingerprint: string;
-  afterFingerprint: string;
-  changed: boolean;
+  beforeFingerprint?: string;
+  afterFingerprint?: string;
+  changed?: boolean;
   timestamp: string;
   fieldKey?: string;
   testValue?: string;
+  source?: string;
   stateId?: string;
-  classification?: "deterministic" | "conditional" | "human_review";
+  classification?:
+    | "deterministic"
+    | "deterministic_replay"
+    | "llm_generated_probe"
+    | "conditional"
+    | "human_review";
   rationale?: string;
+  outcome?: "landed" | "could_not_test";
+  failureCode?: ReasonCode;
   error?: string;
 };
 
@@ -212,6 +379,9 @@ export type StateEvidence = {
     | "branch"
     | "pre_advance"
     | "post_advance"
+    | "choice_probe"
+    | "branch_variant_populated"
+    | "selected_branch_populated"
     | "blocked_final"
     | "submitted";
   label: string;
@@ -224,13 +394,80 @@ export type StateEvidence = {
     fieldKey: string;
     label: string;
     value: string;
-    source: "llm" | "deterministic";
+    source: string;
+    control?: string;
+    required?: boolean;
+    sensitive?: boolean;
+    consent?: boolean;
+    adminAssisted?: boolean;
+    upload?: boolean;
+    sectionText?: string;
+    formId?: string;
+    classification?:
+      | "deterministic"
+      | "deterministic_replay"
+      | "llm_generated"
+      | "conditional"
+      | "human_review";
   }[];
   evidence?: string;
   evidenceAvailable?: boolean;
   screenshotArtifact?: string;
   screenshotContentType?: string;
   screenshotProvider?: string;
+};
+
+export type LiveTraversalField = {
+  fieldKey: string;
+  label: string;
+  control: string;
+  source: string;
+  status: "pending" | "verified" | "failed";
+  required?: boolean;
+  sensitive?: boolean;
+  consent?: boolean;
+  adminAssisted?: boolean;
+  upload?: boolean;
+  sectionText?: string;
+  formId?: string;
+  classification?: "deterministic" | "conditional" | "human_review";
+  rationale?: string;
+  error?: string;
+  updatedAt: string;
+};
+
+export type LiveTraversalFlag = {
+  tone: "danger" | "warning" | "neutral";
+  code: string;
+  label: string;
+  detail?: string;
+};
+
+export type LiveTraversalState = {
+  id: string;
+  sequence: number;
+  kind: StateEvidence["kind"] | "working";
+  label: string;
+  description: string;
+  url?: string;
+  fingerprint?: string;
+  fieldsVisible?: number;
+  valuesCount: number;
+  status: "active" | "verified" | "review" | "failed";
+  fields: LiveTraversalField[];
+  flags: LiveTraversalFlag[];
+  capturedAt?: string;
+};
+
+export type LiveTraversal = {
+  activeStateId: string;
+  currentLabel: string;
+  scriptId?: string;
+  scriptVersion?: number;
+  states: LiveTraversalState[];
+  currentFields: LiveTraversalField[];
+  flags: LiveTraversalFlag[];
+  eventsSeen: number;
 };
 
 export type InferredField = {
@@ -261,8 +498,104 @@ export type CrawlAnalysis = {
   error?: string;
 };
 
+export type ArchitectureExchange = {
+  sequence: number;
+  stateKey: string;
+  label: string;
+  route: string;
+  status: "verified" | "failed" | "review";
+  decisionTiming?: "generated_this_run" | "retained_prior_run";
+  sensing: {
+    from: string;
+    to: string;
+    observedAt: string;
+    url: string;
+    title: string;
+    heading: string;
+    controlsObserved: number;
+    actionsObserved: number;
+    sectionsObserved: number;
+    guidanceObserved: number;
+    accessibilityCharacters: number;
+    priorStates: number;
+    existingContractFields: number;
+    screenshotSha256: string;
+    screenshotBytes: number;
+    evidence: string;
+  };
+  semantics: {
+    from: string;
+    to: string;
+    proposalId: string;
+    model: string;
+    promptVersion: string;
+    responseId?: string;
+    durationMs: number;
+    attempts: number;
+    fieldsProposed: number;
+    sectionsProposed: number;
+    guidanceProposed: number;
+    actionsProposed: number;
+    progression?: {
+      key: string;
+      kind: string;
+      rationale?: string;
+    };
+    acceptedActions: number;
+    rejectedActions: {
+      code: string;
+      detail: string;
+      proposalId?: string;
+    }[];
+    safe: boolean;
+  };
+  script: {
+    from: string;
+    to: string;
+    artifactId: string;
+    scriptVersion: number;
+    sourceHash: string;
+    completeSourceHash: string;
+    storedPath: string;
+    fields: {
+      key: string;
+      label: string;
+      control: string;
+      required: boolean;
+      testValue: unknown;
+      selectors: string[];
+      actionKind: string;
+      safetyDisposition: string;
+    }[];
+    progression: {
+      key: string;
+      kind: string;
+      selectors: string[];
+    };
+  };
+  execution: {
+    from: string;
+    to: string;
+    mode: string;
+    fieldsAttempted: number;
+    fieldsVerified: number;
+    fieldsSkipped: number;
+    fieldFailures: number;
+    progressionOutcome: string;
+    observedStateIdentity: string;
+    evidence: {
+      id: string;
+      kind: string;
+      label: string;
+      url: string;
+      values: number;
+    }[];
+  };
+};
+
 export type CrawlReport = {
   id: string;
+  crawlId?: string;
   generatedAt: string;
   targets: string[];
   stats: CrawlStats;
@@ -271,9 +604,13 @@ export type CrawlReport = {
   findings: Finding[];
   browserMode?: BrowserMode;
   executionMode?: ExecutionMode;
+  fixtureAuthorities?: FixtureAuthorities;
+  discoverRelatedPages?: boolean;
   renderEngine?: string;
   traversalSettings?: TraversalSettings;
   analysis?: CrawlAnalysis;
+  architectureExchanges?: ArchitectureExchange[];
+  formDefinitions?: CrawlFormDefinition[];
   artifacts?: {
     runDirectory: string;
     report: string;
@@ -283,8 +620,30 @@ export type CrawlReport = {
   };
 };
 
+export type CrawlFormDefinition = {
+  formId: string;
+  sourceRunId: string;
+  targetUrl: string;
+  title: string;
+  status: "observed" | "approved" | "rejected" | "disqualified";
+  eligibility: {
+    status: "eligible" | "disqualified";
+    reasons: { code: string; detail: string }[];
+  };
+  script: {
+    artifactId: string;
+    scriptVersion: number;
+    sourceHash: string;
+    path: string;
+  };
+  inputSchema: Record<string, unknown>;
+  approvalEndpoint: string;
+  runEndpoint: string;
+};
+
 export type FormRun = {
   id: string;
+  crawlId?: string;
   name: string;
   targetUrl: string;
   urls: string[];
@@ -293,6 +652,9 @@ export type FormRun = {
   progress: number;
   mode: ExecutionMode | "crawl";
   browserMode?: BrowserMode;
+  allowLocalTargets?: boolean;
+  discoverRelatedPages?: boolean;
+  fixtureAuthorities?: FixtureAuthorities;
   traversalSettings?: TraversalSettings;
   nodes: FlowNode[];
   edges: FlowEdge[];
@@ -300,7 +662,9 @@ export type FormRun = {
   contract?: FieldContract[];
   stats?: CrawlStats;
   reportAvailable?: boolean;
+  formIds?: string[];
   analysisStatus?: CrawlAnalysis["status"] | "pending";
+  liveTraversal?: LiveTraversal;
   artifacts?: CrawlReport["artifacts"];
   synthetic: boolean;
   liveApproved: boolean;

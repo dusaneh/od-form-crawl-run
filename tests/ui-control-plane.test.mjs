@@ -54,7 +54,7 @@ const run = {
   status: "completed",
   stage: "Crawl complete",
   progress: 100,
-  mode: "dry_run",
+  mode: "probe",
   browserMode: "headless",
   nodes: [
     {
@@ -78,8 +78,72 @@ const run = {
       fieldDetails: [field, hiddenField],
       formActions: [],
       screenshotProvider: "playwright-local-headless",
+      stateEvidence: [
+        {
+          id: "state_01",
+          sequence: 1,
+          kind: "pre_advance",
+          label: "Populated fixture application",
+          url: "https://forms.example.test/apply",
+          title: "Fixture application",
+          fingerprint: "fixturestate123",
+          capturedAt: now,
+          fieldsVisible: 1,
+          values: [
+            {
+              fieldKey: field.key,
+              label: field.label,
+              value: field.testValue,
+              source: "deterministic",
+            },
+          ],
+          evidence: "/api/runs/run_ui_fixture/evidence/page_01_state_01",
+          evidenceAvailable: true,
+          screenshotProvider: "playwright-local-headless",
+        },
+        {
+          id: "state_02",
+          sequence: 2,
+          kind: "selected_branch_populated",
+          label: "Final selected branch populated",
+          url: "https://forms.example.test/apply",
+          title: "Fixture application",
+          fingerprint: "fixturestate456",
+          capturedAt: now,
+          fieldsVisible: 1,
+          values: [
+            {
+              fieldKey: field.key,
+              label: field.label,
+              value: field.testValue,
+              source: "deterministic_replay",
+            },
+          ],
+          evidence: "/api/runs/run_ui_fixture/evidence/page_01_state_02",
+          evidenceAvailable: true,
+          screenshotProvider: "playwright-local-headless",
+        },
+      ],
       sensitiveMasks: 0,
       notes: ["Rendered in local Chromium."],
+    },
+    {
+      id: "page_01_state_01",
+      step: "01.1",
+      title: "Populated fixture application",
+      subtitle: "populated · 1 field",
+      fingerprint: "fixturestate123",
+      status: "complete",
+      fields: 1,
+      branches: 0,
+      x: 258,
+      y: 146,
+      evidence: "/api/runs/run_ui_fixture/evidence/page_01_state_01",
+      evidenceAvailable: true,
+      sourceUrl: "https://forms.example.test/apply",
+      screenshotProvider: "playwright-local-headless",
+      sensitiveMasks: 0,
+      notes: ["One synthetic value recorded."],
     },
   ],
   edges: [],
@@ -121,7 +185,7 @@ const report = {
   targets: run.urls,
   stats: run.stats,
   browserMode: "headless",
-  executionMode: "dry_run",
+  executionMode: "probe",
   renderEngine: "playwright-chromium",
   pages: [
     {
@@ -163,7 +227,7 @@ const report = {
   artifacts: run.artifacts,
 };
 const traversalSettings = {
-  version: 2,
+  version: 3,
   cookieConsent: "reject_non_essential",
   acceptCookiesWhenRequired: true,
   closeWelcomeBanners: true,
@@ -174,7 +238,7 @@ const traversalSettings = {
   allowSameOriginReadLikePosts: true,
   pointerAndScrollPriming: true,
   unpredictablePopups: "observe_only",
-  captchaPolicy: "detect_and_handoff",
+  captchaPolicy: "detect_and_disqualify",
   enterTestValues: true,
   exerciseBranches: true,
   advanceFormSteps: true,
@@ -184,7 +248,7 @@ const traversalSettings = {
   maxFormStates: 24,
   maxBranchOptionsPerControl: 3,
   agentInstructions:
-    "Use obviously synthetic values, exercise safe branch controls, advance intermediate states, and never submit in dry-run mode.",
+    "Use obviously synthetic values, exercise safe branch controls, advance intermediate states, and never activate terminal submit in Phase 1 Probe mode.",
   updatedAt: now,
 };
 
@@ -343,7 +407,7 @@ test(
           });
           return;
         }
-        if (url.pathname === `/api/runs/${run.id}/evidence/page_01`) {
+        if (url.pathname.startsWith(`/api/runs/${run.id}/evidence/`)) {
           await route.fulfill({
             status: 200,
             contentType: "image/png",
@@ -366,6 +430,31 @@ test(
         page.getByText("Apply for fixture support").waitFor()
       );
 
+      await page.getByRole("tab", { name: "Traversal" }).click();
+      await assert.doesNotReject(() =>
+        page
+          .getByRole("heading", { name: "State-by-state form verification" })
+          .waitFor()
+      );
+      await assert.doesNotReject(() =>
+        page.getByText("Populated fixture application", { exact: true }).waitFor()
+      );
+      await assert.doesNotReject(() =>
+        page.getByText("1/1 fields verified", { exact: true }).first().waitFor()
+      );
+      await assert.doesNotReject(() =>
+        page
+          .getByText("Synthetic value entered and browser readback verified")
+          .last()
+          .waitFor()
+      );
+      await assert.doesNotReject(() =>
+        page.getByText("Required", { exact: true }).last().waitFor()
+      );
+      await assert.doesNotReject(() =>
+        page.getByText("Sensitive", { exact: true }).last().waitFor()
+      );
+
       await page.getByRole("tab", { name: /Field contract/ }).click();
       await assert.doesNotReject(() =>
         page.getByText("Participant email", { exact: true }).waitFor()
@@ -380,16 +469,31 @@ test(
       await page.getByRole("tab", { name: "Evidence" }).click();
       await assert.doesNotReject(() =>
         page
-          .getByRole("img", { name: "Captured public page for Fixture application" })
+          .getByRole("img", { name: "Captured public page for Populated fixture application" })
           .waitFor()
       );
       const evidenceLink = page.getByRole("link", {
-        name: "Open full screenshot evidence for Fixture application",
+        name: "Open full screenshot evidence for Populated fixture application",
       });
+      assert.equal(await evidenceLink.count(), 1);
       assert.equal(await evidenceLink.getAttribute("target"), "_blank");
       assert.equal(
         await evidenceLink.getAttribute("href"),
-        "http://127.0.0.1:8787/api/runs/run_ui_fixture/evidence/page_01"
+        "http://127.0.0.1:8787/api/runs/run_ui_fixture/evidence/page_01_state_01"
+      );
+      await assert.doesNotReject(() =>
+        page
+          .getByText("REAL CAPTURE · 1 SYNTHETIC VALUE RECORDED")
+          .first()
+          .waitFor()
+      );
+      const selectedBranchEvidence = page.getByRole("link", {
+        name: "Open full screenshot evidence for Final selected branch populated",
+      });
+      assert.equal(await selectedBranchEvidence.count(), 1);
+      assert.equal(
+        await selectedBranchEvidence.getAttribute("href"),
+        "http://127.0.0.1:8787/api/runs/run_ui_fixture/evidence/page_01_state_02"
       );
 
       await page.getByRole("tab", { name: /Diagnostics/ }).click();
@@ -415,7 +519,7 @@ test(
         .waitFor();
       assert.equal(savedSettingsPayload.settings.cookieConsent, "accept_all");
       assert.equal(savedSettingsPayload.settings.closeWelcomeBanners, false);
-      assert.equal(savedSettingsPayload.settings.captchaPolicy, "detect_and_handoff");
+      assert.equal(savedSettingsPayload.settings.captchaPolicy, "detect_and_disqualify");
 
       await page.getByRole("button", { name: "Runs" }).click();
       await page.getByRole("button", { name: "New crawl" }).click();
@@ -425,40 +529,29 @@ test(
       await page
         .getByLabel("Form URLs")
         .fill("https://forms.example.test/another-application");
-      await page.getByRole("button", { name: /Launch dry run/ }).click();
-      await page.getByText(/Visible dry run launched/).waitFor();
+      await page.getByRole("button", { name: /Launch probe/ }).click();
+      await page.getByText(/Visible Phase 1 probe launched/).waitFor();
       assert.deepEqual(launchPayload, {
         urls: ["https://forms.example.test/another-application"],
-        mode: "dry_run",
+        mode: "probe",
         browserMode: "headful",
-        liveApproved: false,
-        liveConfirmation: "",
+        allowLocalTargets: false,
+        discoverRelatedPages: true,
+        fixtureAuthorities: {
+          acknowledgement: false,
+          consent: false,
+          reviewConfirmation: false,
+          signature: false,
+          upload: false,
+        },
       });
 
       await page.getByRole("button", { name: "New crawl" }).click();
-      await page.getByRole("button", { name: /Headless/ }).click();
-      await page.getByRole("button", { name: /Live submission/ }).click();
-      await page
-        .getByLabel("Form URLs")
-        .fill("https://forms.example.test/synthetic-live-fixture");
-      const liveLaunch = page.getByRole("button", {
-        name: /Launch live submission/,
-      });
-      assert.equal(await liveLaunch.isDisabled(), true);
-      await page
-        .getByLabel(/I authorize FormWeave/)
-        .check();
-      await page.getByLabel("Type SUBMIT to confirm").fill("SUBMIT");
-      assert.equal(await liveLaunch.isEnabled(), true);
-      await liveLaunch.click();
-      await page.getByText(/Headless live submission launched/).waitFor();
-      assert.deepEqual(launchPayload, {
-        urls: ["https://forms.example.test/synthetic-live-fixture"],
-        mode: "live",
-        browserMode: "headless",
-        liveApproved: true,
-        liveConfirmation: "SUBMIT",
-      });
+      assert.equal(
+        await page.getByRole("button", { name: /Live submission/ }).count(),
+        0
+      );
+      await page.getByRole("button", { name: /Close launch dialog/ }).click();
     } finally {
       await browser?.close();
       child.kill();

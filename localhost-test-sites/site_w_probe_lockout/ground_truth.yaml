@@ -1,0 +1,50 @@
+site_id: site_w_probe_lockout
+org_name: Harborview Aid Network
+intake_url: http://localhost:9000/site_w_probe_lockout/intake
+has_intake_form: true
+form_type: aid_screening
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# PROBE LOCKOUT SITE — the housing_status radio group defeats EVERY click
+# strategy (normal click, JS label toggle, force). Nothing ever reveals, so a
+# blind probe would conclude "no branching" — the exact bug class that
+# certified a live branching form linear (BR-1). Required behavior: the probe
+# raises probe_actuation_failed (event + red flag) and ABORTS WITHOUT
+# PERSISTING A CONFIG. It must NOT emit any branching_detected event (nothing
+# actually reveals) and must NOT certify the form linear.
+# Feature: probe_actuation_fail_loud (t_probe_actuation_fail_loud).
+expected_abort: probe_actuation_failed
+
+expected_red_flag_codes:
+  - probe_actuation_failed
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+# Field inventory for reference — NOT reachable as config assertions (abort).
+fields:
+  - name: full_name
+    label: Full Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null   # no full-name canonical key exists
+
+  - name: zip_code
+    label: ZIP Code
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: zip_code
+
+  # The lockout group: radios Renting / Own my home / Currently unhoused.
+  - name: housing_status
+    label: Current Housing Situation (Choose One)
+    field_type: radio
+    required: true
+    is_sensitive: false
+    expected_canonical_key: housing_status

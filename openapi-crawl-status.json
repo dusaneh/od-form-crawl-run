@@ -1,0 +1,161 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FormWeave — Check Crawl",
+    "version": "1.0.0",
+    "description": "Polls exactly one crawl using the run ID returned by the kick-off call."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8787",
+      "description": "Local FormWeave API"
+    }
+  ],
+  "paths": {
+    "/api/runs/{runId}": {
+      "get": {
+        "operationId": "getCrawlStatus",
+        "summary": "Check one crawl",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current crawl status. Poll again while status is queued or running. When reportAvailable is true, retrieve the report.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlStatusResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "RunId": {
+        "name": "runId",
+        "in": "path",
+        "required": true,
+        "description": "run.id returned by POST /api/runs.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "CrawlStatusResponse": {
+        "type": "object",
+        "required": [
+          "run"
+        ],
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/CrawlStatus"
+          }
+        }
+      },
+      "CrawlStatus": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "progress",
+          "reportAvailable"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "awaiting_review",
+              "disqualified",
+              "failed"
+            ]
+          },
+          "stage": {
+            "type": "string",
+            "description": "Human-readable current stage or failure summary."
+          },
+          "progress": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "reportAvailable": {
+            "type": "boolean"
+          },
+          "formIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Crawl-scoped form IDs, available after artifacts are registered."
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "description": "Diagnostics, including failure reason codes."
+          }
+        },
+        "additionalProperties": true
+      },
+      "Finding": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "examples": [
+              "quality_floor",
+              "script_missing",
+              "challenge_detected",
+              "cross_page_branching"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "responses": {
+      "NotFound": {
+        "description": "No crawl exists for this run ID.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      }
+    }
+  }
+}

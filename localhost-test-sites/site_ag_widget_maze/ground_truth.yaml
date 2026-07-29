@@ -1,0 +1,59 @@
+site_id: site_ag_widget_maze
+org_name: Foxglove Relief Collective
+intake_url: http://localhost:9000/site_ag_widget_maze/intake
+has_intake_form: true
+form_type: relief_request
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# HOSTILE CHOICE CONTROLS — two radio groups, each unreachable in its own way:
+#   income_band — real radios in styled toggle rows, but the group's own script
+#     suppresses every pointer event (click / mousedown / mouseup / pointerdown /
+#     pointerup) in the CAPTURE phase. No click — direct, label-routed, or
+#     forced — ever changes the checked state.
+#   aid_type — the native radios and their labels are display:none; the visible
+#     UI is a row of pill-styled divs (not <label> elements) whose own script
+#     sets the hidden radios. The native controls never render, so no locator
+#     for them ever resolves.
+# Neither group reveals anything, and neither is marked required. The rest of
+# the form is two plain required text fields.
+expected_abort: probe_actuation_failed
+
+expected_red_flag_codes:
+  - probe_actuation_failed
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+# Field inventory is scored after the production crawl terminates.
+fields:
+  - name: full_name
+    label: Full Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null   # no full-name canonical key exists
+
+  - name: zip_code
+    label: ZIP Code
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: zip_code
+
+  - name: income_band
+    label: Monthly Income Band (Choose One)
+    field_type: radio
+    required: false
+    is_sensitive: true             # income banding
+    expected_canonical_key: null
+
+  - name: aid_type
+    label: Type of Help Needed (Choose One)
+    field_type: radio
+    required: false
+    is_sensitive: false
+    expected_canonical_key: services_requested

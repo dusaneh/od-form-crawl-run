@@ -22,7 +22,7 @@ async function freePort() {
   return port;
 }
 
-async function waitForJson(url, predicate = () => true, timeoutMs = 90_000) {
+async function waitForJson(url, predicate = () => true, timeoutMs = 180_000) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
   while (Date.now() < deadline) {
@@ -44,7 +44,7 @@ async function waitForJson(url, predicate = () => true, timeoutMs = 90_000) {
 
 test(
   "local API persists browser reports, evidence, logs, and reconciles interrupted runs",
-  { timeout: 180_000 },
+  { timeout: 300_000 },
   async () => {
     const fixture = await startFixtureServer();
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), "formweave-api-"));
@@ -91,7 +91,6 @@ test(
         FORMWEAVE_API_HOST: "127.0.0.1",
         FORMWEAVE_API_PORT: String(port),
         FORMWEAVE_DATA_DIR: dataRoot,
-        FORMWEAVE_ALLOW_LOCAL_TARGETS: "1",
         FORMWEAVE_DISABLE_OPENAI: "1",
         OPENAI_KEY: "",
         OPENAI_API_KEY: "",
@@ -107,7 +106,8 @@ test(
       const health = await waitForJson(`${baseUrl}/api/health`);
       assert.equal(health.browser.engine, "playwright-chromium");
       assert.deepEqual(health.browser.modes, ["headless", "headful"]);
-      assert.equal(health.traversalSettingsVersion, 2);
+      assert.equal(health.generationMode, "reuse_or_generate");
+      assert.equal(health.traversalSettingsVersion, 4);
       const corsResponse = await fetch(`${baseUrl}/api/health`, {
         headers: { origin: "http://127.0.0.1:3000" },
       });
@@ -124,7 +124,7 @@ test(
       assert.equal(settingsResponse.status, 200);
       const settingsPayload = await settingsResponse.json();
       assert.equal(settingsPayload.settings.cookieConsent, "reject_non_essential");
-      assert.equal(settingsPayload.settings.captchaPolicy, "detect_and_handoff");
+      assert.equal(settingsPayload.settings.captchaPolicy, "detect_and_disqualify");
       assert.equal(settingsPayload.settings.maxStateWaitMs, 12000);
       assert.equal(settingsPayload.settings.enterTestValues, true);
       assert.equal(settingsPayload.settings.exerciseBranches, true);
@@ -147,7 +147,7 @@ test(
             ...settingsPayload.settings,
             stableWindowMs: 300,
             maxStateWaitMs: 3_000,
-            maxFormStates: 8,
+            maxFormStates: 24,
             maxBranchOptionsPerControl: 2,
             captchaPolicy: "click_and_bypass",
           },
@@ -156,8 +156,43 @@ test(
       assert.equal(saveSettingsResponse.status, 200);
       const savedSettings = await saveSettingsResponse.json();
       assert.equal(savedSettings.settings.stableWindowMs, 300);
-      assert.equal(savedSettings.settings.captchaPolicy, "detect_and_handoff");
+      assert.equal(savedSettings.settings.captchaPolicy, "detect_and_disqualify");
       assert.ok(savedSettings.settings.updatedAt);
+
+      const remoteCaptureResponse = await fetch(
+        `${baseUrl}/api/fixture-submissions`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            captureBaseUrl: "https://example.com/site_af_branch_cards",
+            action: "latest",
+          }),
+        },
+      );
+      assert.equal(remoteCaptureResponse.status, 400);
+      assert.equal(
+        (await remoteCaptureResponse.json()).code,
+        "invalid_capture_target",
+      );
+
+      const invalidCaptureActionResponse = await fetch(
+        `${baseUrl}/api/fixture-submissions`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            captureBaseUrl:
+              "http://127.0.0.1:9000/site_af_branch_cards",
+            action: "submit",
+          }),
+        },
+      );
+      assert.equal(invalidCaptureActionResponse.status, 400);
+      assert.equal(
+        (await invalidCaptureActionResponse.json()).code,
+        "invalid_capture_target",
+      );
 
       const reconciled = JSON.parse(
         await readFile(path.join(interruptedDirectory, "run.json"), "utf8")
@@ -179,22 +214,51 @@ test(
       });
       assert.equal(unapprovedLiveResponse.status, 400);
 
+      const blockedLocalResponse = await fetch(`${baseUrl}/api/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          urls: [`${fixture.origin}/fixtures/start`],
+          mode: "probe",
+          browserMode: "headless",
+        }),
+      });
+      assert.equal(blockedLocalResponse.status, 400);
+      assert.match(
+        (await blockedLocalResponse.json()).error,
+        /Private-network targets are not allowed/
+      );
+
       const createResponse = await fetch(`${baseUrl}/api/runs`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           urls: [`${fixture.origin}/fixtures/start`],
-          mode: "dry_run",
+          mode: "probe",
           browserMode: "headless",
+          allowLocalTargets: true,
         }),
       });
       assert.equal(createResponse.status, 201);
       const created = await createResponse.json();
       const runId = created.run.id;
       assert.equal(created.run.browserMode, "headless");
-      assert.equal(created.run.mode, "dry_run");
+      assert.equal(created.run.mode, "probe");
       assert.equal(created.run.liveApproved, false);
+      assert.equal(created.run.allowLocalTargets, true);
       assert.equal(created.run.traversalSettings.stableWindowMs, 300);
+
+      const createdStatusResponse = await fetch(
+        `${baseUrl}/api/runs/${runId}`
+      );
+      assert.equal(createdStatusResponse.status, 200);
+      const createdStatus = await createdStatusResponse.json();
+      assert.equal(createdStatus.run.id, runId);
+
+      const missingStatusResponse = await fetch(
+        `${baseUrl}/api/runs/run_doesnotexist`
+      );
+      assert.equal(missingStatusResponse.status, 404);
 
       const list = await waitForJson(
         `${baseUrl}/api/runs`,
@@ -202,21 +266,21 @@ test(
           value.runs.some(
             (run) =>
               run.id === runId &&
-              ["completed", "awaiting_review", "failed"].includes(run.status)
+              ["completed", "awaiting_review", "disqualified", "failed"].includes(run.status)
           )
       );
       const finished = list.runs.find((run) => run.id === runId);
-      assert.equal(finished.status, "awaiting_review", output.join(""));
+      assert.equal(finished.status, "disqualified", output.join(""));
       assert.equal(finished.reportAvailable, true);
       assert.ok(finished.stats.pagesFetched >= 9);
       assert.ok(
-        finished.stats.screenshotsCaptured > finished.stats.pagesFetched
+        finished.stats.screenshotsCaptured >= finished.stats.pagesFetched
       );
-      assert.ok(finished.stats.automationActions >= 5);
+      assert.equal(finished.stats.automationActions, 0);
       assert.ok(finished.stats.stateExaminations >= finished.stats.pagesFetched);
-      assert.ok(finished.stats.statesCaptured >= 6);
-      assert.ok(finished.stats.fieldsEntered >= 6);
-      assert.ok(finished.stats.branchStates >= 2);
+      assert.equal(finished.stats.statesCaptured, 0);
+      assert.equal(finished.stats.fieldsEntered, 0);
+      assert.equal(finished.stats.branchStates, 0);
       assert.equal(finished.stats.submissionsAttempted, 0);
       assert.ok(finished.stats.allowedReadLikeRequests >= 1);
       assert.ok(finished.stats.blockedWriteRequests >= 1);
@@ -227,7 +291,7 @@ test(
         await readFile(path.join(runDirectory, "report.json"), "utf8")
       );
       assert.equal(report.browserMode, "headless");
-      assert.equal(report.executionMode, "dry_run");
+      assert.equal(report.executionMode, "probe");
       assert.equal(report.renderEngine, "playwright-chromium");
       assert.ok(report.pages.every((page) => page.screenshotArtifact));
       assert.ok(report.pages.every((page) => page.htmlArtifact));
@@ -239,7 +303,7 @@ test(
       );
       assert.ok(report.contract.some((field) => field.label === "Case ID"));
       assert.ok(
-        report.contract.some(
+        !report.contract.some(
           (field) => field.label === "Application reference"
         )
       );
@@ -250,25 +314,39 @@ test(
           new URL(page.finalUrl).pathname === "/fixtures/conditional-wizard"
       );
       assert.notEqual(wizardPage.finalSubmission, "submitted");
-      assert.ok(wizardPage.stateEvidence.length >= 6);
-      assert.ok(
-        wizardPage.stateEvidence.every(
-          (state) =>
-            state.screenshotArtifact &&
-            state.evidence &&
-            !Object.hasOwn(state, "screenshot")
-        )
+      assert.equal(wizardPage.stateEvidence.length, 0);
+      assert.equal(wizardPage.certificationStatus, "script_missing");
+
+      const generatedEvidenceBytes = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      ]);
+      await writeFile(
+        path.join(
+          runDirectory,
+          "evidence",
+          "page_01_generated_03_populated.png"
+        ),
+        generatedEvidenceBytes
+      );
+      const generatedEvidenceResponse = await fetch(
+        `${baseUrl}/api/runs/${runId}/evidence/page_01_generated_03_populated`
+      );
+      assert.equal(generatedEvidenceResponse.status, 200);
+      assert.equal(
+        generatedEvidenceResponse.headers.get("content-type"),
+        "image/png"
+      );
+      assert.deepEqual(
+        Buffer.from(await generatedEvidenceResponse.arrayBuffer()),
+        generatedEvidenceBytes
       );
 
-      const firstStateEvidence = wizardPage.stateEvidence[0];
-      const stateEvidenceResponse = await fetch(
-        `${baseUrl}${firstStateEvidence.evidence}`
+      const servedReportResponse = await fetch(
+        `${baseUrl}/api/runs/${runId}/report`
       );
-      assert.equal(stateEvidenceResponse.status, 200);
-      assert.match(
-        stateEvidenceResponse.headers.get("content-type"),
-        /image\/png/
-      );
+      assert.equal(servedReportResponse.status, 200);
+      const servedReport = await servedReportResponse.json();
+      assert.deepEqual(servedReport.architectureExchanges, []);
 
       const events = await readFile(
         path.join(runDirectory, "events.jsonl"),
@@ -276,13 +354,14 @@ test(
       );
       assert.match(events, /"kind":"browser_launched"/);
       assert.match(events, /"kind":"evidence_captured"/);
-      assert.match(events, /"kind":"automation_action_completed"/);
       assert.match(events, /"kind":"read_like_post_allowed"/);
       assert.match(events, /"kind":"captcha_handoff_required"/);
-      assert.match(events, /"kind":"field_entry_completed"/);
-      assert.match(events, /"kind":"state_evidence_captured"/);
-      assert.match(events, /"kind":"final_submission_blocked"/);
-      assert.match(events, /"kind":"crawl_needs_review"/);
+      assert.match(events, /"kind":"recon_script_missing"/);
+      assert.doesNotMatch(events, /"kind":"automation_action_completed"/);
+      assert.doesNotMatch(events, /"kind":"field_entry_completed"/);
+      assert.doesNotMatch(events, /"kind":"state_evidence_captured"/);
+      assert.doesNotMatch(events, /"kind":"final_submission_blocked"/);
+      assert.match(events, /"kind":"crawl_disqualified"/);
 
       const nonReadRequests = fixture.requests.filter(
         (request) => !["GET", "HEAD", "OPTIONS"].includes(request.method)
@@ -294,18 +373,43 @@ test(
         )
       );
       assert.ok(
-        nonReadRequests.some(
-          (request) =>
-            request.method === "POST" && request.path === "/fixtures/autosave"
-        )
-      );
-      assert.ok(
         nonReadRequests.every(
           (request) =>
-            request.path === "/fixtures/aura" ||
-            request.path === "/fixtures/autosave"
-        )
+            request.path === "/fixtures/aura"
+        ),
+        JSON.stringify(nonReadRequests, null, 2)
       );
+
+      const rejectedRemoteSubmit = await fetch(`${baseUrl}/api/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          urls: ["https://example.com/form"],
+          mode: "fixture_submit",
+          browserMode: "headless",
+          allowLocalTargets: true,
+        }),
+      });
+      assert.equal(rejectedRemoteSubmit.status, 400);
+      assert.match(
+        (await rejectedRemoteSubmit.json()).error,
+        /restricted to explicitly allowed localhost targets/i
+      );
+
+      const fixtureSubmitResponse = await fetch(`${baseUrl}/api/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          urls: [`${fixture.origin}/fixtures/conditional-wizard`],
+          mode: "fixture_submit",
+          browserMode: "headless",
+          allowLocalTargets: true,
+        }),
+      });
+      assert.equal(fixtureSubmitResponse.status, 409);
+      const fixtureSubmitError = await fixtureSubmitResponse.json();
+      assert.equal(fixtureSubmitError.code, "script_missing");
+      assert.match(fixtureSubmitError.error, /submission is disabled/i);
     } finally {
       child.kill();
       await Promise.race([

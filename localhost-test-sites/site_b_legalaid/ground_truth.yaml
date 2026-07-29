@@ -1,0 +1,76 @@
+site_id: site_b_legalaid
+org_name: Community Legal Aid Society
+intake_url: http://localhost:9000/site_b_legalaid/intake
+has_intake_form: true
+form_type: legal_aid
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# CORRECTION (2026-07-04): original expected income_level → null.
+# That was wrong independent of Builder output: "Annual Income Level" describes a
+# monetary income quantity, which unambiguously belongs to the monthly_income
+# canonical key.  The fact that the form uses a categorical select instead of a
+# numeric field is irrelevant to the semantic mapping; it only affects the fill
+# strategy.  Because monthly_income is an always-sensitive canonical key, the
+# resulting sensitive_field red flag is also correct and expected.
+expected_red_flag_codes:
+  - sensitive_field
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+
+  - name: email
+    label: Email Address
+    field_type: email
+    required: true
+    is_sensitive: false
+    expected_canonical_key: email
+
+  - name: phone
+    label: Phone Number
+    field_type: tel
+    required: false
+    is_sensitive: false
+    expected_canonical_key: phone
+
+  - name: legal_issue
+    label: Type of Legal Issue
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: services_requested
+
+  # CORRECTION (2026-07-04): original expected null.  "Annual Income Level" is
+  # unambiguously an income quantity → monthly_income.  Categorical select vs.
+  # numeric input is a fill-strategy detail, not a semantic distinction.
+  - name: income_level
+    label: Annual Income Level
+    field_type: select
+    required: false
+    is_sensitive: true                   # CORRECTION (2026-07-18): income is sensitive
+    expected_canonical_key: monthly_income
+
+  - name: case_description
+    label: Brief Description of Your Case
+    field_type: textarea
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null

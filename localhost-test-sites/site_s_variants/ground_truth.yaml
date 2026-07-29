@@ -1,0 +1,85 @@
+site_id: site_s_variants
+org_name: Lakeshore Aid Society
+intake_url: http://localhost:9000/site_s_variants/intake
+has_intake_form: true
+form_type: general_intake
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# DRIFT VARIANT HOST. The base form (variant 1) is a clean 4-field intake with no
+# red flags — it is also the "feature absent" negative for several derived flags.
+expected_red_flag_codes: []
+
+expected_form_metadata:
+  needs_consent: false                 # negative case (no consent field)
+  has_file_upload: false               # negative case (no upload)
+  contains_admin_fields: false         # negative case (no admin field)
+  contains_failed_extractions: false
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+# Variant drift matrix. A test builds a config against variant 1, then flips the server
+# variant (GET /site_s_variants/variant?n=N) so the SAME /intake URL serves vN, and
+# re-runs the Runner (drift) or re-crawls the Builder (version bump). ALWAYS reset the
+# variant (?reset=true) in a finally block.
+variants:
+  - n: 1
+    file: intake.html
+    description: Baseline — first_name*, last_name*, email, housing_status*.
+  - n: 2
+    file: intake.v2.html
+    feature_id: drift_optional_add_noncritical
+    change: adds OPTIONAL phone
+    expected_runner_outcome: completed_dry_run      # non-critical → run completes
+    expected_critical_drift: false
+  - n: 3
+    file: intake.v3.html
+    feature_id: drift_required_add_critical
+    change: adds REQUIRED date_of_birth
+    expected_runner_outcome: halt_fingerprint_drift # critical → hard halt
+    expected_critical_drift: true
+  - n: 4
+    file: intake.v4.html
+    feature_id: cosmetic_change_no_bump
+    change: same fields as v1, reordered (cosmetic only)
+    expected_version_bumped: false                  # structural fingerprint unchanged
+
+# version_bump_semantics: re-crawling variant 1 unchanged → version_bumped false (touch
+# only); crawling variant 3 (structural change) → version+1, same site_id, new config_id.
+expected_version_bump_semantics:
+  identical_recrawl_bumps: false
+  structural_change_bumps: true
+
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+  - name: email
+    label: Email Address
+    field_type: email
+    required: false
+    is_sensitive: false
+    expected_canonical_key: email
+  - name: housing_status
+    label: Current Housing Status
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: housing_status
+    expected_options:
+      - {value: "unhoused", label: "Currently unhoused"}
+      - {value: "at_risk",  label: "At risk of losing housing"}
+      - {value: "housed",   label: "Currently housed"}

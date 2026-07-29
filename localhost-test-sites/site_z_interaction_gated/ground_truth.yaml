@@ -1,0 +1,56 @@
+site_id: site_z_interaction_gated
+org_name: Sierra Vista Energy Fund
+intake_url: http://localhost:9000/site_z_interaction_gated/intake
+has_intake_form: true
+form_type: energy_assistance
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# INTERACTION-GATED SITE (WP Rocket delay-JS pattern, seen live on United
+# Way's Gravity Forms page) — the form's markup is injected only after the
+# first real user-interaction event (mousemove / wheel / keydown). A crawler
+# that never interacts sees NO form. prepare_page's interaction nudge must
+# trigger the load, after which the crawl proceeds completely normally:
+# no probe_actuation_failed, no locators_unresolved / failed_extract from
+# hidden-form locators, config emitted, dry run completes.
+# Feature: interaction_gated_reveal (t_interaction_gated_reveal).
+expected_abort: null
+
+expected_red_flag_codes: []
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+fields:
+  - name: full_name
+    label: Full Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null   # no full-name canonical key exists
+
+  - name: zip_code
+    label: ZIP Code
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: zip_code
+
+  # Non-branching radio pair (reveals nothing).
+  - name: contact_pref
+    label: Preferred Contact Method (Choose One)
+    field_type: radio
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+
+  - name: agree_terms
+    label: I agree to the program terms.
+    field_type: checkbox
+    required: true
+    is_sensitive: false
+    expected_is_consent: true
+    expected_canonical_key: null

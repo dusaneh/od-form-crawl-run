@@ -1,0 +1,156 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FormWeave — Check Form Run",
+    "version": "1.0.0",
+    "description": "Polls one form execution using the execution ID returned by the run kick-off call."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8787",
+      "description": "Local FormWeave API"
+    }
+  ],
+  "paths": {
+    "/api/executions/{executionId}": {
+      "get": {
+        "operationId": "getExecutionStatus",
+        "summary": "Check one form run",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExecutionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current or final execution result. Poll again while status is queued or running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionStatusResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "ExecutionId": {
+        "name": "executionId",
+        "in": "path",
+        "required": true,
+        "description": "execution.executionId returned by POST /api/forms/{formId}/runs.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "ExecutionStatusResponse": {
+        "type": "object",
+        "required": [
+          "execution"
+        ],
+        "properties": {
+          "execution": {
+            "$ref": "#/components/schemas/Execution"
+          }
+        }
+      },
+      "Execution": {
+        "type": "object",
+        "required": [
+          "executionId",
+          "formId",
+          "status",
+          "outcome"
+        ],
+        "properties": {
+          "executionId": {
+            "type": "string"
+          },
+          "formId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "description": "Final result such as populated_verified, submission_verified, or failed."
+          },
+          "fieldsAttempted": {
+            "type": "integer"
+          },
+          "fieldsVerified": {
+            "type": "integer"
+          },
+          "fieldsFailed": {
+            "type": "integer"
+          },
+          "submitted": {
+            "type": "boolean"
+          },
+          "submissionResult": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Submission verification evidence and criteria.",
+            "additionalProperties": true
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "failureCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Major codes include validation_blocked, challenge_detected, actuation_unverified, cross_page_branching, advance_no_navigation, terminal_submission_unverified, and execution_error."
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "responses": {
+      "NotFound": {
+        "description": "No execution exists for this execution ID.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      }
+    }
+  }
+}

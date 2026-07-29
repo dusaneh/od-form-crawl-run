@@ -7,10 +7,10 @@ const vinextCli = path.join(projectRoot, "node_modules", "vinext", "dist", "cli.
 const children = [];
 let stopping = false;
 
-function launch(label, command, args) {
+function launch(label, command, args, env = process.env) {
   const child = spawn(command, args, {
     cwd: projectRoot,
-    env: process.env,
+    env,
     stdio: "inherit",
     shell: false,
   });
@@ -31,7 +31,12 @@ function stop(exitCode = 0) {
   setTimeout(() => process.exit(exitCode), 250).unref();
 }
 
-launch("Local API", process.execPath, ["local/server.mjs"]);
+launch("Local API", process.execPath, ["local/server.mjs"], {
+  ...process.env,
+  // Forced-fresh generation is an audit-only switch. A normal interactive
+  // restart must reuse validated scripts when compatible.
+  FORMWEAVE_FORCE_FRESH_GENERATION: "0",
+});
 launch("Local web app", process.execPath, [
   vinextCli,
   "dev",

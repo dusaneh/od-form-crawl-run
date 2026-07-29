@@ -1,0 +1,103 @@
+site_id: site_c_veterans
+org_name: Veterans Resource Center
+intake_url: http://localhost:9000/site_c_veterans/intake
+has_intake_form: true
+form_type: veterans_services
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# CORRECTION (2026-07-04): original expected_red_flag_codes omitted sensitive_field.
+# That was wrong independent of Builder output: VA disability rating is Protected
+# Health Information under HIPAA and sensitive personal data under state law.
+# The canonical key disability_status is not in the system's four always-sensitive
+# keys (date_of_birth, ssn_last4, monthly_income, immigration_status), but the
+# LLM correctly infers sensitivity from the label's health/disability context.
+# The fix is to add sensitive_field to expected — not to suppress the Builder's
+# inference, which is more correct than the hardcoded list.
+# CONTRACT V2 (2026-07-27): this JavaScript conditional is a supported
+# one-level same-page branch. Every safe discharge-status option is probed from
+# an LLM-authored script; the revealed state is then generated and executed.
+expected_branching:
+  same_page: true
+  max_supported_depth: 1
+  cross_page: false
+  trigger_fields: [discharge_status]
+
+expected_red_flag_codes:
+  - unmappable_field
+  - sensitive_field
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+
+  - name: branch_of_service
+    label: Branch of Service
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+    expected_options:
+      - {value: "army",        label: "Army"}
+      - {value: "navy",        label: "Navy"}
+      - {value: "marines",     label: "Marine Corps"}
+      - {value: "air_force",   label: "Air Force"}
+      - {value: "coast_guard", label: "Coast Guard"}
+      - {value: "space_force", label: "Space Force"}
+
+  - name: discharge_status
+    label: Discharge Status
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+    expected_options:
+      - {value: "honorable",           label: "Honorable"}
+      - {value: "general",             label: "General (Under Honorable Conditions)"}
+      - {value: "other_than_honorable", label: "Other Than Honorable"}
+      - {value: "dishonorable",         label: "Dishonorable"}
+
+  # JS-conditional (display:none at page load); Builder captures from DOM but
+  # locator is unresolved because the element has no rendered bounding box.
+  - name: disability_rating
+    label: VA Disability Rating (%)
+    field_type: number
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: disability_status
+
+  - name: service_start_year
+    label: Year Service Began
+    field_type: number
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+
+  - name: current_housing
+    label: Current Housing Status
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: housing_status
+    expected_options:
+      - {value: "stable",   label: "Stable housing"}
+      - {value: "unstable", label: "Unstable / at risk"}
+      - {value: "homeless", label: "Currently homeless"}

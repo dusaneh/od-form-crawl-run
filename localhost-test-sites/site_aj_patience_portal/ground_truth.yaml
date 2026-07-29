@@ -1,0 +1,85 @@
+site_id: site_aj_patience_portal
+org_name: Willowbrook Senior Aid
+intake_url: http://localhost:9000/site_aj_patience_portal/intake
+has_intake_form: true
+form_type: senior_services
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# INTERACTION-GATED TABLE FORM WITH LAYERED GATING — the form wrapper ships
+# display:none and is revealed by page script only after the FIRST real
+# user-interaction event (mousemove / wheel / keydown / touchstart). Until
+# then the page shows only "Loading the request form…".
+#
+# Once revealed:
+#   - the basic fields are laid out as <table> rows (label cell, control cell)
+#   - a closed <details> block holds a REQUIRED select (mobility_needs)
+#   - a collapsed accordion (local script, no framework) holds an optional
+#     select (preferred_time)
+#   - a link styled like an expander ("Show full eligibility rules") actually
+#     navigates to /about
+#   - the Terms of Service live inside a same-origin iframe
+#     (/terms_frame) with its own scrollable box; when that box is scrolled to
+#     the bottom the frame posts a message and the page enables the agreement
+#     checkbox, which ships disabled
+expected_abort: null
+
+expected_red_flag_codes: []
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+expected_form_metadata:
+  needs_consent: true
+
+fields:
+  - name: full_name
+    label: Full Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null   # no full-name canonical key exists
+
+  - name: phone
+    label: Phone Number
+    field_type: tel
+    required: false
+    is_sensitive: false
+    expected_canonical_key: phone
+
+  - name: birth_year
+    label: Year of Birth
+    field_type: number
+    required: false
+    is_sensitive: true             # birth-date information
+    expected_canonical_key: null
+
+  - name: mobility_needs
+    label: Do you use any mobility aids?
+    field_type: select
+    required: true
+    is_sensitive: true             # disability-related question
+    expected_canonical_key: disability_status
+    expected_options:
+      - {value: "none",       label: "None"}
+      - {value: "cane",       label: "Cane or walker"}
+      - {value: "wheelchair", label: "Wheelchair"}
+      - {value: "bedbound",   label: "Mostly bed-bound"}
+
+  - name: preferred_time
+    label: Best time for visits
+    field_type: select
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+
+  - name: agree_terms
+    label: I have read and agree to the Terms of Service.
+    field_type: checkbox
+    required: true
+    is_sensitive: false
+    expected_is_consent: true
+    expected_canonical_key: null

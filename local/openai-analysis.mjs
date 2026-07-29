@@ -112,11 +112,17 @@ function pageFacts(pages) {
       sensitive: field.sensitive,
       hidden: field.hidden,
       options: field.options,
+      groupLabel: field.groupLabel || "",
+      optionSet: field.optionSet || [],
+      sectionId: field.sectionId || "",
+      guidanceIds: field.guidanceIds || [],
       defaultTestValue: field.testValue || "",
       testValues: field.testValues || [],
       entryStatus: field.entryStatus || "not_attempted",
     })),
     formActions: page.formActions,
+    sections: page.sections || [],
+    guidanceRecords: page.guidanceRecords || [],
     stateEvidence: (page.stateEvidence || []).map((state) => ({
       id: state.id,
       kind: state.kind,
@@ -139,7 +145,7 @@ export function openAIConfiguration() {
       : process.env.OPENAI_API_KEY
         ? "OPENAI_API_KEY"
         : "none",
-    model: process.env.OPENAI_MODEL || "gpt-5.6",
+    model: process.env.OPENAI_MODEL || "gpt-5.4-mini",
   };
 }
 
@@ -169,8 +175,9 @@ export async function analyzeCrawl(pages, log) {
       text: [
         "Analyze this synthetic form traversal.",
         "Treat DOM-extracted fields as observed facts.",
-        "Use screenshots only to identify visible controls or structure that rendered-DOM extraction missed.",
-        "Use the recorded state evidence and entry outcomes to report what was actually filled, branched, advanced, blocked, or submitted.",
+        "Treat every supplied full-page image or legible page tile as a standard sensing input alongside the DOM.",
+        "Use the recorded state evidence and verified entry outcomes to report what was actually filled, branched, advanced, or blocked.",
+        "Use the supplied first-class section tree, exact question membership, option labels, and scoped guidance records when interpreting questions; do not flatten section guidance into every field.",
         "For every inferred field, return an obviously synthetic defaultTestValue that could exercise it; use example.invalid for email and URL domains.",
         "Do not duplicate DOM fields in inferredFields unless the screenshot adds materially different information.",
         "Keep inferredFields conservative and state uncertainty in evidence.",
@@ -180,14 +187,37 @@ export async function analyzeCrawl(pages, log) {
     },
   ];
 
-  for (const page of successfulPages.slice(0, 3)) {
-    if (!page.screenshot || page.screenshot.byteLength > 5_000_000) continue;
-    const mimeType = page.screenshotContentType || "image/png";
+  const maximumImages = Math.max(
+    1,
+    Math.min(
+      Number.parseInt(process.env.FORMWEAVE_MAX_ANALYSIS_IMAGES || "24", 10),
+      60
+    )
+  );
+  const sensingImages = successfulPages.flatMap((page) => [
+    ...(page.sensingScreenshots?.length
+      ? page.sensingScreenshots
+      : page.screenshot
+        ? [page.screenshot]
+        : []),
+    ...(page.stateEvidence || []).flatMap((state) =>
+      state.sensingScreenshots?.length
+        ? state.sensingScreenshots
+        : state.screenshot
+          ? [state.screenshot]
+          : []
+    ),
+  ]);
+  for (const screenshot of sensingImages.slice(0, maximumImages)) {
+    if (!screenshot || screenshot.byteLength > 8_000_000) continue;
     content.push({
       type: "input_image",
-      image_url: `data:${mimeType};base64,${Buffer.from(page.screenshot).toString("base64")}`,
+      image_url: `data:image/png;base64,${Buffer.from(screenshot).toString("base64")}`,
       detail: "high",
     });
+  }
+  if (sensingImages.length > maximumImages) {
+    content[0].text += `\n\nScreenshot cost control: ${sensingImages.length - maximumImages} additional state image(s) were archived locally but omitted after the ${maximumImages}-image sensing limit.`;
   }
 
   const controller = new AbortController();

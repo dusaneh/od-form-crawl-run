@@ -1,0 +1,37 @@
+site_id: site_p_crosspage_echo
+org_name: Riverbend Services
+intake_url: http://localhost:9000/site_p_crosspage_echo/intake
+has_intake_form: true
+form_type: general_intake
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# CROSS-PAGE ECHO DEPENDENCY (primary = positive case).
+# Page 2 echoes the page-1 last_name value ("Testerson") with NO conditional phrasing,
+# so ONLY the echoed-answer signal fires. The Builder aborts (cross_page_branching,
+# medium confidence) and persists NO config.
+expected_red_flag_codes:
+  - cross_page_branching
+expected_abort: cross_page_branching     # feature harness: assert abort + no config row
+expected_abort_confidence: medium
+expected_config_persisted: false
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: false
+    advance_is_server_roundtrip: true    # GET navigation to page 2
+
+# Paired negative flow: the echo FALSE-POSITIVE. Same site, different entry URL.
+# Page 2 echoes only "Test" (len 4) and "1" (numeric) — both below the echo threshold —
+# so NO cross_page_branching, the crawl continues and a config IS persisted.
+negative_form:
+  feature_id: crosspage_echo_false_positive
+  intake_url: http://localhost:9000/site_p_crosspage_echo/intake_safe
+  expected_abort: null
+  expected_config_persisted: true
+  expected_terminal_outcome: completed        # crawl reaches the terminal submit page
+
+# No field-level ground truth: this site's assertion is the abort (or its absence),
+# not field recall. Left empty intentionally.
+fields: []

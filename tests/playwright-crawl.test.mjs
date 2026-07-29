@@ -4,6 +4,7 @@ import {
   crawlTargetsWithPlaywright,
   validatePlaywrightTarget,
 } from "../local/playwright-crawler.mjs";
+import { reconScriptFor } from "../local/recon-scripts/registry.mjs";
 import { startFixtureServer } from "../test-sites/server.mjs";
 
 test("loopback fixture targets require an explicit test-only opt in", () => {
@@ -20,7 +21,58 @@ test("loopback fixture targets require an explicit test-only opt in", () => {
 });
 
 test(
-  "Playwright traverses rendered, noisy, iframe, shadow-root, and conditional forms in dry and live modes",
+  "production-default crawl observes script-missing pages without heuristic actuation",
+  { timeout: 60_000 },
+  async () => {
+    const fixture = await startFixtureServer();
+    try {
+      const events = [];
+      const output = await crawlTargetsWithPlaywright(
+        [`${fixture.origin}/fixtures/automation-gates`],
+        "run_script_missing_observation",
+        {
+          browserMode: "headless",
+          executionMode: "probe",
+          allowLoopback: true,
+          discoverLinks: false,
+          traversalSettings: {
+            stableWindowMs: 200,
+            maxStateWaitMs: 2_000,
+          },
+          onBrowserEvent: (kind, message, metadata = {}) => {
+            events.push({ kind, message, metadata });
+          },
+        }
+      );
+
+      assert.equal(output.pages.length, 1);
+      const page = output.pages[0];
+      assert.equal(page.certificationStatus, "script_missing");
+      assert.equal(page.reconScriptId, "");
+      assert.deepEqual(page.automationActions, []);
+      assert.equal(page.fieldsEntered, 0);
+      assert.equal(page.submissionsAttempted, 0);
+      assert.equal(page.submissionsSucceeded, 0);
+      assert.match(page.html, /onetrust-banner-sdk/);
+      assert.ok(events.some((event) => event.kind === "recon_script_missing"));
+      assert.ok(
+        !events.some((event) =>
+          [
+            "automation_action_started",
+            "automation_action_completed",
+            "field_entry_completed",
+            "fixture_terminal_submission_completed",
+          ].includes(event.kind)
+        )
+      );
+    } finally {
+      await fixture.close();
+    }
+  }
+);
+
+test(
+  "Playwright uses form-specific scripts across rendered, noisy, wild, and conditional probe fixtures",
   { timeout: 180_000 },
   async () => {
     const originalDisableOpenAI = process.env.FORMWEAVE_DISABLE_OPENAI;
@@ -34,7 +86,8 @@ test(
         {
           browserMode: "headless",
           allowLoopback: true,
-          executionMode: "dry_run",
+          reconScriptResolver: reconScriptFor,
+          executionMode: "probe",
           traversalSettings: {
             stableWindowMs: 300,
             maxStateWaitMs: 3_000,
@@ -48,9 +101,9 @@ test(
         }
       );
 
-      assert.equal(output.pages.length, 9);
+      assert.equal(output.pages.length, 13);
       assert.equal(output.pages.filter((page) => page.error).length, 0);
-      assert.equal(output.pages.filter((page) => page.screenshot).length, 9);
+      assert.equal(output.pages.filter((page) => page.screenshot).length, 13);
       assert.ok(
         output.pages.every(
           (page) =>
@@ -76,10 +129,32 @@ test(
       );
       assert.ok(labelsAt("/fixtures/spa-enrollment").includes("Participant email"));
       assert.ok(labelsAt("/fixtures/shadow-form").includes("Case ID"));
+      const semanticPage = pageAt("/fixtures/semantic-application");
+      const contactMethod = semanticPage.fields.find(
+        (field) => field.name === "contact_method"
+      );
+      assert.equal(contactMethod.groupLabel, "Preferred contact method");
+      assert.deepEqual(
+        contactMethod.optionSet.map((option) => option.label),
+        ["Email", "Phone"]
+      );
+      assert.ok(
+        semanticPage.sections.some(
+          (section) =>
+            section.label === "Preferred contact method" &&
+            section.questionKeys.includes(contactMethod.key)
+        )
+      );
       assert.ok(
         output.pages
-          .filter((page) => page.forms && !page.captchaDetected)
-          .every((page) => page.entryFailures === 0 && page.fieldsEntered > 0)
+          .filter(
+            (page) =>
+              page.forms &&
+              !page.captchaDetected &&
+              new URL(page.finalUrl).pathname !==
+                "/fixtures/probe-defeating-widget"
+          )
+          .every((page) => page.fieldsEntered > 0)
       );
 
       const iframePage = pageAt("/fixtures/iframe-request");
@@ -99,12 +174,65 @@ test(
       assert.ok(shadowPage.fields.some((field) => field.label === "Question"));
       assert.equal(shadowPage.finalSubmission, "blocked");
 
+      const styledPage = pageAt("/fixtures/styled-label-interception");
+      assert.ok(styledPage.fieldsEntered >= 2);
+      assert.ok(
+        styledPage.automationActions.some(
+          (action) =>
+            action.category === "field_entry" &&
+            action.label === "Housing type" &&
+            action.outcome === "landed"
+        )
+      );
+
+      const widgetPage = pageAt("/fixtures/probe-defeating-widget");
+      assert.ok(widgetPage.entryFailures >= 1);
+      assert.ok(
+        widgetPage.automationActions.some(
+          (action) =>
+            action.outcome === "could_not_test" &&
+            ["actuation_unverified", "could_not_test"].includes(
+              action.failureCode
+            )
+        )
+      );
+
+      const delayedPage = pageAt("/fixtures/interaction-gated-delay");
+      assert.ok(
+        delayedPage.fields.some((field) => field.label === "Program code")
+      );
+      assert.ok(delayedPage.fieldsEntered >= 2);
+
+      const decoyPage = pageAt("/fixtures/decoy-before-real");
+      assert.equal(
+        decoyPage.fields.find((field) => field.name === "newsletter_email")
+          ?.entryStatus,
+        "skipped"
+      );
+      assert.equal(
+        decoyPage.fields.find((field) => field.name === "applicant_first_name")
+          ?.entryStatus,
+        "entered"
+      );
+
       const spaPage = pageAt("/fixtures/spa-enrollment");
       assert.ok(spaPage.hasScripts);
       assert.ok(spaPage.blockedWriteRequests >= 1);
       assert.equal(spaPage.finalSubmission, "blocked");
 
       const messyPage = pageAt("/fixtures/messy-intake");
+      const displayName = messyPage.fields.find(
+        (field) => field.name === "displayName"
+      );
+      assert.ok(displayName.guidanceIds.length > 0);
+      assert.ok(
+        messyPage.guidanceRecords.some(
+          (record) =>
+            displayName.guidanceIds.includes(record.id) &&
+            record.text === "This can be a nickname." &&
+            record.scope === "question"
+        )
+      );
       assert.equal(messyPage.entryFailures, 0);
       assert.equal(
         messyPage.fields.find((field) => field.label === "Neighborhood")
@@ -123,8 +251,9 @@ test(
         "run_fixture_dry_traversal_test",
         {
           browserMode: "headless",
-          executionMode: "dry_run",
+          executionMode: "probe",
           allowLoopback: true,
+          reconScriptResolver: reconScriptFor,
           discoverLinks: false,
           traversalSettings: {
             stableWindowMs: 300,
@@ -179,43 +308,14 @@ test(
 
       const automationPage = pageAt("/fixtures/automation-gates");
       assert.ok(automationPage.allowedReadLikeRequests >= 1);
-      assert.ok(automationPage.blockedWriteRequests >= 1);
       assert.equal(automationPage.unresolvedGate, "");
       assert.ok(
-        automationPage.fields.some(
+        !automationPage.fields.some(
           (field) => field.label === "Application reference"
         )
       );
-      assert.deepEqual(
-        automationPage.automationActions
-          .filter((action) =>
-            [
-              "cookie_consent",
-              "welcome_banner",
-              "optional_auth",
-              "optional_offer",
-              "safe_disclosure",
-            ].includes(action.category)
-          )
-          .map((action) => action.category),
-        [
-          "cookie_consent",
-          "welcome_banner",
-          "optional_auth",
-          "optional_offer",
-          "safe_disclosure",
-        ]
-      );
-      assert.ok(
-        automationPage.automationActions
-          .filter((action) => action.category !== "field_entry")
-          .every(
-          (action) =>
-            action.beforeFingerprint &&
-            action.afterFingerprint &&
-            !action.error
-        )
-      );
+      assert.deepEqual(automationPage.automationActions, []);
+      assert.match(automationPage.html, /onetrust-banner-sdk/);
 
       const captchaPage = pageAt("/fixtures/captcha-gate");
       assert.equal(captchaPage.captchaDetected, true);
@@ -227,7 +327,6 @@ test(
       );
 
       assert.ok(events.some((event) => event.kind === "state_wait_completed"));
-      assert.ok(events.some((event) => event.kind === "automation_action_completed"));
       assert.ok(events.some((event) => event.kind === "read_like_post_allowed"));
       assert.ok(events.some((event) => event.kind === "captcha_handoff_required"));
       assert.ok(events.some((event) => event.kind === "field_entry_completed"));
@@ -257,43 +356,70 @@ test(
         )
       );
 
-      const liveOutput = await crawlTargetsWithPlaywright(
+      await assert.rejects(
+        () =>
+          crawlTargetsWithPlaywright(
+            [`${fixture.origin}/fixtures/conditional-wizard`],
+            "run_fixture_live_rejected",
+            {
+              browserMode: "headless",
+              executionMode: "live",
+              allowLoopback: true,
+              discoverLinks: false,
+            }
+          ),
+        /Phase 1 supports Probe mode only/
+      );
+      assert.ok(
+        fixture.requests.every(
+          (request) =>
+            request.path !== "/fixtures/write-probe" &&
+            request.path !== "/fixtures/live-submit"
+          )
+      );
+
+      await assert.rejects(
+        () =>
+          crawlTargetsWithPlaywright(
+            ["https://example.com/form"],
+            "run_remote_fixture_submit_rejected",
+            {
+              browserMode: "headless",
+              executionMode: "fixture_submit",
+              allowLoopback: true,
+              discoverLinks: false,
+            }
+          ),
+        /restricted to localhost|loopback/i
+      );
+
+      const fixtureSubmission = await crawlTargetsWithPlaywright(
         [`${fixture.origin}/fixtures/conditional-wizard`],
-        "run_fixture_live_test",
+        "run_loopback_fixture_submit",
         {
           browserMode: "headless",
-          executionMode: "live",
+          executionMode: "fixture_submit",
           allowLoopback: true,
+          reconScriptResolver: reconScriptFor,
           discoverLinks: false,
           traversalSettings: {
             stableWindowMs: 300,
             maxStateWaitMs: 3_000,
-            maxFormStates: 16,
-            maxBranchOptionsPerControl: 2,
+            maxFormStates: 12,
             exerciseBranches: false,
           },
         }
       );
-      assert.equal(liveOutput.pages.length, 1);
-      const liveWizard = liveOutput.pages[0];
-      assert.equal(liveWizard.finalSubmission, "submitted");
-      assert.equal(liveWizard.submissionsAttempted, 1);
-      assert.equal(liveWizard.submissionsSucceeded, 1);
+      const submittedPage = fixtureSubmission.pages[0];
+      assert.equal(submittedPage.submissionsAttempted, 1);
+      assert.equal(submittedPage.submissionsSucceeded, 1);
+      assert.equal(submittedPage.finalSubmission, "submitted");
+      assert.equal(submittedPage.certificationStatus, "fixture_submitted");
       assert.ok(
-        liveWizard.stateEvidence.some((state) => state.kind === "submitted")
-      );
-      assert.equal(
-        fixture.requests.filter(
+        fixture.requests.some(
           (request) =>
             request.method === "POST" &&
-            request.path === "/fixtures/live-submit" &&
-            request.body?.includes("fixture_run=formweave")
-        ).length,
-        1
-      );
-      assert.ok(
-        fixture.requests.every(
-          (request) => request.path !== "/fixtures/write-probe"
+            request.path === "/fixtures/live-submit"
         )
       );
     } finally {

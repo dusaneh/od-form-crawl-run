@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { buildCrawlOutput } from "../worker/crawler.ts";
+import { buildCrawlOutput } from "./crawl-core.ts";
 
 const sourcePath = process.argv[2];
 if (!sourcePath) {
@@ -30,7 +30,7 @@ const findings = [
     id: `${report.id}_imported`,
     tone: "info",
     code: "report_imported",
-    title: "Hosted report imported locally",
+    title: "Report imported locally",
     detail:
       "The JSON findings are available locally. Screenshot binaries were not included in the downloaded report and cannot be reconstructed.",
     time: "now",
@@ -75,7 +75,7 @@ const importedReport = {
     inferredFields: [],
     keyFindings: [],
     limitations: [
-      "This was imported from a hosted JSON report; rerun it locally to add AI analysis and locally stored screenshot evidence.",
+      "This JSON report did not contain screenshot binaries; rerun it locally to add model analysis and locally stored screenshot evidence.",
     ],
   },
 };

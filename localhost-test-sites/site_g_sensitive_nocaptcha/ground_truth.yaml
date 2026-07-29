@@ -1,0 +1,115 @@
+site_id: site_g_sensitive_nocaptcha
+org_name: Community Support Services
+intake_url: http://localhost:9000/site_g_sensitive_nocaptcha/intake
+has_intake_form: true
+form_type: general_intake
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# No CAPTCHA and no unresolved required locators → Runner can proceed end-to-end.
+# sensitive_field raised for date_of_birth, ssn_last4, and monthly_income.
+# unmappable_field raised for consent_to_share (required but no canonical key).
+expected_red_flag_codes:
+  - sensitive_field
+  - unmappable_field
+
+# Form-level metadata derived deterministically after extraction (no LLM).
+expected_form_metadata:
+  needs_consent: true               # consent_to_share is a consent gate
+  has_file_upload: true             # supporting_documents is a file input
+  contains_failed_extractions: false  # every question extracts cleanly
+
+# Question groups, from the <fieldset><legend> structure. The consent checkbox
+# sits outside every fieldset and therefore belongs to no section.
+expected_sections:
+  - Personal Information
+  - Contact Information
+  - Household & Housing
+  - Supporting Documents
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+
+  - name: date_of_birth
+    label: Date of Birth
+    field_type: date
+    required: true
+    is_sensitive: true
+    expected_canonical_key: date_of_birth
+
+  - name: ssn_last4
+    label: Last 4 Digits of Social Security Number
+    field_type: text
+    required: true
+    is_sensitive: true
+    expected_canonical_key: ssn_last4
+
+  - name: phone
+    label: Phone Number
+    field_type: tel
+    required: true
+    is_sensitive: false
+    expected_canonical_key: phone
+
+  - name: email
+    label: Email Address
+    field_type: email
+    required: false
+    is_sensitive: false
+    expected_canonical_key: email
+
+  - name: monthly_income
+    label: Monthly Household Income
+    field_type: number
+    required: false
+    is_sensitive: true
+    expected_canonical_key: monthly_income
+
+  - name: housing_status
+    label: Current Housing Status
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: housing_status
+
+  - name: supporting_documents
+    label: Supporting Documents
+    field_type: file
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+    # Optional multi-file upload — exercises max_files > 1 extraction.
+    expected_file_constraints:
+      accept: ".pdf,.jpg,.jpeg,.png"
+      max_size_bytes: 10485760
+      max_files: 3
+    expected_section: "Supporting Documents"
+
+  - name: consent_to_share
+    label: I consent to share my information with partner agencies
+    field_type: checkbox
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+    # Consent gate → is_consent true → form-level needs_consent true.
+    expected_is_consent: true
+    # Sits outside every fieldset, so it belongs to no section.
+    expected_section: null

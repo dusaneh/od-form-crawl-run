@@ -14,31 +14,39 @@
     "fixtures": "node test-sites/server.mjs",
     "crawl:harness": "node test-sites/harness.mjs",
     "crawl:harness:headed": "node test-sites/harness.mjs --headed",
+    "corpus:harness": "node test-sites/localhost-corpus-harness.mjs",
+    "corpus:harness:headed": "node test-sites/localhost-corpus-harness.mjs --headed",
+    "corpus:drift": "node test-sites/localhost-drift-harness.mjs",
+    "fingerprint:golden": "node test-sites/fingerprint-golden.mjs",
+    "holdout:frozen": "node test-sites/frozen-holdout.mjs",
+    "gate2:localhost": "node test-sites/gate2-localhost-harness.mjs",
+    "gate2:score": "node test-sites/gate2-localhost-scorer.mjs",
+    "gate3:localhost": "node test-sites/gate3-localhost-harness.mjs",
+    "gate3:score": "node test-sites/gate3-localhost-scorer.mjs",
+    "gate4:localhost": "node test-sites/gate4-localhost-harness.mjs",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "test": "npm run build && node --test --test-concurrency=1 tests/*.test.mjs",
     "test:crawler": "node --test tests/playwright-crawl.test.mjs",
     "test:api": "node --test tests/local-api.test.mjs",
     "test:ui": "node --test tests/ui-control-plane.test.mjs",
     "test:openai": "node --test tests/openai-analysis.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "live:harness": "node test-sites/live-harness.mjs",
+    "live:harness:headed": "node test-sites/live-harness.mjs --headed"
   },
   "dependencies": {
-    "drizzle-orm": "0.45.2",
     "next": "16.2.6",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.37.1",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
-    "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
     "playwright": "^1.61.1",
@@ -47,7 +55,7 @@
     "typescript": "5.9.3",
     "vinext": "0.0.50",
     "vite": "8.0.13",
-    "wrangler": "4.92.0"
+    "yaml": "^2.9.0"
   },
   "type": "module"
 }

@@ -2,22 +2,35 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type {
+  ArchitectureExchange,
   BrowserMode,
   CrawlReport,
   ExecutionMode,
+  FieldContract,
+  FixtureAuthorities,
   FlowEdge,
   FlowNode,
   FormRun,
+  LiveTraversalField,
+  LiveTraversalFlag,
   RunStatus,
+  StateEvidence,
   TraversalSettings,
 } from "../lib/models";
 
-const tabs = ["Report", "Flow map", "Field contract", "Evidence", "Diagnostics"] as const;
+const tabs = [
+  "Report",
+  "Traversal",
+  "Flow map",
+  "Field contract",
+  "Evidence",
+  "Diagnostics",
+] as const;
 type Tab = (typeof tabs)[number];
 type Surface = "runs" | "settings";
 
 const defaultTraversalSettings: TraversalSettings = {
-  version: 2,
+  version: 4,
   cookieConsent: "reject_non_essential",
   acceptCookiesWhenRequired: true,
   closeWelcomeBanners: true,
@@ -28,7 +41,7 @@ const defaultTraversalSettings: TraversalSettings = {
   allowSameOriginReadLikePosts: true,
   pointerAndScrollPriming: true,
   unpredictablePopups: "observe_only",
-  captchaPolicy: "detect_and_handoff",
+  captchaPolicy: "detect_and_disqualify",
   stableWindowMs: 700,
   maxStateWaitMs: 12000,
   maxActionsPerPage: 10,
@@ -38,7 +51,7 @@ const defaultTraversalSettings: TraversalSettings = {
   maxFormStates: 24,
   maxBranchOptionsPerControl: 3,
   agentInstructions:
-    "Traverse as much of the public form as possible with synthetic test data. Classify controls as deterministic, conditional, or human-review actions. Enter ordinary fields in DOM order and exercise safe select, radio, and checkbox branches. Use Next, Continue, Review, and equivalent controls to reveal later states. In dry-run mode, never activate the final submit control. Never solve CAPTCHA, provide real credentials, make a payment, upload a file, sign, or accept legal terms. Use obviously synthetic values and reserve example.invalid for email and URL values.",
+    "Use the selected form-specific generated script to traverse as much of the public form as possible with format-plausible synthetic test data. Exercise declared choice branches from a re-baselined state and use only script-declared intermediate advances. Phase 1 never activates the terminal submit control. Never solve CAPTCHA, provide real credentials, or make a payment. Model upload, consent, authorization, terms, review-confirmation, and signature fields with conspicuously synthetic values when needed to expose or verify the form.",
 };
 
 type RuntimeStatus = {
@@ -54,16 +67,13 @@ type RuntimeStatus = {
     engine: string;
     modes: BrowserMode[];
   };
+  generationMode?: "forced_fresh" | "reuse_or_generate";
   traversalSettingsVersion?: number;
   activeCrawls: number;
 };
 
 function apiUrl(path: string) {
-  if (typeof window === "undefined") return path;
-  if (["localhost", "127.0.0.1"].includes(window.location.hostname)) {
-    return `http://127.0.0.1:8787${path}`;
-  }
-  return path;
+  return `http://127.0.0.1:8787${path}`;
 }
 
 function shortHost(url: string) {
@@ -79,6 +89,7 @@ function statusLabel(status: RunStatus) {
     running: "Crawling",
     paused: "Paused",
     awaiting_review: "Needs review",
+    disqualified: "Disqualified",
     completed: "Complete",
     certified: "Certified",
     failed: "Failed",
@@ -319,7 +330,15 @@ function EvidencePreview({ node }: { node: FlowNode }) {
         </div>
       )}
       <span className="evidence-watermark">
-        {node.evidenceAvailable ? "REAL CAPTURE · NO VALUES ENTERED" : "EVIDENCE UNAVAILABLE"}
+        {node.evidenceAvailable
+          ? node.evidenceValueCount === undefined
+            ? "REAL CAPTURE"
+            : node.evidenceValueCount > 0
+              ? `REAL CAPTURE · ${node.evidenceValueCount} SYNTHETIC ${
+                  node.evidenceValueCount === 1 ? "VALUE" : "VALUES"
+                } RECORDED`
+              : "REAL CAPTURE · NO VALUES ENTERED"
+          : "EVIDENCE UNAVAILABLE"}
       </span>
     </div>
   );
@@ -373,7 +392,13 @@ function Inspector({ node }: { node: FlowNode }) {
   );
 }
 
-function FieldsPanel({ run }: { run: FormRun }) {
+function FieldsPanel({
+  run,
+  report,
+}: {
+  run: FormRun;
+  report: CrawlReport | null;
+}) {
   const [showHidden, setShowHidden] = useState(false);
   const fields = run.contract ?? [];
   const visibleFields = fields.filter((field) => !field.hidden);
@@ -381,6 +406,16 @@ function FieldsPanel({ run }: { run: FormRun }) {
   const required = visibleFields.filter((field) => field.required).length;
   const sensitive = visibleFields.filter((field) => field.sensitive).length;
   const hidden = fields.length - visibleFields.length;
+  const guidanceById = new Map(
+    (report?.pages.flatMap((page) => page.guidanceRecords || []) || []).map(
+      (record) => [record.id, record]
+    )
+  );
+  const sectionById = new Map(
+    (report?.pages.flatMap((page) => page.sections || []) || []).map(
+      (section) => [section.id, section]
+    )
+  );
 
   return (
     <div className="contract-panel">
@@ -436,7 +471,47 @@ function FieldsPanel({ run }: { run: FormRun }) {
           <tbody>
             {displayedFields.map((field, index) => (
               <tr key={`${field.originState}-${field.key}-${index}`}>
-                <td className="field-label-cell">{field.label || "Unlabelled control"}</td>
+                <td className="field-label-cell">
+                  <strong>{field.label || "Unlabelled control"}</strong>
+                  {field.sectionId && (
+                    <small className="field-section-label">
+                      {sectionById.get(field.sectionId)?.label || field.sectionId}
+                    </small>
+                  )}
+                  {(field.groupLabel ||
+                    field.optionSet?.length ||
+                    field.guidanceIds?.length) && (
+                    <details className="field-contract-context">
+                      <summary>Question context</summary>
+                      {field.groupLabel && (
+                        <p>
+                          <span>Group legend</span>
+                          {field.groupLabel}
+                        </p>
+                      )}
+                      {Boolean(field.optionSet?.length) && (
+                        <p>
+                          <span>Options</span>
+                          {field.optionSet
+                            ?.map(
+                              (option) =>
+                                `${option.label || option.value} [${option.value}]`
+                            )
+                            .join(" · ")}
+                        </p>
+                      )}
+                      {field.guidanceIds?.map((guidanceId) => {
+                        const guidance = guidanceById.get(guidanceId);
+                        return guidance ? (
+                          <p key={guidanceId}>
+                            <span>{guidance.kind}</span>
+                            {guidance.text}
+                          </p>
+                        ) : null;
+                      })}
+                    </details>
+                  )}
+                </td>
                 <td>{field.control}</td>
                 <td>
                   <code>{field.key}</code>
@@ -475,6 +550,678 @@ function FieldsPanel({ run }: { run: FormRun }) {
             )}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+type TraversalDisplayField = {
+  key: string;
+  label: string;
+  control: string;
+  status: "pending" | "verified" | "failed";
+  required: boolean;
+  sensitive: boolean;
+  consent: boolean;
+  adminAssisted: boolean;
+  upload: boolean;
+  classification:
+    | "deterministic"
+    | "deterministic_replay"
+    | "llm_generated"
+    | "conditional"
+    | "human_review";
+  sectionText: string;
+  formId: string;
+  source: string;
+  rationale: string;
+  error: string;
+  name: string;
+  selector: string;
+  validation: string;
+  options: number;
+};
+
+type TraversalDisplayState = {
+  id: string;
+  sequence: number;
+  kind: string;
+  label: string;
+  description: string;
+  status: "active" | "verified" | "review" | "failed";
+  fingerprint: string;
+  capturedAt: string;
+  fieldsVisible: number;
+  fields: TraversalDisplayField[];
+  flags: LiveTraversalFlag[];
+};
+
+function validationSummary(field?: FieldContract) {
+  if (!field?.validation) return "";
+  return Object.entries(field.validation)
+    .filter(([, value]) => value !== undefined && value !== "")
+    .map(([key, value]) => `${key}=${value}`)
+    .join(" · ");
+}
+
+function displayField(
+  value: StateEvidence["values"][number] | LiveTraversalField,
+  contract?: FieldContract
+): TraversalDisplayField {
+  const liveStatus = "status" in value ? value.status : "verified";
+  return {
+    key: value.fieldKey,
+    label: value.label || contract?.label || value.fieldKey,
+    control: value.control || contract?.control || "control",
+    status: liveStatus,
+    required: Boolean(value.required ?? contract?.required),
+    sensitive: Boolean(value.sensitive ?? contract?.sensitive),
+    consent: Boolean(value.consent ?? contract?.consent),
+    adminAssisted: Boolean(value.adminAssisted ?? contract?.adminAssisted),
+    upload: Boolean(value.upload ?? contract?.control === "file"),
+    classification:
+      value.classification ||
+      (contract?.testValues && contract.testValues.length > 1
+        ? "conditional"
+        : "deterministic"),
+    sectionText: value.sectionText || contract?.sectionText || "",
+    formId: value.formId || contract?.formId || "",
+    source: value.source || contract?.testValueSource || "observed",
+    rationale: ("rationale" in value && value.rationale) || "",
+    error: ("error" in value && value.error) || contract?.entryError || "",
+    name: contract?.name || contract?.id || "",
+    selector: contract?.selector || "",
+    validation: validationSummary(contract),
+    options: contract?.options || 0,
+  };
+}
+
+function sectionName(fields: TraversalDisplayField[], index: number) {
+  const formId = fields.find((field) => field.formId)?.formId;
+  if (formId) return `Form section · ${formId}`;
+  const text = fields.find((field) => field.sectionText)?.sectionText;
+  if (text) {
+    const concise = text.replace(/\s+/g, " ").trim().slice(0, 92);
+    return concise.length < text.trim().length ? `${concise}…` : concise;
+  }
+  return `Observed section ${index + 1}`;
+}
+
+function ArchitectureExchangePanel({
+  exchanges,
+}: {
+  exchanges: ArchitectureExchange[];
+}) {
+  if (!exchanges.length) {
+    return (
+      <section className="architecture-exchange-empty">
+        <strong>No four-layer exchange was retained for this run</strong>
+        <span>
+          Legacy and observation-only runs do not have generated-state provenance.
+        </span>
+      </section>
+    );
+  }
+
+  return (
+    <section className="architecture-exchange">
+      <header className="architecture-exchange-header">
+        <div>
+          <span className="eyebrow">FOUR-LAYER HANDOFF</span>
+          <h4>What crossed each architecture boundary</h4>
+          <p>
+            Sensing facts, semantic decisions, stored mechanics, and deterministic
+            results are shown separately. Labels identify architectural roles; this
+            run-local pilot is not presented as canonical D1/D3 certification.
+          </p>
+        </div>
+        <span>
+          {exchanges.some(
+            (exchange) => exchange.decisionTiming === "retained_prior_run"
+          )
+            ? `${exchanges.length} retained script states · 0 traversal-model calls this replay`
+            : `${exchanges.length} model-examined states`}
+        </span>
+      </header>
+
+      <div className="architecture-state-list">
+        {exchanges.map((exchange, index) => (
+          <details
+            className={`architecture-state architecture-state-${exchange.status}`}
+            key={exchange.stateKey}
+            open={index === 0 || undefined}
+          >
+            <summary>
+              <span className="architecture-state-number">
+                {String(exchange.sequence).padStart(2, "0")}
+              </span>
+              <div>
+                <strong>{exchange.label}</strong>
+                <small>
+                  {exchange.stateKey} · {exchange.route}
+                </small>
+              </div>
+              <div className="architecture-state-facts">
+                <span>{exchange.semantics.model}</span>
+                <span>
+                  {exchange.decisionTiming === "retained_prior_run"
+                    ? "prior LLM decision"
+                    : `${(exchange.semantics.durationMs / 1000).toFixed(1)}s`}
+                </span>
+                <span>{exchange.execution.fieldsVerified} verified</span>
+              </div>
+              <span className="state-chevron">⌄</span>
+            </summary>
+
+            <div className="architecture-state-body">
+              <div className="architecture-layer-flow">
+                <article className="architecture-layer sensing">
+                  <header>
+                    <span>01</span>
+                    <div>
+                      <strong>Browser sensing</strong>
+                      <small>Executor physics role → Semantic layer</small>
+                    </div>
+                  </header>
+                  <p>
+                    The shared toolbox settled the page and supplied facts. It made no
+                    semantic action decision.
+                  </p>
+                  <dl>
+                    <div><dt>Controls</dt><dd>{exchange.sensing.controlsObserved}</dd></div>
+                    <div><dt>Actions</dt><dd>{exchange.sensing.actionsObserved}</dd></div>
+                    <div><dt>Sections</dt><dd>{exchange.sensing.sectionsObserved}</dd></div>
+                    <div><dt>Guidance</dt><dd>{exchange.sensing.guidanceObserved}</dd></div>
+                  </dl>
+                  <details className="architecture-payload">
+                    <summary>Inspect sensing payload</summary>
+                    <code>{exchange.sensing.url}</code>
+                    <code>
+                      screenshot {exchange.sensing.screenshotSha256.slice(0, 16)} ·{" "}
+                      {exchange.sensing.screenshotBytes.toLocaleString()} bytes
+                    </code>
+                    <code>
+                      accessibility {exchange.sensing.accessibilityCharacters.toLocaleString()} chars
+                    </code>
+                    <code>
+                      prior states {exchange.sensing.priorStates} · contract fields{" "}
+                      {exchange.sensing.existingContractFields}
+                    </code>
+                    {exchange.sensing.evidence && (
+                      <a
+                        href={apiUrl(exchange.sensing.evidence)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open screenshot supplied to the model ↗
+                      </a>
+                    )}
+                  </details>
+                </article>
+
+                <span className="architecture-flow-arrow">→</span>
+
+                <article className="architecture-layer semantics">
+                  <header>
+                    <span>02</span>
+                    <div>
+                      <strong>Semantic decision</strong>
+                      <small>LLM → D2-shaped contract + script proposal</small>
+                    </div>
+                  </header>
+                  <p>
+                    {exchange.decisionTiming === "retained_prior_run"
+                      ? "The model interpreted this state during the original generation run. This replay reused that retained decision and made zero traversal-model calls. A separate post-crawl report analysis may still run."
+                      : "The model interpreted the observed state once and proposed typed fields, actions, and one progression."}
+                  </p>
+                  <dl>
+                    <div><dt>Fields</dt><dd>{exchange.semantics.fieldsProposed}</dd></div>
+                    <div><dt>Actions</dt><dd>{exchange.semantics.actionsProposed}</dd></div>
+                    <div><dt>Accepted</dt><dd>{exchange.semantics.acceptedActions}</dd></div>
+                    <div>
+                      <dt>Protected</dt>
+                      <dd>{exchange.semantics.rejectedActions.length}</dd>
+                    </div>
+                  </dl>
+                  <details className="architecture-payload">
+                    <summary>Inspect semantic exchange</summary>
+                    <code>proposal {exchange.semantics.proposalId}</code>
+                    <code>
+                      {exchange.semantics.promptVersion} ·{" "}
+                      {exchange.decisionTiming === "retained_prior_run"
+                        ? "retained generation provenance"
+                        : `attempt ${exchange.semantics.attempts}`}
+                    </code>
+                    <code>
+                      progression {exchange.semantics.progression?.kind || "none"} ·{" "}
+                      {exchange.semantics.progression?.key || "none"}
+                    </code>
+                    {exchange.semantics.rejectedActions.map((rejection, rejectionIndex) => (
+                      <span className="architecture-rejection" key={`${rejection.code}-${rejectionIndex}`}>
+                        {rejection.code}: {rejection.detail}
+                      </span>
+                    ))}
+                  </details>
+                </article>
+
+                <span className="architecture-flow-arrow">→</span>
+
+                <article className="architecture-layer script">
+                  <header>
+                    <span>03</span>
+                    <div>
+                      <strong>Generated mechanics</strong>
+                      <small>Generated-script role → executor</small>
+                    </div>
+                  </header>
+                  <p>
+                    The stored form program supplied exact selectors, synthetic values,
+                    and the typed progression. Replay did not call the model.
+                  </p>
+                  <dl>
+                    <div><dt>Version</dt><dd>{exchange.script.scriptVersion}</dd></div>
+                    <div><dt>Fields</dt><dd>{exchange.script.fields.length}</dd></div>
+                    <div><dt>Progression</dt><dd>{exchange.script.progression.kind}</dd></div>
+                    <div><dt>Selectors</dt><dd>{exchange.script.fields.reduce((sum, field) => sum + field.selectors.length, 0) + exchange.script.progression.selectors.length}</dd></div>
+                  </dl>
+                  <details className="architecture-payload">
+                    <summary>Inspect stored script instructions</summary>
+                    <code>state source {exchange.script.sourceHash.slice(0, 20)}</code>
+                    <code>form source {exchange.script.completeSourceHash.slice(0, 20)}</code>
+                    <code>{exchange.script.storedPath}</code>
+                    <div className="architecture-field-instructions">
+                      {exchange.script.fields.map((field) => (
+                        <div key={field.key}>
+                          <strong>{field.key}</strong>
+                          <span>{field.control} · {field.actionKind}</span>
+                          <code>{field.selectors[0] || "no selector"}</code>
+                          <small>
+                            value {JSON.stringify(field.testValue)} · {field.safetyDisposition}
+                          </small>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                </article>
+
+                <span className="architecture-flow-arrow">→</span>
+
+                <article className="architecture-layer execution">
+                  <header>
+                    <span>04</span>
+                    <div>
+                      <strong>Deterministic result</strong>
+                      <small>Executor + physics role → result envelope</small>
+                    </div>
+                  </header>
+                  <p>
+                    The browser performed only stored instructions, verified readback,
+                    enforced the submit boundary, and retained evidence.
+                  </p>
+                  <dl>
+                    <div><dt>Attempted</dt><dd>{exchange.execution.fieldsAttempted}</dd></div>
+                    <div><dt>Verified</dt><dd>{exchange.execution.fieldsVerified}</dd></div>
+                    <div><dt>Skipped</dt><dd>{exchange.execution.fieldsSkipped}</dd></div>
+                    <div><dt>Failures</dt><dd>{exchange.execution.fieldFailures}</dd></div>
+                  </dl>
+                  <details className="architecture-payload">
+                    <summary>Inspect result envelope</summary>
+                    <code>{exchange.execution.progressionOutcome}</code>
+                    <code>state identity {exchange.execution.observedStateIdentity}</code>
+                    {exchange.execution.evidence.map((evidence, evidenceIndex) => (
+                      <a
+                        href={apiUrl(evidence.url)}
+                        target="_blank"
+                        rel="noreferrer"
+                        key={`${evidence.id}-${evidence.kind}-${evidenceIndex}`}
+                      >
+                        {evidence.kind}: {evidence.label} · {evidence.values} values ↗
+                      </a>
+                    ))}
+                  </details>
+                </article>
+              </div>
+            </div>
+          </details>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function StateFieldRow({
+  field,
+  dynamic,
+}: {
+  field: TraversalDisplayField;
+  dynamic: boolean;
+}) {
+  const hasDetails = Boolean(
+    field.name ||
+      field.selector ||
+      field.validation ||
+      field.rationale ||
+      field.sectionText
+  );
+  return (
+    <article className={`traversal-field traversal-field-${field.status}`}>
+      <span className="traversal-field-check" aria-label={`${field.status} field`}>
+        {field.status === "verified" ? "✓" : field.status === "failed" ? "×" : "·"}
+      </span>
+      <div className="traversal-field-main">
+        <div className="traversal-field-title">
+          <strong>{field.label}</strong>
+          <span className="field-control-kind">{field.control}</span>
+        </div>
+        <div className="traversal-field-badges">
+          {field.required && <span className="field-signal required">Required</span>}
+          {(field.classification === "conditional" || dynamic) && (
+            <span className="field-signal dynamic">Dynamic / branching</span>
+          )}
+          {field.adminAssisted && (
+            <span className="field-signal notable">Administrative</span>
+          )}
+          {field.consent && <span className="field-signal notable">Consent</span>}
+          {field.upload && <span className="field-signal notable">Document upload</span>}
+          {field.sensitive && <span className="field-signal neutral">Sensitive</span>}
+          {field.options > 0 && (
+            <span className="field-signal neutral">{field.options} options</span>
+          )}
+        </div>
+        <small className={field.status === "failed" ? "field-status-error" : ""}>
+          {field.status === "verified"
+            ? "Synthetic value entered and browser readback verified"
+            : field.status === "failed"
+              ? field.error || "The field could not be verified"
+              : "Waiting for actuation and readback"}
+        </small>
+        {hasDetails && (
+          <details className="field-metadata">
+            <summary>Field metadata</summary>
+            <dl>
+              {field.name && <div><dt>Raw identity</dt><dd><code>{field.name}</code></dd></div>}
+              {field.selector && <div><dt>Selector</dt><dd><code>{field.selector}</code></dd></div>}
+              {field.validation && <div><dt>Validation</dt><dd>{field.validation}</dd></div>}
+              {field.source && <div><dt>Planner source</dt><dd>{field.source}</dd></div>}
+              {field.rationale && <div><dt>Decision</dt><dd>{field.rationale}</dd></div>}
+              {field.sectionText && (
+                <div className="field-context-row">
+                  <dt>Observed context</dt>
+                  <dd>{field.sectionText.slice(0, 520)}</dd>
+                </div>
+              )}
+            </dl>
+          </details>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function TraversalStateCard({
+  state,
+  defaultOpen,
+}: {
+  state: TraversalDisplayState;
+  defaultOpen: boolean;
+}) {
+  const verified = state.fields.filter((field) => field.status === "verified").length;
+  const failed = state.fields.filter((field) => field.status === "failed").length;
+  const sectionGroups = new Map<string, TraversalDisplayField[]>();
+  for (const field of state.fields) {
+    const key = field.formId || field.sectionText || "observed";
+    const group = sectionGroups.get(key) || [];
+    group.push(field);
+    sectionGroups.set(key, group);
+  }
+  const sections = [...sectionGroups.values()];
+
+  return (
+    <details
+      className={`traversal-state traversal-state-${state.status}`}
+      open={defaultOpen || undefined}
+    >
+      <summary>
+        <span className="state-sequence">
+          {state.status === "verified" ? "✓" : state.status === "failed" ? "!" : state.sequence}
+        </span>
+        <div className="state-summary-copy">
+          <span className="state-kind">{state.kind.replaceAll("_", " ")}</span>
+          <strong>{state.label}</strong>
+          <small>{state.description}</small>
+        </div>
+        <div className="state-summary-metrics">
+          <span>{verified}/{state.fields.length} fields verified</span>
+          {failed > 0 && <span className="danger-copy">{failed} failed</span>}
+          {state.fingerprint && <code>{state.fingerprint}</code>}
+        </div>
+        <span className="state-chevron">⌄</span>
+      </summary>
+      <div className="traversal-state-body">
+        <div className="state-meta-strip">
+          <span>{state.fieldsVisible || state.fields.length} visible controls</span>
+          <span>{sections.length} form {sections.length === 1 ? "section" : "sections"}</span>
+          <span>{state.capturedAt ? new Date(state.capturedAt).toLocaleTimeString() : "live"}</span>
+          <span className={`state-verification ${state.status}`}>
+            {state.status === "active"
+              ? "Actuating and verifying"
+              : state.status === "verified"
+                ? "State verified"
+                : state.status === "failed"
+                  ? "Concerning condition"
+                  : "Review required"}
+          </span>
+        </div>
+        {state.flags.length > 0 && (
+          <div className="state-flags">
+            {state.flags.map((flag, index) => (
+              <div className={`state-flag ${flag.tone}`} key={`${flag.code}-${index}`}>
+                <span>{flag.tone === "danger" ? "!" : "i"}</span>
+                <div>
+                  <strong>{flag.label}</strong>
+                  {flag.detail && <small>{flag.detail}</small>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {sections.map((fields, index) => (
+          <section className="traversal-form-section" key={`${state.id}-section-${index}`}>
+            <header>
+              <div>
+                <span>SECTION {String(index + 1).padStart(2, "0")}</span>
+                <strong>{sectionName(fields, index)}</strong>
+              </div>
+              <span>{fields.length} {fields.length === 1 ? "field" : "fields"}</span>
+            </header>
+            <div className="traversal-fields">
+              {fields.map((field, fieldIndex) => (
+                <StateFieldRow
+                  field={field}
+                  dynamic={state.kind === "branch"}
+                  key={`${field.key}-${fieldIndex}`}
+                />
+              ))}
+            </div>
+          </section>
+        ))}
+        {!state.fields.length && (
+          <div className="state-empty-fields">
+            <strong>No values entered in this state</strong>
+            <span>The state was still captured and identified before actuation.</span>
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function TraversalPanel({
+  run,
+  report,
+}: {
+  run: FormRun;
+  report: CrawlReport | null;
+}) {
+  const contractByKey = new Map(
+    (run.contract || []).map((field) => [field.key, field])
+  );
+  const liveStates: TraversalDisplayState[] = (run.liveTraversal?.states || []).map(
+    (state) => ({
+      ...state,
+      fingerprint: state.fingerprint || "",
+      capturedAt: state.capturedAt || "",
+      fieldsVisible: state.fieldsVisible || 0,
+      fields: state.fields.map((field) =>
+        displayField(field, contractByKey.get(field.fieldKey))
+      ),
+    })
+  );
+  const evidenceStates: TraversalDisplayState[] = run.nodes.flatMap((node) =>
+    (node.stateEvidence || []).map((state) => {
+      const actions = report?.pages
+        .flatMap((page) => page.automationActions || [])
+        .filter((action) => action.stateId === state.id);
+      const flags: LiveTraversalFlag[] = (actions || [])
+        .filter((action) => action.outcome === "could_not_test" || action.error)
+        .map((action) => ({
+          tone: "danger",
+          code: action.failureCode || "verification_failed",
+          label: action.label,
+          detail: action.error || action.rationale,
+        }));
+      return {
+        id: `${node.id}-${state.id}`,
+        sequence: state.sequence,
+        kind: state.kind,
+        label: state.label,
+        description:
+          state.kind === "branch"
+            ? "A declared option was exercised and the resulting dynamic state was captured."
+            : state.kind === "blocked_final"
+              ? "The form reached its terminal boundary after value verification; submission remained blocked."
+              : "The browser captured this state after deterministic examination and readback.",
+        status: flags.length ? "failed" : "verified",
+        fingerprint: state.fingerprint,
+        capturedAt: state.capturedAt,
+        fieldsVisible: state.fieldsVisible,
+        fields: state.values.map((value) =>
+          displayField(value, contractByKey.get(value.fieldKey))
+        ),
+        flags,
+      };
+    })
+  );
+  const states = liveStates.length ? liveStates : evidenceStates;
+  const activeFields = (run.liveTraversal?.currentFields || []).map((field) =>
+    displayField(field, contractByKey.get(field.fieldKey))
+  );
+  const workingState: TraversalDisplayState | null =
+    run.status === "running"
+      ? {
+          id: "working",
+          sequence: states.length + 1,
+          kind: "working",
+          label: run.liveTraversal?.currentLabel || run.stage,
+          description:
+            "FormWeave is examining the current rendered state and verifies each field after actuation.",
+          status: "active",
+          fingerprint: "",
+          capturedAt: "",
+          fieldsVisible: activeFields.length,
+          fields: activeFields,
+          flags: run.liveTraversal?.flags || [],
+        }
+      : null;
+  const displayStates = workingState ? [...states, workingState] : states;
+  const verifiedStates = displayStates.filter((state) => state.status === "verified").length;
+  const failedStates = displayStates.filter((state) => state.status === "failed").length;
+  const verifiedFields = new Set(
+    displayStates.flatMap((state) =>
+      state.fields
+        .filter((field) => field.status === "verified")
+        .map((field) => field.key)
+    )
+  ).size;
+  const reportScriptPage = report?.pages.find((page) => page.reconScriptId);
+  const displayedScriptId =
+    run.liveTraversal?.scriptId ||
+    reportScriptPage?.reconScriptId ||
+    "Recorded plan";
+  const displayedScriptVersion =
+    run.liveTraversal?.scriptVersion ||
+    reportScriptPage?.reconScriptVersion ||
+    0;
+
+  return (
+    <div className="traversal-console">
+      <header className="traversal-console-header">
+        <div>
+          <span className="eyebrow">
+            {run.status === "running" ? "LIVE TRAVERSAL" : "RECORDED TRAVERSAL"}
+          </span>
+          <h3>State-by-state form verification</h3>
+          <p>
+            Review what was discovered, filled, read back, and certified. Values remain
+            summarized while field semantics and concerns stay inspectable.
+          </p>
+        </div>
+        <div className="traversal-console-status">
+          <span className={run.status === "running" ? "live" : "recorded"} />
+          {run.status === "running" ? "Updating every 3 seconds" : "Persisted local evidence"}
+        </div>
+      </header>
+
+      <div className="traversal-overview">
+        <div><span>States</span><strong>{displayStates.length}</strong><small>{verifiedStates} greenlit</small></div>
+        <div><span>Verified fields</span><strong>{verifiedFields}</strong><small>Actuated plus read back</small></div>
+        <div><span>Concerning states</span><strong className={failedStates ? "danger-copy" : ""}>{failedStates}</strong><small>Shown in red</small></div>
+        <div><span>Recon script</span><strong className="script-summary">{displayedScriptId}</strong><small>{displayedScriptVersion ? `version ${displayedScriptVersion}` : "no version recorded"}</small></div>
+      </div>
+
+      <div className="state-progress-strip" aria-label="Traversal state progress">
+        {displayStates.map((state) => (
+          <span
+            className={`state-progress-marker ${state.status}`}
+            key={`progress-${state.id}`}
+            title={state.label}
+          >
+            {state.status === "verified" ? "✓" : state.status === "failed" ? "!" : state.sequence}
+          </span>
+        ))}
+      </div>
+
+      <ArchitectureExchangePanel exchanges={report?.architectureExchanges || []} />
+
+      <div className="traversal-state-list">
+        {displayStates.map((state, index) => (
+          <TraversalStateCard
+            state={state}
+            defaultOpen={
+              state.status === "active" ||
+              state.status === "failed" ||
+              index === displayStates.length - 1
+            }
+            key={`${state.id}-${index}`}
+          />
+        ))}
+        {!displayStates.length && (
+          <div className="traversal-empty">
+            {run.status === "running" && <span className="report-spinner" />}
+            <strong>
+              {run.status === "running"
+                ? "Waiting for the first browser state"
+                : "No traversal state evidence was recorded"}
+            </strong>
+            <p>
+              {run.status === "running"
+                ? "Fields will appear here as they are entered and verified."
+                : report
+                  ? "This is a completed observation without retained populated-state evidence. Review the report status and event log; no actuation success is implied."
+                  : "No persisted report or live state exchange is available for this run."}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -538,8 +1285,60 @@ function ReportPanel({
   const traversalActions = report.pages.flatMap((page) =>
     (page.automationActions ?? []).map((action) => ({
       ...action,
-      page: page.heading || page.title || shortHost(page.finalUrl),
+      page:
+        (page.stateEvidence ?? []).find((state) => state.id === action.stateId)
+          ?.label || "Generated replay",
     }))
+  );
+  const incompleteJourneys = report.pages.filter(
+    (page) => page.journeyComplete === false
+  );
+  const midFlowEntries = report.pages.filter(
+    (page) => page.entryMode === "mid_flow"
+  );
+  const generatedPages = report.pages.filter(
+    (page) => page.generatedArtifact || page.reconScriptId
+  );
+  const choiceFields = visibleFields
+    .filter((field) =>
+      ["select", "radio", "checkbox", "switch"].includes(field.control)
+    )
+    .map((field) => {
+      const recordedOptions = (field.optionSet || []).filter(
+        (option) => option.value !== ""
+      );
+      const enteredValues = new Set(
+        (Array.isArray(field.testValue)
+          ? field.testValue
+          : [field.testValue]
+        )
+          .filter((value) => value !== undefined && value !== null)
+          .map((value) => String(value))
+      );
+      const options = recordedOptions.map((option) => ({
+          ...option,
+          exercised:
+            field.entryStatus === "entered" &&
+            (enteredValues.has(String(option.value)) ||
+              enteredValues.has(String(option.label)) ||
+              (field.control === "checkbox" &&
+                String(field.testValue).toLowerCase() === "true" &&
+                recordedOptions.length === 1)),
+        }));
+      return {
+        field,
+        options,
+        exercised: options.filter((option) => option.exercised),
+        untested: options.filter((option) => !option.exercised),
+      };
+    });
+  const exercisedChoiceOptions = choiceFields.reduce(
+    (sum, item) => sum + item.exercised.length,
+    0
+  );
+  const substantiveChoiceOptions = choiceFields.reduce(
+    (sum, item) => sum + item.options.length,
+    0
   );
 
   return (
@@ -570,6 +1369,34 @@ function ReportPanel({
         </div>
       </section>
 
+      <section
+        className={`journey-integrity ${
+          incompleteJourneys.length || midFlowEntries.length ? "warning" : "complete"
+        }`}
+        aria-label="Journey completeness"
+      >
+        <div className="journey-integrity-icon">
+          {incompleteJourneys.length || midFlowEntries.length ? "!" : "✓"}
+        </div>
+        <div>
+          <span className="eyebrow">JOURNEY INTEGRITY</span>
+          <strong>
+            {incompleteJourneys.length
+              ? `${incompleteJourneys.length} journey${incompleteJourneys.length === 1 ? "" : "s"} halted with partial coverage`
+              : midFlowEntries.length
+                ? `${midFlowEntries.length} supplied URL${midFlowEntries.length === 1 ? "" : "s"} began mid-flow`
+                : "No reported journey halt"}
+          </strong>
+          <p>
+            {incompleteJourneys.length
+              ? "Earlier verified states remain in this report. The halt reason and missing terminal coverage are shown per page below."
+              : midFlowEntries.length
+                ? "The report covers the supplied intermediate step and its successors; preceding steps are not claimed."
+                : `${generatedPages.length} page${generatedPages.length === 1 ? "" : "s"} used retained LLM-authored scripts or generated artifacts.`}
+          </p>
+        </div>
+      </section>
+
       <section className="report-metrics" aria-label="Report totals">
         <div><span>Pages fetched</span><strong>{report.stats.pagesFetched}</strong><small>{report.stats.pagesAttempted} attempted</small></div>
         <div><span>Forms found</span><strong>{report.stats.formsFound}</strong><small>{isRendered ? "Across rendered pages" : "Across source crawl pages"}</small></div>
@@ -580,19 +1407,97 @@ function ReportPanel({
           <small>{report.stats.screenshotsCaptured} reported by source crawl</small>
         </div>
         <div><span>{isRendered ? "DOM bytes" : "Source bytes"}</span><strong>{formatBytes(report.stats.bytesFetched)}</strong><small>{isRendered ? "Serialized rendered HTML" : "Reported by the source crawl"}</small></div>
-        <div><span>Traversal actions</span><strong>{report.stats.automationActions ?? 0}</strong><small>Fingerprint-audited decisions</small></div>
-        <div><span>State examinations</span><strong>{report.stats.stateExaminations ?? 0}</strong><small>Bounded stable-state waits</small></div>
+        <div><span>Traversal actions</span><strong>{report.stats.automationActions ?? 0}</strong><small>LLM-authored replay decisions</small></div>
+        <div><span>State examinations</span><strong>{report.stats.stateExaminations ?? 0}</strong><small>Novel states sent to the model</small></div>
         <div><span>Read-like init</span><strong>{report.stats.allowedReadLikeRequests ?? 0}</strong><small>Classified same-origin requests</small></div>
         <div><span>Writes blocked</span><strong>{report.stats.blockedWriteRequests ?? 0}</strong><small>Submission safety guard</small></div>
         <div><span>States captured</span><strong>{report.stats.statesCaptured ?? 0}</strong><small>Values visible before movement</small></div>
         <div><span>Fields entered</span><strong>{report.stats.fieldsEntered ?? 0}</strong><small>{report.stats.entryFailures ?? 0} entry failures</small></div>
-        <div><span>Branch states</span><strong>{report.stats.branchStates ?? 0}</strong><small>Select, radio, and checkbox probes</small></div>
+        <div><span>Branch states</span><strong>{report.stats.branchStates ?? 0}</strong><small>Revealed dynamic states</small></div>
         <div>
           <span>Final submissions</span>
           <strong>{report.stats.submissionsSucceeded ?? 0}</strong>
-          <small>{report.executionMode === "live" ? "Live mode" : "Blocked in dry run"}</small>
+          <small>
+            {report.executionMode === "fixture_submit"
+              ? `${report.stats.submissionsAttempted ?? 0} attempted · ${
+                  report.stats.submissionsSucceeded
+                    ? "transport + rendered result verified"
+                    : "no verified completion"
+                }`
+              : "Blocked at the public terminal boundary"}
+          </small>
         </div>
       </section>
+
+      {choiceFields.length ? (
+        <section className="report-section choice-coverage-section">
+          <div className="section-title">
+            <span>Choice-path coverage</span>
+            <span>
+              {exercisedChoiceOptions}/{substantiveChoiceOptions}
+            </span>
+          </div>
+          <div
+            className={`choice-coverage-callout ${
+              exercisedChoiceOptions < substantiveChoiceOptions
+                ? "partial"
+                : "complete"
+            }`}
+          >
+            <strong>
+              {exercisedChoiceOptions < substantiveChoiceOptions
+                ? "Partial option coverage"
+                : "All recorded options exercised"}
+            </strong>
+            <p>
+              A verified field entry proves the selected value worked. It does not
+              prove unselected radio, checkbox, or dropdown paths behave the same.
+            </p>
+          </div>
+          <div className="choice-coverage-list">
+            {choiceFields.map(({ field, options, exercised, untested }) => (
+              <article key={`${field.originState}-${field.key}`}>
+                <div>
+                  <strong>{field.label || field.key}</strong>
+                  <small>
+                    {field.control} · {exercised.length}/{options.length} options
+                    exercised
+                  </small>
+                </div>
+                <div className="choice-option-list">
+                  {options.map((option) => (
+                    <span
+                      className={option.exercised ? "exercised" : "untested"}
+                      key={`${field.key}-${option.value}`}
+                      title={
+                        option.exercised
+                          ? "Entered and verified in this run"
+                          : "Recorded in the contract but not actuated in this run"
+                      }
+                    >
+                      {option.exercised ? "✓" : "·"}{" "}
+                      {option.label || option.value}
+                    </span>
+                  ))}
+                  {!options.length && (
+                    <span className="untested">
+                      Option labels were not retained; coverage is unknown
+                    </span>
+                  )}
+                </div>
+                {untested.length > 0 && (
+                  <small className="choice-coverage-gap">
+                    Not exercised:{" "}
+                    {untested
+                      .map((option) => option.label || option.value)
+                      .join(", ")}
+                  </small>
+                )}
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {traversalActions.length ? (
         <section className="report-section">
@@ -612,8 +1517,14 @@ function ReportPanel({
                     {action.page} · {action.strategy}
                   </small>
                 </div>
-                <code title="Before and after page-state fingerprints">
-                  {action.beforeFingerprint} → {action.afterFingerprint}
+                <code title="Observed action result or before/after state identity">
+                  {action.beforeFingerprint || action.afterFingerprint
+                    ? `${action.beforeFingerprint || "unknown"} → ${
+                        action.afterFingerprint || "unknown"
+                      }`
+                    : `${action.outcome || "recorded"} · ${
+                        action.stateId || action.classification || "no state id"
+                      }`}
                 </code>
               </article>
             ))}
@@ -628,7 +1539,14 @@ function ReportPanel({
         </div>
         <div className="page-report-list">
           {report.pages.map((page, index) => (
-            <article key={`${page.finalUrl}-${index}`}>
+            <article
+              className={
+                page.journeyComplete === false || page.entryMode === "mid_flow"
+                  ? "journey-page-warning"
+                  : ""
+              }
+              key={`${page.finalUrl}-${index}`}
+            >
               <div className="page-report-index">{String(index + 1).padStart(2, "0")}</div>
               <div className="page-report-main">
                 <strong>{page.heading || page.title || shortHost(page.finalUrl)}</strong>
@@ -656,7 +1574,102 @@ function ReportPanel({
                     <span>final submit blocked</span>
                   )}
                   {page.finalSubmission === "submitted" && (
-                    <span>live submission executed</span>
+                    <span>submission confirmed</span>
+                  )}
+                  {page.finalSubmission === "submitted_unverified" && (
+                    <span className="warning-badge">
+                      submission {page.submissionResult?.outcome || "unknown"}
+                    </span>
+                  )}
+                  {page.certificationStatus && (
+                    <span>{page.certificationStatus.replaceAll("_", " ")}</span>
+                  )}
+                  {page.entryMode === "mid_flow" && (
+                    <span className="warning-badge">partial · mid-flow entry</span>
+                  )}
+                  {page.journeyComplete === false && (
+                    <span className="warning-badge">journey halted</span>
+                  )}
+                </div>
+                <div className="page-journey-details">
+                  <span>
+                    <strong>Entry:</strong>{" "}
+                    {(page.entryMode || "unknown").replaceAll("_", " ")}
+                    {page.entryDetail ? ` · ${page.entryDetail}` : ""}
+                  </span>
+                  <span>
+                    <strong>Coverage:</strong>{" "}
+                    {page.journeyComplete === false
+                      ? "partial"
+                      : "complete from supplied URL"}{" "}
+                    · {page.journeyUrls?.length || 1} observed route
+                    {(page.journeyUrls?.length || 1) === 1 ? "" : "s"}
+                  </span>
+                  <span>
+                    <strong>Actuation:</strong> {page.fieldsEntered || 0} verified
+                    values · {page.entryFailures || 0} failures
+                  </span>
+                  {page.submissionResult && (
+                    <>
+                      <span>
+                        <strong>Submission result:</strong>{" "}
+                        {page.submissionResult.outcome} ·{" "}
+                        {page.submissionResult.verified
+                          ? "explicit rendered confirmation verified"
+                          : "not verified"}{" "}
+                        · {page.submissionResult.source.replaceAll("_", " ")}
+                      </span>
+                      <span>
+                        <strong>Transport proof:</strong>{" "}
+                        {page.submissionResult.transport?.verified
+                          ? "verified"
+                          : "not verified"}
+                        {" · submit event "}
+                        {page.submissionResult.transport?.submitEventObserved
+                          ? "observed"
+                          : "not observed"}
+                        {" · write request "}
+                        {page.submissionResult.transport?.writeRequestObserved
+                          ? "observed"
+                          : "not observed"}
+                        {" · HTTP "}
+                        {page.submissionResult.transport?.navigationStatus ?? "same-page"}
+                        {" · state change "}
+                        {page.submissionResult.transport?.stateChanged ? "observed" : "not observed"}
+                      </span>
+                      <span>
+                        <strong>Rendered success criteria:</strong>{" "}
+                        {page.submissionResult.criteria?.confidence || "unscored"}
+                        {page.submissionResult.criteria?.markers?.length
+                          ? ` · ${page.submissionResult.criteria.markers.join(" | ")}`
+                          : " · no markers retained"}
+                      </span>
+                    </>
+                  )}
+                  {page.reconScriptId && (
+                    <span>
+                      <strong>Script:</strong> {page.reconScriptId}@
+                      {page.reconScriptVersion || 0}
+                    </span>
+                  )}
+                  {page.generatedArtifact && (
+                    <span title={page.generatedArtifact.sourceHash}>
+                      <strong>Generated artifact:</strong>{" "}
+                      {page.generatedArtifact.states} states ·{" "}
+                      {page.generatedArtifact.modelCallsThisRun ??
+                        page.generatedArtifact.modelCalls}{" "}
+                      model calls this run ·{" "}
+                      {page.generatedArtifact.lifecycle
+                        ? `${page.generatedArtifact.lifecycle.replaceAll("_", " ")} · `
+                        : ""}
+                      hash{" "}
+                      {page.generatedArtifact.sourceHash.slice(0, 12)}
+                    </span>
+                  )}
+                  {page.haltReason && (
+                    <span className="halt-reason">
+                      <strong>Halt:</strong> {page.haltReason}
+                    </span>
                   )}
                 </div>
               </div>
@@ -772,39 +1785,105 @@ function ReportPanel({
 }
 
 function EvidencePanel({ nodes }: { nodes: FlowNode[] }) {
-  const items = nodes.flatMap((node) => {
-    const states = node.stateEvidence ?? [];
-    if (!states.length) {
-      return [{ node, label: node.title, detail: node.fingerprint }];
+  const proofKinds = new Set<StateEvidence["kind"]>([
+    "branch",
+    "choice_probe",
+    "branch_variant_populated",
+    "selected_branch_populated",
+    "pre_advance",
+    "post_advance",
+    "blocked_final",
+    "submitted",
+  ]);
+  const rawItems = nodes.flatMap((node) =>
+    (node.stateEvidence ?? [])
+      .filter(
+        (state) =>
+          proofKinds.has(state.kind) ||
+          (state.kind === "populated" && state.values.length > 0)
+      )
+      .map((state) => ({
+        node: {
+          ...node,
+          id: `${node.id}-${state.id}`,
+          title: state.label,
+          fingerprint: state.fingerprint,
+          evidence: state.evidence ?? "",
+          evidenceAvailable: state.evidenceAvailable,
+          evidenceValueCount: state.values.length,
+          screenshotProvider: state.screenshotProvider,
+        },
+        label: state.label,
+        detail: `${state.kind.replaceAll("_", " ")} · ${state.values.length} values`,
+      }))
+  );
+  const itemsByEvidence = new Map<string, (typeof rawItems)[number]>();
+  for (const item of rawItems) {
+    const key = item.node.evidence || item.node.id;
+    const existing = itemsByEvidence.get(key);
+    if (!existing || item.node.evidenceValueCount !== undefined) {
+      itemsByEvidence.set(key, item);
     }
-    return states.map((state) => ({
-      node: {
-        ...node,
-        id: `${node.id}-${state.id}`,
-        title: state.label,
-        fingerprint: state.fingerprint,
-        evidence: state.evidence ?? "",
-        evidenceAvailable: state.evidenceAvailable,
-        screenshotProvider: state.screenshotProvider,
-      },
-      label: state.label,
-      detail: `${state.kind.replaceAll("_", " ")} · ${state.values.length} values`,
-    }));
-  });
+  }
+  const items = [...itemsByEvidence.values()];
+  const sensingItems = nodes.filter(
+    (node) =>
+      node.evidenceAvailable &&
+      !itemsByEvidence.has(node.evidence || node.id)
+  );
   return (
-    <div className="evidence-gallery">
-      {items.map((item) => (
-        <article key={item.node.id}>
-          <EvidencePreview node={item.node} />
-          <div>
-            <strong>{item.label}</strong>
-            <span>
-              {item.node.evidenceAvailable ? "captured" : "unavailable"} · {item.detail}
-            </span>
-          </div>
-        </article>
-      ))}
-      {!items.length && <p className="empty-panel-copy">Evidence will appear after a page is fetched.</p>}
+    <div className="evidence-sections">
+      <section>
+        <div className="section-title">
+          <span>Verified traversal evidence</span>
+          <span>{items.length}</span>
+        </div>
+        <p className="evidence-section-copy">
+          Populated forms, option probes, first-level branch variants, and the
+          resulting state after a successful transition or verified localhost
+          test submission.
+        </p>
+        <div className="evidence-gallery">
+          {items.map((item) => (
+            <article key={item.node.id}>
+              <EvidencePreview node={item.node} />
+              <div>
+                <strong>{item.label}</strong>
+                <span>
+                  {item.node.evidenceAvailable ? "captured" : "unavailable"} · {item.detail}
+                </span>
+              </div>
+            </article>
+          ))}
+          {!items.length && (
+            <p className="empty-panel-copy">
+              No traversal proof was produced. Check Diagnostics for a missing
+              script, actuation failure, or blocked transition.
+            </p>
+          )}
+        </div>
+      </section>
+      <section className="sensing-evidence-section">
+        <div className="section-title">
+          <span>Sensing captures</span>
+          <span>{sensingItems.length}</span>
+        </div>
+        <p className="evidence-section-copy">
+          Page captures used for extraction and model context. These are not
+          proof that a form was populated or advanced.
+        </p>
+        <div className="evidence-gallery">
+          {sensingItems.map((node) => (
+            <article key={`sensing-${node.id}`}>
+              <EvidencePreview node={node} />
+              <div>
+                <strong>{node.title}</strong>
+                <span>captured · sensing only</span>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
@@ -929,17 +2008,24 @@ function LaunchModal({
     urls: string[],
     mode: ExecutionMode,
     browserMode: BrowserMode,
-    liveApproved: boolean,
-    liveConfirmation: string
+    allowLocalTargets: boolean,
+    discoverRelatedPages: boolean,
+    fixtureAuthorities: FixtureAuthorities
   ) => Promise<void>;
   busy: boolean;
 }) {
   const [urls, setUrls] = useState("");
   const [browserMode, setBrowserMode] = useState<BrowserMode>("headless");
-  const [executionMode, setExecutionMode] =
-    useState<ExecutionMode>("dry_run");
-  const [liveApproved, setLiveApproved] = useState(false);
-  const [liveConfirmation, setLiveConfirmation] = useState("");
+  const [allowLocalTargets, setAllowLocalTargets] = useState(false);
+  const [discoverRelatedPages, setDiscoverRelatedPages] = useState(true);
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("probe");
+  const fixtureAuthorities: FixtureAuthorities = {
+    acknowledgement: false,
+    consent: false,
+    reviewConfirmation: false,
+    signature: false,
+    upload: false,
+  };
 
   if (!open) return null;
 
@@ -950,8 +2036,9 @@ function LaunchModal({
       values,
       executionMode,
       browserMode,
-      liveApproved,
-      liveConfirmation
+      allowLocalTargets,
+      discoverRelatedPages,
+      fixtureAuthorities
     );
   }
 
@@ -968,7 +2055,7 @@ function LaunchModal({
           <div>
             <span className="eyebrow">NEW FORM TRAVERSAL</span>
             <h2 id="launch-title">Populate, branch, and map forms</h2>
-            <p>One URL per line. FormWeave enters synthetic values, exercises safe branches, and captures every state locally.</p>
+            <p>One URL per line. When no retained script exists, FormWeave calls the LLM at each novel state, stores a versioned script, then performs deterministic validation replay.</p>
           </div>
           <button onClick={onClose} aria-label="Close launch dialog">×</button>
         </div>
@@ -982,7 +2069,43 @@ function LaunchModal({
               spellCheck={false}
               required
             />
-            <small>Up to 12 public HTTP or HTTPS URLs; private-network targets are blocked</small>
+            <small>
+              Up to 12 HTTP or HTTPS URLs. Private networks stay blocked; an
+              explicit opt-in below permits loopback test sites only.
+            </small>
+          </label>
+          <label className="localhost-opt-in related-page-discovery">
+            <input
+              type="checkbox"
+              checked={discoverRelatedPages}
+              onChange={(event) => setDiscoverRelatedPages(event.target.checked)}
+            />
+            <span>
+              <strong>Discover related same-site pages</strong>
+              <small>
+                Follow at most 12 same-origin links, one level deep, when the
+                link URL or text contains: apply, application, form, intake,
+                register, signup, enroll, eligibility, benefit, service,
+                request, step, page, start, or fixture.
+              </small>
+            </span>
+          </label>
+          <label className="localhost-opt-in">
+            <input
+              type="checkbox"
+              checked={allowLocalTargets}
+              onChange={(event) => {
+                setAllowLocalTargets(event.target.checked);
+                if (!event.target.checked) setExecutionMode("probe");
+              }}
+            />
+            <span>
+              <strong>Allow localhost test sites for this run</strong>
+              <small>
+                Permits localhost, *.localhost, ::1, and 127.0.0.0/8. Other
+                private-network addresses remain blocked.
+              </small>
+            </span>
           </label>
           <fieldset>
             <legend>Browser visibility</legend>
@@ -1008,62 +2131,68 @@ function LaunchModal({
             </button>
           </fieldset>
           <fieldset className="execution-mode-fieldset">
-            <legend>Execution mode</legend>
+            <legend>Execution boundary</legend>
             <button
               type="button"
-              className={executionMode === "dry_run" ? "selected" : ""}
-              aria-pressed={executionMode === "dry_run"}
-              onClick={() => setExecutionMode("dry_run")}
+              className={executionMode === "probe" ? "selected" : ""}
+              aria-pressed={executionMode === "probe"}
+              onClick={() => setExecutionMode("probe")}
             >
               <span aria-hidden="true">◇</span>
-              <strong>Dry run</strong>
-              <small>Enter values, test branches, and advance through intermediate states. Stop before final submission.</small>
+              <strong>Phase 1 Probe</strong>
+              <small>
+                Generate or replay a versioned script, enter synthetic values,
+                test declared branches, and stop at the terminal boundary.
+              </small>
             </button>
             <button
               type="button"
-              className={executionMode === "live" ? "selected live" : "live"}
-              aria-pressed={executionMode === "live"}
-              onClick={() => setExecutionMode("live")}
+              className={executionMode === "fixture_submit" ? "selected" : ""}
+              aria-pressed={executionMode === "fixture_submit"}
+              disabled={!allowLocalTargets}
+              onClick={() => setExecutionMode("fixture_submit")}
             >
-              <span aria-hidden="true">!</span>
-              <strong>Live submission</strong>
-              <small>Perform the same traversal and activate the final submit control. The target may persist a real record.</small>
+              <span aria-hidden="true">✓</span>
+              <strong>Submit localhost test form</strong>
+              <small>
+                Generate and validate an LLM-authored script, then complete and
+                submit the recognized loopback fixture with synthetic values.
+              </small>
             </button>
           </fieldset>
-          {executionMode === "live" && (
-            <div className="live-approval">
-              <strong>Explicit submission approval required</strong>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={liveApproved}
-                  onChange={(event) => setLiveApproved(event.target.checked)}
-                />
-                I authorize FormWeave to submit synthetic data to the listed targets.
-              </label>
-              <label>
-                Type SUBMIT to confirm
-                <input
-                  value={liveConfirmation}
-                  onChange={(event) => setLiveConfirmation(event.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </label>
+          {executionMode === "fixture_submit" && (
+            <div className="fixture-authorities">
+              <strong>Special components use the normal crawl policy</strong>
+              <p>
+                Upload, consent, acknowledgement, review confirmation, and
+                signature fields are modeled only when the LLM-authored script
+                declares the action and safety accepts it. This is the same for
+                public and local forms; the crawler uses synthetic values and
+                never infers an end user&apos;s choice.
+              </p>
+              <p className="fixture-authorities-boundary">
+                Never authorized here: CAPTCHA solving, credentials or login,
+                payment data, or end-user files. Those remain disqualification
+                or approved-execution boundaries.
+              </p>
             </div>
           )}
-          <div className={`safety-callout ${executionMode === "live" ? "live" : ""}`}>
-            <span>{executionMode === "live" ? "!" : "✓"}</span>
+          <div
+            className={`safety-callout ${
+              executionMode === "fixture_submit" ? "live" : ""
+            }`}
+          >
+            <span>{executionMode === "fixture_submit" ? "!" : "✓"}</span>
             <div>
               <strong>
-                {executionMode === "live"
-                  ? "Live mode can create a backend record"
-                  : "Final submission remains blocked"}
+                {executionMode === "fixture_submit"
+                  ? "Terminal submission is enabled for localhost"
+                  : "Terminal submission remains blocked"}
               </strong>
               <p>
-                {executionMode === "live"
-                  ? "Synthetic values and state screenshots are still stored, but the final action is permitted after explicit approval."
-                  : "Synthetic entry may trigger same-origin validation or autosave requests. The completed state is captured before the final submit control."}
+                {executionMode === "fixture_submit"
+                  ? "The crawler will submit synthetic values and capture the resulting state. The API enforces the loopback-only boundary."
+                  : "The LLM decides actions during generation and stores the script. Validation replay is deterministic and stops before terminal submission."}
               </p>
             </div>
           </div>
@@ -1074,17 +2203,13 @@ function LaunchModal({
             <button
               type="submit"
               className="primary-button"
-              disabled={
-                busy ||
-                (executionMode === "live" &&
-                  (!liveApproved || liveConfirmation !== "SUBMIT"))
-              }
+              disabled={busy}
             >
               {busy
                 ? "Starting…"
-                : executionMode === "live"
-                  ? "Launch live submission"
-                  : "Launch dry run"}{" "}
+                : executionMode === "fixture_submit"
+                  ? "Launch and submit test"
+                  : "Launch probe"}{" "}
               <span>→</span>
             </button>
           </div>
@@ -1199,7 +2324,7 @@ function TraversalSettingsPanel({
     {
       obstacle: "Final submission",
       behavior:
-        "Dry run captures completed values and stops. Live mode submits only after explicit per-run approval",
+        "Phase 1 Probe captures completed values and stops at the terminal boundary. Approved-live execution belongs to Phase 2.",
       disposition: "Review",
     },
     {
@@ -1311,7 +2436,7 @@ function TraversalSettingsPanel({
           <SettingsToggle
             checked={draft.advanceFormSteps}
             label="Advance intermediate form steps"
-            detail="Use Next, Continue, Review, and equivalent controls. Dry run stops at the final submit boundary."
+            detail="Use only the selected form script's declared intermediate advances. Phase 1 stops at the terminal submit boundary."
             onChange={(value) => setBoolean("advanceFormSteps", value)}
           />
         </article>
@@ -1389,9 +2514,9 @@ function TraversalSettingsPanel({
           <div className="settings-locked">
             <span>LOCKED</span>
             <p>
-              Autonomous form submissions remain blocked. The crawler grants a short
-              submit window only for a classified intermediate step, or for the final
-              action after explicit Live-mode approval.
+              Autonomous form submissions remain blocked. Phase 1 grants a short
+              submit window only for a classified intermediate step; terminal
+              submission authority does not exist in this phase.
             </p>
           </div>
         </article>
@@ -1513,8 +2638,8 @@ function TraversalSettingsPanel({
             />
             <small>
               The LLM proposes values, branches, and advance classifications. Hard
-              enforcement still owns CAPTCHA, credentials, files, legal acceptance,
-              payment, dry-run final blocking, and Live approval.
+              enforcement owns CAPTCHA, credentials, files, legal acceptance,
+              payment, and the Phase 1 terminal block.
             </small>
           </label>
         </article>
@@ -1764,8 +2889,9 @@ export function ControlPlane() {
     urls: string[],
     mode: ExecutionMode,
     browserMode: BrowserMode,
-    liveApproved: boolean,
-    liveConfirmation: string
+    allowLocalTargets: boolean,
+    discoverRelatedPages: boolean,
+    fixtureAuthorities: FixtureAuthorities
   ) {
     setLaunching(true);
     try {
@@ -1776,20 +2902,23 @@ export function ControlPlane() {
           urls,
           mode,
           browserMode,
-          liveApproved,
-          liveConfirmation,
+          allowLocalTargets,
+          discoverRelatedPages,
+          fixtureAuthorities,
         }),
       });
       const data = (await response.json()) as { run?: FormRun; error?: string };
       if (!response.ok || !data.run) throw new Error(data.error ?? "Unable to launch.");
       setRuns((current) => [data.run!, ...current]);
       setActiveRun(data.run);
-      setActiveTab("Report");
+      setActiveTab("Traversal");
       setReport(null);
       setSelectedNode(data.run.nodes[0]?.id ?? "welcome");
       setLaunchOpen(false);
       setToast(
-        `${browserMode === "headful" ? "Visible" : "Headless"} ${mode === "live" ? "live submission" : "dry run"} launched for ${urls.length} target${urls.length === 1 ? "" : "s"}.`
+        `${browserMode === "headful" ? "Visible" : "Headless"} ${
+          mode === "fixture_submit" ? "localhost submission test" : "Phase 1 probe"
+        } launched for ${urls.length} target${urls.length === 1 ? "" : "s"}.`
       );
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Unable to launch session.");
@@ -1887,10 +3016,21 @@ export function ControlPlane() {
                   ? "Connecting"
                   : "Crawler API unavailable"}
             </div>
+            {runtime?.generationMode === "forced_fresh" && (
+              <div className="environment-pill audit-mode">
+                <span />
+                Fresh-generation audit mode
+              </div>
+            )}
             {surface === "runs" && (
-              <button className="primary-button" onClick={() => setLaunchOpen(true)}>
-                <span className="plus">+</span> New crawl
-              </button>
+              <>
+                <a className="secondary-button console-link" href="/api-console">
+                  API console
+                </a>
+                <button className="primary-button" onClick={() => setLaunchOpen(true)}>
+                  <span className="plus">+</span> New crawl
+                </button>
+              </>
             )}
           </div>
         </header>
@@ -1933,7 +3073,11 @@ export function ControlPlane() {
                     </>
                   )}
                   <span>·</span>
-                  <span>{activeRun.mode === "live" ? "Live submission" : "Dry run"}</span>
+                  <span>
+                    {activeRun.mode === "fixture_submit"
+                      ? "Localhost submit test"
+                      : "Phase 1 Probe"}
+                  </span>
                 </div>
               </div>
             </div>
@@ -1972,11 +3116,25 @@ export function ControlPlane() {
             <div><span>✓</span> {activeRun.browserMode ? "Local Playwright render" : "Persisted crawl facts"}</div>
             <div><span>✓</span> Synthetic test values only</div>
             <div><span>✓</span> Every populated state captured locally</div>
-            <div className={activeRun.mode === "live" ? "live" : "locked"}>
-              <span>{activeRun.mode === "live" ? "!" : "⌕"}</span>{" "}
-              {activeRun.mode === "live"
-                ? "Final submission explicitly enabled"
-                : "Final submission blocked"}
+            <div
+              className={
+                activeRun.mode === "fixture_submit" &&
+                (activeRun.stats?.submissionsSucceeded ?? 0) > 0
+                  ? ""
+                  : "locked"
+              }
+            >
+              <span>
+                {activeRun.mode === "fixture_submit" &&
+                (activeRun.stats?.submissionsSucceeded ?? 0) > 0
+                  ? "✓"
+                  : "⌕"}
+              </span>{" "}
+              {activeRun.mode === "fixture_submit"
+                ? (activeRun.stats?.submissionsSucceeded ?? 0) > 0
+                  ? "Localhost test submission verified"
+                  : "Localhost test submission explicitly enabled"
+                : "Terminal submission blocked"}
             </div>
           </div>
 
@@ -2007,6 +3165,9 @@ export function ControlPlane() {
                 error={reportError}
               />
             )}
+            {activeTab === "Traversal" && (
+              <TraversalPanel run={activeRun} report={report} />
+            )}
             {activeTab === "Flow map" && (
               <>
                 <div className="graph-panel">
@@ -2030,7 +3191,9 @@ export function ControlPlane() {
                 {node && <Inspector node={node} />}
               </>
             )}
-            {activeTab === "Field contract" && <FieldsPanel run={activeRun} />}
+            {activeTab === "Field contract" && (
+              <FieldsPanel run={activeRun} report={report} />
+            )}
             {activeTab === "Evidence" && <EvidencePanel nodes={activeRun.nodes} />}
             {activeTab === "Diagnostics" && <DiagnosticsPanel run={activeRun} />}
           </div>

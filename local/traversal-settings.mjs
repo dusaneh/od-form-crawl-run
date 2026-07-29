@@ -1,12 +1,13 @@
-export const TRAVERSAL_SETTINGS_VERSION = 2;
+export const TRAVERSAL_SETTINGS_VERSION = 4;
 
 export const DEFAULT_AGENT_INSTRUCTIONS = [
   "Traverse as much of the public form as possible with synthetic test data.",
   "Classify controls as deterministic, conditional, or human-review actions.",
   "Enter ordinary fields in DOM order and exercise safe select, radio, and checkbox branches.",
   "Use Next, Continue, Review, and equivalent controls to reveal later states.",
-  "In dry-run mode, never activate the final submit control.",
-  "Never solve CAPTCHA, provide real credentials, make a payment, upload a file, sign, or accept legal terms.",
+  "In Phase 1 Probe mode, never activate the terminal submit control.",
+  "Never solve CAPTCHA, provide real credentials, or make a payment.",
+  "Model upload, consent, authorization, terms, review-confirmation, and signature fields with conspicuously synthetic values when needed to expose or verify the form.",
   "Use obviously synthetic values and reserve example.invalid for email and URL values.",
 ].join(" ");
 
@@ -22,7 +23,7 @@ export const DEFAULT_TRAVERSAL_SETTINGS = Object.freeze({
   allowSameOriginReadLikePosts: true,
   pointerAndScrollPriming: true,
   unpredictablePopups: "observe_only",
-  captchaPolicy: "detect_and_handoff",
+  captchaPolicy: "detect_and_disqualify",
   stableWindowMs: 700,
   maxStateWaitMs: 12_000,
   maxActionsPerPage: 10,
@@ -71,7 +72,7 @@ export function normalizeTraversalSettings(input = {}) {
     normalized.unpredictablePopups = "observe_only";
   }
   // CAPTCHA solving and bot-detection evasion are deliberately unsupported.
-  normalized.captchaPolicy = "detect_and_handoff";
+  normalized.captchaPolicy = "detect_and_disqualify";
   normalized.stableWindowMs = boundedInteger(
     input.stableWindowMs,
     DEFAULT_TRAVERSAL_SETTINGS.stableWindowMs,
@@ -102,11 +103,24 @@ export function normalizeTraversalSettings(input = {}) {
     1,
     8
   );
-  normalized.agentInstructions =
+  const suppliedInstructions =
     typeof input.agentInstructions === "string" &&
     input.agentInstructions.trim().length >= 40
       ? input.agentInstructions.trim().slice(0, 8_000)
       : DEFAULT_AGENT_INSTRUCTIONS;
+  normalized.agentInstructions = suppliedInstructions
+    .replace(
+      /In dry-run mode, never activate the final submit control\./gi,
+      "In Phase 1 Probe mode, never activate the terminal submit control."
+    )
+    .replace(
+      /Hard enforcement still owns CAPTCHA, credentials, files, legal acceptance, payment, dry-run final blocking, and Live approval\./gi,
+      "Hard enforcement owns CAPTCHA, credentials, payment, and the Phase 1 terminal block."
+    )
+    .replace(
+      /Never solve CAPTCHA, provide real credentials, make a payment, upload a file, sign, or accept legal terms\./gi,
+      "Never solve CAPTCHA, provide real credentials, or make a payment. Model upload, consent, authorization, terms, review-confirmation, and signature fields with conspicuously synthetic values when needed to expose or verify the form."
+    );
   normalized.version = TRAVERSAL_SETTINGS_VERSION;
   return normalized;
 }

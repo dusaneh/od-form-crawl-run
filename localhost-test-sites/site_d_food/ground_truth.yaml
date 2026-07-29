@@ -1,0 +1,88 @@
+site_id: site_d_food
+org_name: Food For All Community Pantry
+intake_url: http://localhost:9000/site_d_food/intake
+has_intake_form: true
+form_type: food_pantry
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# monthly_income is a sensitive canonical key (always marked sensitive) → sensitive_field flag.
+# All required fields (first_name, last_name, household_size) map to valid canonical keys.
+# Key builder behavior question: does the locator tier fall through to xpath/css on malformed HTML,
+# or does Chromium's lenient DOM parsing still make label-first resolution work?
+expected_red_flag_codes:
+  - sensitive_field
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+fields:
+  # Note: HTML labels have trailing " *" and parentheticals; normalization strips these.
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+
+  - name: address
+    label: Street Address
+    field_type: text
+    required: false
+    is_sensitive: false
+    expected_canonical_key: current_address
+
+  - name: city
+    label: City
+    field_type: text
+    required: false
+    is_sensitive: false
+    expected_canonical_key: city
+
+  - name: zip_code
+    label: Zip Code
+    field_type: text
+    required: false
+    is_sensitive: false
+    expected_canonical_key: zip_code
+
+  - name: household_size
+    label: Household Size
+    field_type: number
+    required: true
+    is_sensitive: false
+    expected_canonical_key: household_size
+
+  # "Number of Adults" — no canonical key for adults count
+  - name: adults_count
+    label: Number of Adults
+    field_type: number
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+
+  # "Number of Children" → num_children canonical key
+  - name: children_count
+    label: Number of Children
+    field_type: number
+    required: false
+    is_sensitive: false
+    expected_canonical_key: num_children
+
+  # monthly_income canonical key → always sensitive → sensitive_field red flag
+  - name: monthly_income
+    label: Monthly Household Income
+    field_type: number
+    required: false
+    is_sensitive: true                   # CORRECTION (2026-07-18): income is sensitive
+    expected_canonical_key: monthly_income

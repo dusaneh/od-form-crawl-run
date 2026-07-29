@@ -1,0 +1,108 @@
+site_id: site_ac_div_intake
+org_name: Riverstone Family Center
+intake_url: http://localhost:9000/site_ac_div_intake/intake
+has_intake_form: true          # the application is built entirely from divs
+form_type: family_assistance
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# DIV-BASED APPLICATION — there is no <form> element anywhere on the page.
+# Real <input>/<select> controls sit inside styled divs under a container with
+# role="form". Sections are marked only by <h2> headings (no fieldsets).
+# The page ends with TWO type="button" controls ("Save Draft" and "Continue")
+# and no progress indicator; nothing on the page states which of them, if
+# either, finalizes the application. Continue shows a completion view once
+# every visible required control is filled; Save Draft only displays a
+# "Draft saved locally." note.
+#
+# Extraction edge cases present on the page:
+#   - preferred_language: a <select> with zero <option> elements
+#   - satisfaction: a five-star rating widget made of spans, with NO input element
+#   - ssn_full: asks for all 9 SSN digits (pattern \d{9})
+expected_abort: null
+
+expected_red_flag_codes:
+  - sensitive_field        # date of birth and monthly income fields
+  - unmappable_field       # full 9-digit SSN
+  - missing_options        # empty preferred_language select
+  - failed_extract         # star widget has no extractable control
+  - ambiguous_submit       # two buttons, neither marked terminal
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+
+  - name: dob
+    label: Date of Birth
+    field_type: date
+    required: false
+    is_sensitive: true
+    expected_canonical_key: date_of_birth
+
+  - name: email
+    label: Email Address
+    field_type: email
+    required: false
+    is_sensitive: false
+    expected_canonical_key: email
+
+  - name: phone
+    label: Phone Number
+    field_type: tel
+    required: false
+    is_sensitive: false
+    expected_canonical_key: phone
+
+  - name: household_size
+    label: Household Size
+    field_type: number
+    required: false
+    is_sensitive: false
+    expected_canonical_key: household_size
+
+  - name: monthly_income
+    label: Monthly Household Income (whole dollars)
+    field_type: text
+    required: false
+    is_sensitive: true
+    expected_canonical_key: monthly_income
+
+  - name: ssn_full
+    label: Social Security Number — all 9 digits
+    field_type: text
+    required: true
+    is_sensitive: true
+    expected_canonical_key: null    # full SSN has no canonical key (ssn_last4 is last-4 only)
+
+  - name: preferred_language
+    label: Preferred Language
+    field_type: select
+    required: false
+    is_sensitive: false
+    expected_canonical_key: primary_language
+    expected_options: []            # the select ships with no options
+
+  - name: certify
+    label: I certify the information provided is accurate.
+    field_type: checkbox
+    required: true
+    is_sensitive: false
+    expected_is_consent: true
+    expected_canonical_key: null

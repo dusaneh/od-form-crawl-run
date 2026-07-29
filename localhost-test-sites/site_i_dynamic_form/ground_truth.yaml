@@ -1,0 +1,164 @@
+site_id: site_i_dynamic_form
+org_name: Northwest Family Resources
+intake_url: http://localhost:9000/site_i_dynamic_form/intake
+has_intake_form: true
+form_type: family_services_intake
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# BRANCHING SITE — THREE independent same-page branches:
+#   applicant_type  (select)   → reveals num_children / youngest_age / partner_name
+#   housing_status  (select)   → reveals unhoused_months / current_shelter / eviction_date
+#   is_veteran      (checkbox) → reveals discharge_type / service_branch
+# Every safe option/state must be probed from an LLM-authored script. These
+# independent reveals are all depth one, so their states are supported.
+# Feature: samepage_branching_multiple (t_samepage_branching_multiple).
+expected_branching:
+  same_page: true
+  max_supported_depth: 1
+  cross_page: false
+  trigger_fields: [applicant_type, housing_status, is_veteran]
+
+# date_of_birth is always sensitive → sensitive_field.
+expected_red_flag_codes:
+  - sensitive_field
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+# Field inventory is scored after the production crawl terminates.
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+
+  - name: dob
+    label: Date of Birth
+    field_type: date
+    required: true
+    is_sensitive: true
+    expected_canonical_key: date_of_birth
+
+  - name: phone
+    label: Phone Number
+    field_type: tel
+    required: false
+    is_sensitive: false
+    expected_canonical_key: phone
+
+  - name: email
+    label: Email Address
+    field_type: email
+    required: false
+    is_sensitive: false
+    expected_canonical_key: email
+
+  - name: zip_code
+    label: ZIP Code
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: zip_code
+
+  - name: applicant_type
+    label: I am applying as
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+    expected_options:
+      - {value: "individual", label: "An individual"}
+      - {value: "family",     label: "A family (with children under 18)"}
+      - {value: "couple",     label: "A couple (no children under 18)"}
+      - {value: "kinship",    label: "A grandparent/kinship caregiver"}
+
+  - name: num_children
+    label: Number of children in the household
+    field_type: number
+    required: false          # required only when its branch is active
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: num_children
+
+  - name: youngest_age
+    label: Age of youngest child
+    field_type: number
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: partner_name
+    label: Partner / co-applicant name
+    field_type: text
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: housing_status
+    label: Current housing situation
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: housing_status
+
+  - name: unhoused_months
+    label: How many months have you been unhoused?
+    field_type: number
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: current_shelter
+    label: Current shelter name
+    field_type: text
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: eviction_date
+    label: If you have an eviction notice, date housing loss expected
+    field_type: date
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: is_veteran
+    label: I am a U.S. military veteran or currently serving
+    field_type: checkbox
+    required: false
+    is_sensitive: false
+    expected_canonical_key: veteran_status
+
+  - name: discharge_type
+    label: Discharge type
+    field_type: select
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: service_branch
+    label: Service branch
+    field_type: select
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null

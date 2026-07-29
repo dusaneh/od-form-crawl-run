@@ -18,6 +18,33 @@ const page = {
       sensitive: true,
       hidden: false,
       options: 0,
+      sectionId: "section_0_0",
+      guidanceIds: ["guidance_0_0"],
+    },
+  ],
+  sections: [
+    {
+      id: "section_0_0",
+      label: "Applicant",
+      ordinal: 1,
+      selector: "#applicant",
+      frameUrl: "https://forms.example.test/apply",
+      questionKeys: ["email"],
+      guidanceIds: ["guidance_0_0"],
+    },
+  ],
+  guidanceRecords: [
+    {
+      id: "guidance_0_0",
+      kind: "instruction",
+      scope: "question",
+      scopeId: "email",
+      text: "Use an address you check regularly.",
+      provenance: {
+        source: "aria-describedby",
+        selector: "#email-help",
+        frameUrl: "https://forms.example.test/apply",
+      },
     },
   ],
   formActions: ["https://forms.example.test/submit"],
@@ -113,6 +140,11 @@ test("OpenAI success returns schema-constrained analysis and redacted events", a
       );
       assert.equal(request.url, "https://api.openai.com/v1/responses");
       const body = JSON.parse(request.options.body);
+      const suppliedFacts = body.input[1].content.find(
+        (item) => item.type === "input_text"
+      ).text;
+      assert.match(suppliedFacts, /Use an address you check regularly/);
+      assert.match(suppliedFacts, /section_0_0/);
       assert.equal(body.store, false);
       assert.equal(body.text.format.type, "json_schema");
       assert.equal(body.text.format.strict, true);

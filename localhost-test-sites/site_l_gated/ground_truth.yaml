@@ -1,0 +1,68 @@
+site_id: site_l_gated
+org_name: Summit Benefits Access
+intake_url: http://localhost:9000/site_l_gated/intake
+has_intake_form: true
+form_type: benefits_application
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# GATED CONTENT — everything is reachable only after prepare_page() scrolls/expands on
+# arrival. The Builder must extract the fields that are initially hidden.
+expected_red_flag_codes: []
+
+# prepare_page behaviors, asserted from the page_prepared event + the resulting config.
+expected_gated_content:
+  scroll_unlocks_consent: true      # terms box scrolled → consent checkbox enabled
+  accordion_field: benefit_type     # collapsed accordion hides this REQUIRED field
+  details_field: household_size      # <details> hides this field
+  iframe_same_origin: true           # /notice iframe recursed + scrolled
+  # NOTE: no cross-origin-iframe assertion. Verified live that Playwright scripts
+  # cross-origin frames (127.0.0.1 vs localhost), so the graceful-skip path is not
+  # reachable from a fixture — iframe_cross_origin_skip is gap_site. See FINDINGS F-2.
+  # A link advertised as an expander (role=button, aria-expanded=false, real href) must
+  # NOT be clicked (link-skip guard), so the crawl is not derailed to /confirmation.
+  expander_link_not_clicked: true
+
+# The accordion + details fields must appear in the extracted config (they were hidden
+# until prepare_page expanded them).
+expected_fields_after_prepare:
+  - benefit_type
+  - household_size
+
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+  - name: household_size
+    label: Household Size
+    field_type: number
+    required: false
+    is_sensitive: false
+    expected_canonical_key: household_size
+  - name: benefit_type
+    label: Which benefit are you applying for?
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: services_requested
+    expected_options:
+      - {value: "snap",     label: "Food assistance (SNAP)"}
+      - {value: "tanf",     label: "Cash assistance (TANF)"}
+      - {value: "medicaid", label: "Medical coverage (Medicaid)"}
+  - name: agree_terms
+    label: I have read and agree to the Terms of Service
+    field_type: checkbox
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+    expected_is_consent: true

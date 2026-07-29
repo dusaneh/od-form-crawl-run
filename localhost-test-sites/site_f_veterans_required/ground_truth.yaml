@@ -1,0 +1,103 @@
+site_id: site_f_veterans_required
+org_name: Veterans Resource Center (Disability Benefits Unit)
+intake_url: http://localhost:9000/site_f_veterans_required/intake
+has_intake_form: true
+form_type: veterans_services
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# This site is identical in structure to site_c_veterans EXCEPT:
+#   disability_rating is REQUIRED (not optional).
+#
+# The key behavioral question being probed: when the Builder SENSE-captures a form
+# that contains a REQUIRED field hidden behind a JS conditional (display:none at
+# page load), does it record the field as required with an unresolved locator?
+# If so, the Runner's pre-flight MUST block — a required field with no resolvable
+# locator is a blocking condition; the Runner cannot guarantee it will fill the
+# field correctly.
+#
+# Expected outcome: disability_rating appears in the config with required=true and
+# locator_status="unresolved".  Runner pre-flight blocks.  The config needs human
+# review (or a branch-aware Builder) before it can be approved for live use.
+#
+# Red flags expected:
+#   unmappable_field — branch_of_service and discharge_status are required but
+#     have no canonical key (same as site_c).
+#   sensitive_field  — disability_rating triggers LLM health-data sensitivity
+#     inference (same as site_c).
+# CONTRACT V2 (2026-07-27): this is a supported one-level same-page branch.
+# The required revealed field must be generated, populated, and verified before
+# terminal submission is eligible.
+expected_branching:
+  same_page: true
+  max_supported_depth: 1
+  cross_page: false
+  trigger_fields: [discharge_status]
+
+expected_red_flag_codes:
+  - unmappable_field
+  - sensitive_field
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+
+  - name: branch_of_service
+    label: Branch of Service
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+
+  - name: discharge_status
+    label: Discharge Status
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+
+  # KEY FIELD: required=true + conditional (display:none at page load).
+  # Builder expected to capture from DOM (required=true is in HTML attributes)
+  # but locator_status should be "unresolved" (no rendered bounding box).
+  # Runner pre-flight MUST block on this field.
+  - name: disability_rating
+    label: VA Disability Rating (%)
+    field_type: number
+    required: true
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: disability_status
+    # Scoring annotation: a PASS on this site requires locator_status="unresolved"
+    # for this field AND the Runner pre-flight would block.  If the Builder marks
+    # it resolved, that would be a false positive (the element has no visual bbox).
+
+  - name: service_start_year
+    label: Year Service Began
+    field_type: number
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+
+  - name: current_housing
+    label: Current Housing Status
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: housing_status

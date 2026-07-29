@@ -1,8 +1,11 @@
 const LEGAL_OR_CONSEQUENTIAL =
-  /\b(?:agree|agreement|attest|attestation|certif|consent|authorize|authorization|terms|privacy policy|signature|sign here|payment|credit card|debit card|bank account|routing number)\b/i;
+  /\b(?:agree|agreement|attest|attestation|certif\w*|consent|authoriz\w*|terms|privacy policy|signature|sign here|payment|credit card|debit card|bank account|routing number)\b/i;
 
 const HUMAN_REVIEW =
   /\b(?:captcha|human verification|security challenge|one[- ]time code|verification code|mfa|2fa|upload|attach(?:ment)?|file)\b/i;
+
+const CREDENTIAL_OR_PAYMENT =
+  /\b(?:password|passcode|username|sign[- ]?in|log[- ]?in|credit card|debit card|card number|card expiry|expiration|cvv|cvc|security code|application fee|payment|bank account|routing number)\b/i;
 
 function clampText(value, descriptor) {
   const maximum = Number.parseInt(String(descriptor.maxLength || ""), 10);
@@ -30,6 +33,9 @@ export function classifyFieldSafety(descriptor) {
     descriptor.readOnly ||
     descriptor.hidden ||
     descriptor.type === "file" ||
+    descriptor.type === "password" ||
+    /^cc-/i.test(String(descriptor.autocomplete || "")) ||
+    CREDENTIAL_OR_PAYMENT.test(text) ||
     HUMAN_REVIEW.test(text)
   ) {
     return {
@@ -38,7 +44,6 @@ export function classifyFieldSafety(descriptor) {
     };
   }
   if (
-    ["checkbox", "radio", "switch"].includes(descriptor.type) &&
     LEGAL_OR_CONSEQUENTIAL.test(text)
   ) {
     return {
@@ -59,13 +64,20 @@ export function deterministicTestValue(descriptor, sequence = 0) {
   const type = String(descriptor.type || descriptor.control || "text").toLowerCase();
   const suffix = String(sequence + 1).padStart(2, "0");
 
-  if (["checkbox", "radio", "switch"].includes(type)) return "true";
+  if (type === "radio") {
+    const option = (descriptor.groupOptions || []).find(
+      (candidate) =>
+        !candidate.disabled && String(candidate.value || "").trim()
+    );
+    return option ? String(option.value) : "";
+  }
+  if (["checkbox", "switch"].includes(type)) return "true";
   if (type === "select" || descriptor.tag === "select") {
     const option = firstEnabledOption(descriptor);
     return option ? String(option.value) : "";
   }
   if (type === "email" || /\bemail\b/.test(label)) {
-    return `formweave.test+${suffix}@example.invalid`;
+    return "formweave.test@example.invalid";
   }
   if (type === "url" || /\bwebsite|url\b/.test(label)) {
     return "https://example.invalid/formweave-test";
@@ -85,6 +97,20 @@ export function deterministicTestValue(descriptor, sequence = 0) {
     const minimum = Number(descriptor.min ?? 0);
     const maximum = Number(descriptor.max ?? 100);
     return String(Math.round((minimum + maximum) / 2));
+  }
+  if (
+    /\[A-Z\]\{2\}.*\[0-9\]\{4\}/.test(
+      String(descriptor.pattern || "")
+    )
+  ) {
+    return "AB1234";
+  }
+  const digitLength = String(descriptor.pattern || "").match(
+    /(?:\\d|\[0-9\])\{(\d+)\}/
+  );
+  if (digitLength) {
+    const length = Math.max(1, Math.min(Number(digitLength[1]), 30));
+    return "1234567890".repeat(Math.ceil(length / 10)).slice(0, length);
   }
   if (
     type === "number" ||

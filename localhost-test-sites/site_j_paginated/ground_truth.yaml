@@ -1,0 +1,149 @@
+site_id: site_j_paginated
+org_name: Riverside Community Services
+intake_url: http://localhost:9000/site_j_paginated/intake
+has_intake_form: true
+form_type: general_intake
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# 3-PAGE PAGINATED FORM. Added in Phase 3 (site_j had no ground truth before).
+# Primary fixture for: multipage_traversal, terminal_submit_correctness,
+# progress_indicator_corroboration, admin_field_detection, repeatable_rows,
+# file_max_files_single, server_roundtrip_detection.
+expected_red_flag_codes: []          # tolerant: LLM may add unmappable_field for admin fields
+
+expected_form_metadata:
+  needs_consent: true                # consent checkbox on page 3
+  has_file_upload: true              # single file upload on page 2
+  contains_admin_fields: true        # assistance / referral / signature / review-confirm (page 3)
+  contains_failed_extractions: false
+
+# Pages: 3 steps, terminal submit on the last, GET navigation = server round-trip.
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: false
+    advance_is_server_roundtrip: true
+  - page_index: 1
+    is_terminal_submit: false
+    advance_is_server_roundtrip: true
+  - page_index: 2
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+# Sections across the 3 pages (page 2 has a repeatable Household Members group).
+expected_sections:
+  - text: Household Details
+    multiple_rows: false
+  - text: Household Members
+    multiple_rows: true              # repeatable, add-another, max 5
+  - text: Supporting Documents
+    multiple_rows: false
+
+expected_field_flags:
+  - name: supporting_document
+    field_type: file
+    expected_file_constraints:
+      max_files: 1                   # single (non-multiple)
+
+# Full field list across the 3 pages (expanded 2026-07-18 from the original 3-field
+# stub). Page 2 has a repeatable Household Members group; page 3 carries the admin
+# fields (assistance / referral / signature / review-confirm) which are about assisted
+# completion, not client data, and are therefore deliberately unmappable.
+fields:
+  # ── Page 1 ──
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+  - name: dob
+    label: Date of Birth
+    field_type: date
+    required: false
+    is_sensitive: true
+    expected_canonical_key: date_of_birth
+  - name: phone
+    label: Phone Number
+    field_type: tel
+    required: false
+    is_sensitive: false
+    expected_canonical_key: phone
+  # ── Page 2 ──
+  - name: household_size
+    label: Household Size
+    field_type: number
+    required: false
+    is_sensitive: false
+    expected_canonical_key: household_size
+  - name: current_situation
+    label: Current Situation
+    field_type: select
+    required: true
+    is_sensitive: false
+    # canonical_key intentionally UNSPECIFIED — housing_status vs unmappable is LLM-judged
+    # and varies run-to-run; reported informationally, not graded.
+  - name: member_name
+    label: Member Name
+    field_type: text
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null        # repeatable Household Members row — unmappable
+  - name: member_relationship
+    label: Relationship
+    field_type: select
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null        # repeatable row — unmappable
+  - name: supporting_document
+    label: Supporting Document
+    field_type: file
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+  # ── Page 3 ──
+  - name: email
+    label: Email Address
+    field_type: email
+    required: false
+    is_sensitive: false
+    expected_canonical_key: email
+  - name: assistance
+    label: Is anyone helping you complete this application?
+    field_type: select
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null        # admin (assisted completion) → unmappable
+  - name: referral_source
+    label: How did you hear about this service?
+    field_type: select
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null        # admin field → unmappable (referral_source is a
+                                        # real key, but this question is about us assisting)
+  - name: signature
+    label: Type your full name to sign
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null        # admin (signature) → unmappable
+  - name: review_confirm
+    label: Does the information above look correct?
+    field_type: checkbox
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null        # admin (confirmation) → unmappable
+  - name: consent
+    label: I have read and agree to the consent and privacy notice above.
+    field_type: checkbox
+    required: true
+    is_sensitive: false
+    expected_is_consent: true
+    expected_canonical_key: null

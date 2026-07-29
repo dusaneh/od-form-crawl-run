@@ -1,0 +1,57 @@
+site_id: site_y_readback_echo
+org_name: Meadowbrook Housing Trust
+intake_url: http://localhost:9000/site_y_readback_echo/intake
+has_intake_form: true
+form_type: housing_assistance
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# READBACK ECHO SITE — a 2-page LINEAR form. Page 1 collects full_name and
+# monthly_income; page 2 echoes the entered income back as plain display text
+# ("Monthly Household Income: 2500"). The echo is NOT branching (no
+# conditional phrasing, and the echo values are handled by the echo
+# false-positive filter) — the crawl must complete. The assertable behavior is
+# MASKING: control-bbox masking cannot see a text echo, so capture_screenshot's
+# echo masking (sensitive_values / _FIND_ECHO_RECTS_JS) must black it out in
+# the stored step-2 evidence screenshot. The fixture styles no pure-black
+# anywhere, so a solid black run in the step-2 PNG can only be a mask.
+# Feature: readback_echo_masking (t_readback_echo_masking).
+expected_abort: null
+
+# monthly_income is always sensitive → sensitive_field.
+expected_red_flag_codes:
+  - sensitive_field
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: false
+    advance_is_server_roundtrip: true   # GET action to /intake_p2
+  - page_index: 1
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false  # posts to "#"
+
+fields:
+  - name: full_name
+    label: Full Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null   # no full-name canonical key exists
+
+  - name: monthly_income
+    label: Monthly Household Income (whole dollars)
+    field_type: text
+    required: true
+    is_sensitive: true
+    expected_canonical_key: monthly_income
+
+  # Page 2. "I confirm the information above is accurate."
+  # LLM VARIANCE: may be tagged is_consent and/or admin_field (review
+  # confirmation) — do not hard-assert either flag.
+  - name: confirm_accurate
+    label: I confirm the information above is accurate.
+    field_type: checkbox
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null

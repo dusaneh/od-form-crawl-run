@@ -1,0 +1,194 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FormWeave — Kick Off Form Run",
+    "version": "1.0.0",
+    "description": "Starts one execution of an approved crawl-scoped form and returns the execution ID needed by the execution-status API."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8787",
+      "description": "Local FormWeave API"
+    }
+  ],
+  "paths": {
+    "/api/forms/{formId}/runs": {
+      "post": {
+        "operationId": "startFormRun",
+        "summary": "Kick off a form run",
+        "description": "The form must already be approved. Build data from this exact form ID's inputSchema. submit=false populates and verifies without the terminal action; submit=true authorizes terminal submission.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/FormId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRunRequest"
+              },
+              "example": {
+                "data": {
+                  "full_name": "API Test User",
+                  "zip_code": "97035",
+                  "consent": true
+                },
+                "submit": true,
+                "browserMode": "headless"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Accepted. Save execution.executionId and pass it to GET /api/executions/{executionId}.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartRunResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "FormId": {
+        "name": "formId",
+        "in": "path",
+        "required": true,
+        "description": "Approved crawl-scoped form ID.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "StartRunRequest": {
+        "type": "object",
+        "required": [
+          "data",
+          "submit"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "description": "User values keyed exactly as required by GET /api/forms/{formId}'s inputSchema. A file field uses {filename, contentType, contentBase64}.",
+            "additionalProperties": true
+          },
+          "submit": {
+            "type": "boolean",
+            "description": "Whether to authorize the generated script's terminal submit action."
+          },
+          "browserMode": {
+            "type": "string",
+            "enum": [
+              "headless",
+              "headful"
+            ],
+            "default": "headless"
+          }
+        },
+        "additionalProperties": false
+      },
+      "StartRunResponse": {
+        "type": "object",
+        "required": [
+          "execution"
+        ],
+        "properties": {
+          "execution": {
+            "$ref": "#/components/schemas/QueuedExecution"
+          }
+        }
+      },
+      "QueuedExecution": {
+        "type": "object",
+        "required": [
+          "executionId",
+          "formId",
+          "status"
+        ],
+        "properties": {
+          "executionId": {
+            "type": "string",
+            "description": "Server-generated ID for this individual run attempt."
+          },
+          "formId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "example": "running"
+          },
+          "outcome": {
+            "type": "string",
+            "example": "pending"
+          },
+          "submit": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": true
+      },
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid data or submit value.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The form ID does not exist.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "The form is not approved or the approval does not match the pinned script identity. Common codes: form_not_approved and approval_version_mismatch.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      }
+    }
+  }
+}

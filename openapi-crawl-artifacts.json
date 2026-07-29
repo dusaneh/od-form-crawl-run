@@ -1,0 +1,292 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FormWeave — Get Report, Schema, and Screenshots",
+    "version": "1.0.0",
+    "description": "Retrieves the crawl report, the executable input schema for a crawl-scoped form ID, and individual screenshot evidence."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8787",
+      "description": "Local FormWeave API"
+    }
+  ],
+  "paths": {
+    "/api/runs/{runId}/report": {
+      "get": {
+        "operationId": "getCrawlReport",
+        "summary": "Get the completed crawl report",
+        "description": "Call after the status API returns reportAvailable=true. Read formDefinitions[].formId for the schema and approval calls. Evidence URL values in the report point to the screenshot endpoint below.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Crawl report.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlReport"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/ArtifactNotFound"
+          }
+        }
+      }
+    },
+    "/api/forms/{formId}": {
+      "get": {
+        "operationId": "getFormSchema",
+        "summary": "Get the form record and run input schema",
+        "description": "Use the exact crawl-scoped formId returned by the crawl. Build the future run data object from form.inputSchema.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/FormId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Form metadata, eligibility, approval state, script identity, and JSON Schema.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FormResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/FormNotFound"
+          }
+        }
+      }
+    },
+    "/api/runs/{runId}/evidence/{evidenceId}": {
+      "get": {
+        "operationId": "getScreenshotEvidence",
+        "summary": "Get one screenshot",
+        "description": "Use the relative evidence URL supplied by the report. The response is image bytes, not JSON.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          },
+          {
+            "$ref": "#/components/parameters/EvidenceId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Screenshot evidence.",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "contentEncoding": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "contentEncoding": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "contentEncoding": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/ArtifactNotFound"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "RunId": {
+        "name": "runId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "FormId": {
+        "name": "formId",
+        "in": "path",
+        "required": true,
+        "description": "Crawl-scoped form ID from formDefinitions or crawl formIds.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "EvidenceId": {
+        "name": "evidenceId",
+        "in": "path",
+        "required": true,
+        "description": "Evidence filename stem supplied by the report evidence URL.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "CrawlReport": {
+        "type": "object",
+        "required": [
+          "id",
+          "pages",
+          "contract",
+          "findings"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "stats": {
+            "type": "object",
+            "description": "Page, field, screenshot, action, and submission counts.",
+            "additionalProperties": true
+          },
+          "pages": {
+            "type": "array",
+            "description": "Observed pages, fields, state evidence, and evidence URLs.",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "contract": {
+            "type": "array",
+            "description": "Observed field contract.",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "formDefinitions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "formId"
+              ],
+              "properties": {
+                "formId": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "targetUrl": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "FormResponse": {
+        "type": "object",
+        "required": [
+          "form"
+        ],
+        "properties": {
+          "form": {
+            "$ref": "#/components/schemas/FormRecord"
+          }
+        }
+      },
+      "FormRecord": {
+        "type": "object",
+        "required": [
+          "formId",
+          "status",
+          "inputSchema"
+        ],
+        "properties": {
+          "formId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "eligibility": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "description": "JSON Schema for data sent to POST /api/forms/{formId}/runs.",
+            "additionalProperties": true
+          },
+          "script": {
+            "type": "object",
+            "description": "Generated script version and immutable identity.",
+            "additionalProperties": true
+          },
+          "approval": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "responses": {
+      "ArtifactNotFound": {
+        "description": "The report or screenshot is not available.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "FormNotFound": {
+        "description": "No form exists for this crawl-scoped form ID.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      }
+    }
+  }
+}

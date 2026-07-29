@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 const sharedStyles = `
   :root { color-scheme: light; font: 16px/1.45 system-ui, sans-serif; }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; color: #17372c; background: #eef5f0; }
   header, footer { padding: 18px 6vw; color: white; background: #123d30; }
   nav { display: flex; flex-wrap: wrap; gap: 16px; }
@@ -61,6 +62,10 @@ const routes = new Map([
             <li><a href="/fixtures/conditional-wizard">Conditional multi-step form</a></li>
             <li><a href="/fixtures/automation-gates">Consent and overlay gated application</a></li>
             <li><a href="/fixtures/captcha-gate">Human-verification review fixture</a></li>
+            <li><a href="/fixtures/styled-label-interception">Styled-label pointer interception</a></li>
+            <li><a href="/fixtures/probe-defeating-widget">Probe-defeating choice widget</a></li>
+            <li><a href="/fixtures/interaction-gated-delay">Interaction-gated delayed form</a></li>
+            <li><a href="/fixtures/decoy-before-real">Decoy forms before real application</a></li>
           </ul>
           <a href="/about">Read our annual report</a>
         </main>`
@@ -288,9 +293,13 @@ const routes = new Map([
                     document.querySelector("#updates-email").hidden = !field.checked;
                   }
                   if (field.name === "contact_method") {
-                    document.querySelector("#email-contact").hidden =
+                    const emailLabel = document.querySelector("#email-contact");
+                    const phoneLabel = document.querySelector("#phone-contact");
+                    emailLabel.hidden = field.value !== "email";
+                    phoneLabel.hidden = field.value !== "phone";
+                    emailLabel.querySelector("input").disabled =
                       field.value !== "email";
-                    document.querySelector("#phone-contact").hidden =
+                    phoneLabel.querySelector("input").disabled =
                       field.value !== "phone";
                   }
                   autosave(field.name);
@@ -345,8 +354,8 @@ const routes = new Map([
                       <option value="phone">Phone</option>
                     </select>
                   </label>
-                  <label id="email-contact" hidden>Contact email <input name="contact_email" type="email" required></label>
-                  <label id="phone-contact" hidden>Contact phone <input name="contact_phone" type="tel" required></label>
+                  <label id="email-contact" hidden>Contact email <input name="contact_email" type="email" required disabled></label>
+                  <label id="phone-contact" hidden>Contact phone <input name="contact_phone" type="tel" required disabled></label>
                   <label>Service address <input name="service_address" autocomplete="street-address" required></label>
                   <label>Service ZIP <input name="service_zip" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" required></label>
                   <button type="submit">Review application</button>
@@ -371,6 +380,21 @@ const routes = new Map([
             stepOne();
           </script>`,
         }
+      ),
+  ],
+  [
+    "/fixtures/failing-submit",
+    () =>
+      layout(
+        "Rejected synthetic submission",
+        `<main>
+          <h1>Rejected fixture application</h1>
+          <p>This fixture reaches a terminal boundary whose rendered response explicitly reports failure.</p>
+          <form method="post" action="/fixtures/live-submit-failure">
+            <label>Fixture reference <input name="fixture_reference" pattern="[A-Z]{2}[0-9]{4}" required></label>
+            <button type="submit">Submit rejected test application</button>
+          </form>
+        </main>`,
       ),
   ],
   [
@@ -516,6 +540,118 @@ const routes = new Map([
       ),
   ],
   [
+    "/fixtures/styled-label-interception",
+    () =>
+      layout(
+        "Styled label interception fixture",
+        `<main>
+          <h1>Styled housing preference</h1>
+          <p>The native choice is visually hidden beneath a label that receives pointer events.</p>
+          <form method="post" action="/fixtures/write-probe">
+            <fieldset>
+              <legend>Housing type</legend>
+              <label class="slds-radio" style="position:relative;padding:12px;border:1px solid #789">
+                <input style="position:absolute;opacity:.01;pointer-events:none" type="radio" name="housing_type" value="temporary" required>
+                <span style="position:relative;z-index:2">Temporary housing</span>
+              </label>
+              <label class="slds-radio" style="position:relative;padding:12px;border:1px solid #789">
+                <input style="position:absolute;opacity:.01;pointer-events:none" type="radio" name="housing_type" value="permanent">
+                <span style="position:relative;z-index:2">Permanent housing</span>
+              </label>
+            </fieldset>
+            <label>Fixture reference <input name="fixture_reference" pattern="[0-9]{10}" required></label>
+            <button type="submit">Submit application</button>
+          </form>
+        </main>`
+      ),
+  ],
+  [
+    "/fixtures/probe-defeating-widget",
+    () =>
+      layout(
+        "Probe-defeating widget fixture",
+        `<main>
+          <h1>JavaScript choice control</h1>
+          <form method="post" action="/fixtures/write-probe">
+            <div role="radiogroup" aria-label="Assistance track">
+              <div role="radio" name="assistance_track" data-value="rapid" aria-checked="false" tabindex="0">Rapid rehousing</div>
+              <div role="radio" name="assistance_track" data-value="prevention" aria-checked="false" tabindex="0">Eviction prevention</div>
+            </div>
+            <label>Case number <input name="case_number" required></label>
+            <button type="submit">Submit application</button>
+          </form>
+        </main>`,
+        {
+          scripts: `<script>
+            document.querySelectorAll('[role="radio"]').forEach((choice) => {
+              choice.addEventListener("click", (event) => {
+                if (event.detail !== 2) return;
+                document.querySelectorAll('[role="radio"]').forEach((item) => item.setAttribute("aria-checked", "false"));
+                choice.setAttribute("aria-checked", "true");
+              });
+            });
+          </script>`,
+        }
+      ),
+  ],
+  [
+    "/fixtures/interaction-gated-delay",
+    () =>
+      layout(
+        "Interaction-gated delayed form",
+        `<main>
+          <h1>Delayed trusted-input application</h1>
+          <p id="interaction-instruction">Move the pointer to initialize the public form.</p>
+          <div id="delayed-root">Waiting for trusted interaction…</div>
+        </main>`,
+        {
+          scripts: `<script>
+            let started = false;
+            window.addEventListener("pointermove", (event) => {
+              if (started || !event.isTrusted) return;
+              started = true;
+              setTimeout(() => {
+                document.querySelector("#delayed-root").innerHTML = \`
+                  <form method="post" action="/fixtures/write-probe">
+                    <label>Program code <input name="program_code" pattern="[A-Z]{2}[0-9]{4}" required></label>
+                    <label>Applicant email <input type="email" name="applicant_email" required></label>
+                    <button type="submit">Submit application</button>
+                  </form>\`;
+              }, 450);
+            }, { once: true });
+          </script>`,
+        }
+      ),
+  ],
+  [
+    "/fixtures/decoy-before-real",
+    () =>
+      layout(
+        "Decoys before application fixture",
+        `<main>
+          <h1>Housing stabilization application</h1>
+          <form aria-label="Site search" action="/fixtures/decoy-before-real">
+            <label>Search this site <input type="search" name="q"></label>
+            <button type="submit">Search</button>
+          </form>
+          <form aria-label="Newsletter signup" action="/fixtures/write-probe">
+            <label>Newsletter email <input type="email" name="newsletter_email"></label>
+            <button type="submit">Subscribe</button>
+          </form>
+          <div role="form" aria-label="Chat widget">
+            <label>Chat message <input name="chat_message"></label>
+          </div>
+          <section aria-label="Real housing application">
+            <form id="real-housing-application" method="post" action="/fixtures/write-probe">
+              <label>Applicant first name <input name="applicant_first_name" required></label>
+              <label>Household income <input name="household_income" inputmode="numeric" required></label>
+              <button type="submit">Submit application</button>
+            </form>
+          </section>
+        </main>`
+      ),
+  ],
+  [
     "/about",
     () =>
       layout(
@@ -597,6 +733,30 @@ export async function startFixtureServer({ host = "127.0.0.1", port = 0 } = {}) 
               <p id="submission-confirmation">The repository-owned fixture accepted the synthetic live-mode submission.</p>
             </main>`
           )
+        );
+      });
+      return;
+    }
+    if (
+      url.pathname === "/fixtures/live-submit-failure" &&
+      request.method === "POST"
+    ) {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      request.on("end", () => {
+        requestRecord.body = body.slice(0, 2_000);
+        send(
+          response,
+          422,
+          layout(
+            "Synthetic submission failed",
+            `<main>
+              <h1>Submission failed</h1>
+              <p id="submission-failure">The repository-owned fixture rejected the synthetic submission. Nothing was received.</p>
+            </main>`,
+          ),
         );
       });
       return;

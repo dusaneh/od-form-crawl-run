@@ -1,0 +1,69 @@
+site_id: site_al_ledger_drift
+org_name: Maple Union Resource Exchange
+intake_url: http://localhost:9000/site_al_ledger_drift/intake
+has_intake_form: true
+form_type: resource_match
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# DRIFT HOST WITH A SENSITIVE READBACK — a two-step linear flow.
+#
+# Step 1 (/intake) collects full_name and monthly_income and advances by GET
+# to /intake_p2. Step 2 repeats the entered income amount as plain display
+# text ("Monthly Household Income: 2500"), asks for a confirmation checkbox,
+# and is the terminal step. No styling on step 2 uses pure black (#000)
+# anywhere, so a solid-black rectangle in a rendering of that page can only
+# come from an overlay.
+#
+# Step 1 ships four variant files served at the SAME /intake URL through the
+# server variant switch (GET /site_al_ledger_drift/variant?n=N):
+#   v1 (base)      — full_name + monthly_income
+#   v2             — v1 plus an OPTIONAL preferred_contact_time field
+#   v3             — v1 plus a REQUIRED case_id field
+#   v4             — v1 with the two fields' order swapped; same fields,
+#                    same attributes, different document order
+expected_abort: null
+
+# monthly_income is always sensitive.
+expected_red_flag_codes:
+  - sensitive_field
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: false
+    advance_is_server_roundtrip: true   # GET action to /intake_p2
+  - page_index: 1
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false  # posts to "#"
+
+variants:
+  v2:
+    added_field: {name: preferred_contact_time, required: false}
+  v3:
+    added_field: {name: case_id, required: true}
+  v4:
+    change: field order swapped only
+
+fields:
+  - name: full_name
+    label: Full Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null   # no full-name canonical key exists
+
+  - name: monthly_income
+    label: Monthly Household Income (whole dollars)
+    field_type: text
+    required: true
+    is_sensitive: true
+    expected_canonical_key: monthly_income
+
+  # ---- step 2 ----
+  - name: confirm_accurate
+    label: I confirm the information above is accurate.
+    field_type: checkbox
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null

@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Intake Application &mdash; Northwest Family Resources</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <style>
+    /* JS-conditional visibility. Blocks start hidden and are toggled by the handlers below.
+       display:none is important — the branching detector uses is_visible(), which respects it. */
+    .conditional { display: none; }
+  </style>
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg navbar-dark bg-warning">
+    <div class="container">
+      <a class="navbar-brand text-dark" href="/site_i_dynamic_form/">Northwest Family Resources</a>
+      <div class="navbar navbar-nav">
+        <a class="nav-link text-dark" href="/site_i_dynamic_form/about">About</a>
+        <a class="nav-link text-dark" href="/site_i_dynamic_form/services">Services</a>
+        <a class="nav-link text-dark" href="/site_i_dynamic_form/contact">Contact</a>
+        <a class="nav-link text-dark active" href="/site_i_dynamic_form/intake">Apply</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container mt-5">
+    <div class="col-lg-7 mx-auto">
+      <h1 class="fw-bold text-warning mb-2">Intake Application</h1>
+      <p class="text-muted mb-4">
+        This form adjusts based on your answers. You will only see the questions that
+        apply to your household. Required fields are marked with an asterisk (*).
+      </p>
+
+      <form method="post" action="#" novalidate id="intake-form">
+
+        <!-- ── Section A: Always visible ──────────────────────────────── -->
+        <fieldset class="mb-4">
+          <legend class="h5 fw-bold text-warning">About You</legend>
+
+          <div class="mb-3">
+            <label for="first_name" class="form-label">First Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="first_name" name="first_name" required>
+          </div>
+
+          <div class="mb-3">
+            <label for="last_name" class="form-label">Last Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="last_name" name="last_name" required>
+          </div>
+
+          <div class="mb-3">
+            <label for="dob" class="form-label">Date of Birth <span class="text-danger">*</span></label>
+            <input type="date" class="form-control" id="dob" name="dob" required>
+          </div>
+
+          <div class="mb-3">
+            <label for="phone" class="form-label">Phone Number</label>
+            <input type="tel" class="form-control" id="phone" name="phone">
+          </div>
+
+          <div class="mb-3">
+            <label for="email" class="form-label">Email Address</label>
+            <input type="email" class="form-control" id="email" name="email">
+          </div>
+
+          <div class="mb-3">
+            <label for="zip_code" class="form-label">ZIP Code <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="zip_code" name="zip_code" pattern="[0-9]{5}" required>
+          </div>
+        </fieldset>
+
+        <!-- ── Section B: Household type — reveals family/group sub-fields ──── -->
+        <fieldset class="mb-4">
+          <legend class="h5 fw-bold text-warning">Household</legend>
+
+          <div class="mb-3">
+            <label for="applicant_type" class="form-label">I am applying as <span class="text-danger">*</span></label>
+            <select class="form-select" id="applicant_type" name="applicant_type" required
+                    onchange="onApplicantTypeChange()">
+              <option value="" disabled selected>Select an option</option>
+              <option value="individual">An individual</option>
+              <option value="family">A family (with children under 18)</option>
+              <option value="couple">A couple (no children under 18)</option>
+              <option value="kinship">A grandparent/kinship caregiver</option>
+            </select>
+          </div>
+
+          <!-- Reveals if applicant_type == family OR kinship -->
+          <div class="conditional" id="cond_children" data-shown-when="family,kinship">
+            <div class="mb-3">
+              <label for="num_children" class="form-label">Number of children in the household <span class="text-danger">*</span></label>
+              <input type="number" class="form-control" id="num_children" name="num_children" min="1" max="15">
+            </div>
+            <div class="mb-3">
+              <label for="youngest_age" class="form-label">Age of youngest child</label>
+              <input type="number" class="form-control" id="youngest_age" name="youngest_age" min="0" max="17">
+            </div>
+          </div>
+
+          <!-- Reveals if applicant_type == couple OR family -->
+          <div class="conditional" id="cond_partner" data-shown-when="couple,family">
+            <div class="mb-3">
+              <label for="partner_name" class="form-label">Partner / co-applicant name</label>
+              <input type="text" class="form-control" id="partner_name" name="partner_name">
+            </div>
+          </div>
+        </fieldset>
+
+        <!-- ── Section C: Housing status — reveals shelter/eviction sub-fields ──── -->
+        <fieldset class="mb-4">
+          <legend class="h5 fw-bold text-warning">Housing</legend>
+
+          <div class="mb-3">
+            <label for="housing_status" class="form-label">Current housing situation <span class="text-danger">*</span></label>
+            <select class="form-select" id="housing_status" name="housing_status" required
+                    onchange="onHousingStatusChange()">
+              <option value="" disabled selected>Select an option</option>
+              <option value="housed_stable">Housed and stable</option>
+              <option value="housed_atrisk">Housed but at risk of losing housing</option>
+              <option value="unhoused_shelter">Unhoused, currently staying at a shelter</option>
+              <option value="unhoused_street">Unhoused, unsheltered (street, car, tent)</option>
+              <option value="doubled_up">Doubled up with family or friends</option>
+            </select>
+          </div>
+
+          <!-- Reveals if housing_status starts with "unhoused" -->
+          <div class="conditional" id="cond_unhoused_duration" data-shown-when="unhoused_shelter,unhoused_street">
+            <div class="mb-3">
+              <label for="unhoused_months" class="form-label">How many months have you been unhoused? <span class="text-danger">*</span></label>
+              <input type="number" class="form-control" id="unhoused_months" name="unhoused_months" min="0" max="360">
+            </div>
+          </div>
+
+          <!-- Reveals if housing_status == unhoused_shelter -->
+          <div class="conditional" id="cond_shelter_name" data-shown-when="unhoused_shelter">
+            <div class="mb-3">
+              <label for="current_shelter" class="form-label">Current shelter name</label>
+              <input type="text" class="form-control" id="current_shelter" name="current_shelter">
+            </div>
+          </div>
+
+          <!-- Reveals if housing_status == housed_atrisk -->
+          <div class="conditional" id="cond_eviction" data-shown-when="housed_atrisk">
+            <div class="mb-3">
+              <label for="eviction_date" class="form-label">If you have an eviction notice, date housing loss expected</label>
+              <input type="date" class="form-control" id="eviction_date" name="eviction_date">
+            </div>
+          </div>
+        </fieldset>
+
+        <!-- ── Section D: Veteran checkbox — reveals discharge sub-fields ──── -->
+        <fieldset class="mb-4">
+          <legend class="h5 fw-bold text-warning">Veteran Status</legend>
+
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="is_veteran" name="is_veteran"
+                   onchange="onVeteranChange()">
+            <label class="form-check-label" for="is_veteran">
+              I am a U.S. military veteran or currently serving
+            </label>
+          </div>
+
+          <!-- Reveals only when is_veteran is checked -->
+          <div class="conditional" id="cond_veteran" data-shown-when-checkbox="is_veteran">
+            <div class="mb-3">
+              <label for="discharge_type" class="form-label">Discharge type <span class="text-danger">*</span></label>
+              <select class="form-select" id="discharge_type" name="discharge_type">
+                <option value="" disabled selected>Select an option</option>
+                <option value="honorable">Honorable</option>
+                <option value="general">General (under honorable conditions)</option>
+                <option value="oth">Other than honorable</option>
+                <option value="medical">Medical</option>
+                <option value="dishonorable">Dishonorable</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="service_branch" class="form-label">Service branch</label>
+              <select class="form-select" id="service_branch" name="service_branch">
+                <option value="" disabled selected>Select an option</option>
+                <option value="army">Army</option>
+                <option value="navy">Navy</option>
+                <option value="air_force">Air Force</option>
+                <option value="marines">Marine Corps</option>
+                <option value="coast_guard">Coast Guard</option>
+                <option value="space_force">Space Force</option>
+                <option value="national_guard">National Guard</option>
+              </select>
+            </div>
+          </div>
+        </fieldset>
+
+        <div class="d-grid mt-4">
+          <button type="submit" class="btn btn-warning btn-lg text-dark">Submit Application</button>
+        </div>
+
+        <p class="text-muted small text-center mt-3">
+          Your information is confidential. See our <a href="#">privacy policy</a>.
+        </p>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // Show or hide a conditional block based on whether the current value
+    // matches any of the comma-separated tokens in data-shown-when.
+    function showConditional(id, matches) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.style.display = matches ? "block" : "none";
+    }
+
+    function onApplicantTypeChange() {
+      var val = document.getElementById("applicant_type").value;
+      document.querySelectorAll('[data-shown-when]').forEach(function (el) {
+        var tokens = (el.getAttribute("data-shown-when") || "").split(",");
+        // Only touch blocks that belong to the household section (children/partner)
+        if (el.id === "cond_children" || el.id === "cond_partner") {
+          el.style.display = tokens.includes(val) ? "block" : "none";
+        }
+      });
+    }
+
+    function onHousingStatusChange() {
+      var val = document.getElementById("housing_status").value;
+      // Handle all housing-related conditionals
+      ["cond_unhoused_duration", "cond_shelter_name", "cond_eviction"].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        var tokens = (el.getAttribute("data-shown-when") || "").split(",");
+        el.style.display = tokens.includes(val) ? "block" : "none";
+      });
+    }
+
+    function onVeteranChange() {
+      var checked = document.getElementById("is_veteran").checked;
+      document.getElementById("cond_veteran").style.display = checked ? "block" : "none";
+    }
+  </script>
+
+  <footer class="bg-light text-center py-4 mt-5">
+    <p class="text-muted mb-0">&copy; 2024 Northwest Family Resources &mdash; 815 Pacific Ave, Tacoma, WA 98402</p>
+  </footer>
+</body>
+</html>

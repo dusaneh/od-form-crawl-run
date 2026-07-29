@@ -1,0 +1,52 @@
+site_id: site_x_hidden_choice
+org_name: Crestline Community Fund
+intake_url: http://localhost:9000/site_x_hidden_choice/intake
+has_intake_form: true
+form_type: community_fund_intake
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# HIDDEN NATIVE CHOICE SITE — the contact_channel radio group's native inputs
+# are display:none behind a custom div widget, so locators NEVER RESOLVE and
+# the group cannot be branch-probed at all. Silently skipping it would re-open
+# the certify-branching-as-linear hole. Required behavior: the probe raises
+# probe_actuation_failed with reason locators_unresolved and ABORTS WITHOUT
+# PERSISTING A CONFIG (display-text-demoted fields are excluded — those are
+# verified to have no control at all).
+# Feature: unresolved_choice_fail_loud (t_unresolved_choice_fail_loud).
+expected_abort: probe_actuation_failed
+
+expected_probe_failure_reason: locators_unresolved
+
+expected_red_flag_codes:
+  - probe_actuation_failed
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+# Field inventory for reference — NOT reachable as config assertions (abort).
+fields:
+  - name: full_name
+    label: Full Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null   # no full-name canonical key exists
+
+  - name: zip_code
+    label: ZIP Code
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: zip_code
+
+  # Hidden native radio group (Email / Phone / Mail) behind a custom widget.
+  - name: contact_channel
+    label: Preferred Contact Channel (Choose One)
+    field_type: radio
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null

@@ -1,0 +1,69 @@
+site_id: site_n_payment
+org_name: Meridian Transitional Housing
+intake_url: http://localhost:9000/site_n_payment/intake
+has_intake_form: true
+form_type: housing_assistance
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# ACCESS BARRIER — payment / fee field.
+# The Builder detects the credit-card / application-fee fields and raises payment_field
+# (halting on it). The Runner pre-flight blocks on the payment_field red flag.
+# Feature-harness assertion: payment_field is raised.
+expected_red_flag_codes:
+  - payment_field
+
+expected_payment_field: true
+expected_runner_preflight: abort_preflight
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+# Applicant fields are ordinary intake data; the card fields are unmappable payment
+# fields (expected_canonical_key null).
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+  - name: email
+    label: Email Address
+    field_type: email
+    required: false
+    is_sensitive: false
+    expected_canonical_key: email
+  - name: card_number
+    label: Card Number
+    field_type: text
+    required: true
+    is_sensitive: true                   # card data is sensitive (PCI) — crawl is right
+    expected_canonical_key: null
+  - name: card_expiry
+    label: Expiration (MM/YY)
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+  - name: card_cvv
+    label: Security Code (CVV)
+    field_type: text
+    required: true
+    is_sensitive: true                   # CVV is sensitive card data
+    expected_canonical_key: null
+  - name: amount
+    label: Amount Due
+    field_type: text
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null

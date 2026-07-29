@@ -1,0 +1,75 @@
+site_id: site_a_shelter
+org_name: Hope House Shelter
+intake_url: http://localhost:9000/site_a_shelter/intake
+has_intake_form: true
+form_type: shelter_intake
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# Expected red flag codes the Builder should raise (unique codes; multiple instances collapse to one).
+# date_of_birth is always sensitive → sensitive_field.
+# current_situation is the only required field that may be unmappable; if the LLM maps it to
+# housing_status it won't raise unmappable_field — so we only guarantee sensitive_field.
+expected_red_flag_codes:
+  - sensitive_field
+
+# Expected page sequence.  All test-site forms are single-page; action="#" means no real roundtrip.
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+
+  - name: dob
+    label: Date of Birth
+    field_type: date
+    required: false
+    # CORRECTION (2026-07-18): DOB is always sensitive (matches this file's own
+    # expected sensitive_field red flag and the always-sensitive key list).
+    is_sensitive: true
+    expected_canonical_key: date_of_birth
+
+  - name: phone
+    label: Phone Number
+    field_type: tel
+    required: false
+    is_sensitive: false
+    expected_canonical_key: phone
+
+  - name: email
+    label: Email Address
+    field_type: email
+    required: false
+    is_sensitive: false
+    expected_canonical_key: email
+
+  - name: household_size
+    label: Household Size
+    field_type: number
+    required: false
+    is_sensitive: false
+    expected_canonical_key: household_size
+
+  # "Current Situation" with options unhoused/housed/at-risk — closest canonical key is housing_status.
+  # If LLM doesn't map it, canonical_key will be unknown_* and unmappable_field is raised.
+  - name: current_situation
+    label: Current Situation
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: housing_status

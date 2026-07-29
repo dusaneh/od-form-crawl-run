@@ -1,0 +1,190 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FormWeave — Kick Off Crawl",
+    "version": "1.0.0",
+    "description": "Starts one asynchronous crawl and returns the run ID needed by the crawl-status API."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8787",
+      "description": "Local FormWeave API"
+    }
+  ],
+  "paths": {
+    "/api/runs": {
+      "post": {
+        "operationId": "startCrawl",
+        "summary": "Kick off a crawl",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartCrawlRequest"
+              },
+              "example": {
+                "urls": [
+                  "https://example.org/application"
+                ],
+                "name": "Example crawl",
+                "mode": "probe",
+                "browserMode": "headless",
+                "allowLocalTargets": false,
+                "discoverRelatedPages": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Accepted. Save run.id and pass it to GET /api/runs/{runId}.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartCrawlResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "StartCrawlRequest": {
+        "type": "object",
+        "required": [
+          "urls"
+        ],
+        "properties": {
+          "urls": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 12,
+            "items": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Starting HTTP or HTTPS URLs."
+          },
+          "name": {
+            "type": "string",
+            "description": "Optional display name."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "probe",
+              "fixture_submit"
+            ],
+            "default": "probe",
+            "description": "probe stops before terminal submission. fixture_submit may submit only an explicitly allowed loopback fixture."
+          },
+          "browserMode": {
+            "type": "string",
+            "enum": [
+              "headless",
+              "headful"
+            ],
+            "default": "headless"
+          },
+          "allowLocalTargets": {
+            "type": "boolean",
+            "default": false,
+            "description": "Allows loopback targets such as localhost. Other private-network targets remain blocked."
+          },
+          "discoverRelatedPages": {
+            "type": "boolean",
+            "default": false,
+            "description": "Allows bounded same-origin page discovery."
+          }
+        },
+        "additionalProperties": false
+      },
+      "StartCrawlResponse": {
+        "type": "object",
+        "required": [
+          "run"
+        ],
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/QueuedRun"
+          }
+        }
+      },
+      "QueuedRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "progress"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Server-generated crawl/run ID."
+          },
+          "crawlId": {
+            "type": "string",
+            "description": "Alias of id."
+          },
+          "status": {
+            "type": "string",
+            "example": "queued"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "progress": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": true
+      },
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid URL, mode, or target boundary.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "A required generated script or authority is unavailable.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      }
+    }
+  }
+}

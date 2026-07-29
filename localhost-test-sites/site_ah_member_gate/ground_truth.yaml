@@ -1,0 +1,45 @@
+site_id: site_ah_member_gate
+org_name: Ironwood Veterans Outreach
+intake_url: http://localhost:9000/site_ah_member_gate/intake
+has_intake_form: true          # a sign-in gate is present; the application sits behind it
+form_type: login_gated
+requires_login: true
+has_captcha: false
+pdf_links: []
+
+# DIV-MODAL SIGN-IN GATE WITH PER-VISIT SESSION VALUE — the page is covered by
+# a fixed overlay dialog (role="dialog") built from divs, with NO <form>
+# element: a Member ID field, a Passcode field, a hidden _session input, and a
+# type="button" Sign In control. The server writes a fresh token into the
+# hidden _session input on every load of /intake, so two fetches of this URL
+# contain different markup. Beneath the overlay, an application preview is
+# visible but every one of its controls carries the disabled attribute.
+# The Sign In button shows a confirmation view once both sign-in fields are
+# filled (any values are accepted client-side).
+expected_abort: null                  # the sign-in gate itself is a capturable page
+expected_login_required: true
+expected_runner_preflight: abort_preflight
+
+expected_red_flag_codes:
+  - login_required
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+# Sign-in inputs (not intake data; expected_canonical_key null).
+fields:
+  - name: member_id
+    label: Member ID or Email
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+
+  - name: passcode
+    label: Passcode
+    field_type: password
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null

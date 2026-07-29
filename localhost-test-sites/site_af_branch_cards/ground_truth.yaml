@@ -1,0 +1,131 @@
+site_id: site_af_branch_cards
+org_name: Harvest Hill Assistance Fund
+intake_url: http://localhost:9000/site_af_branch_cards/intake
+has_intake_form: true
+form_type: financial_assistance
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# SLDS-STYLE CARDS WITH THREE INDEPENDENT ONE-LEVEL REVEALS — the housing
+# radios and the children checkbox are SLDS-style controls: the real input is
+# present with opacity:0 and a styled label layered on top that intercepts
+# pointer clicks; clicking the label toggles the input through the native
+# label→input path. The referral select is a plain native control.
+#   housing_type   (SLDS radio Rent/Own) → Rent reveals landlord_name (required
+#                  when visible) + monthly_rent; Own reveals mortgage_lender
+#   referral_source (native select)      → "Other" reveals a single
+#                  "Please specify" text box (a companion field, not a new topic)
+#   has_children   (SLDS checkbox)       → reveals children_count + school_district
+# Every reveal is depth one — no revealed control reveals anything further.
+expected_branching:
+  same_page: true
+  max_supported_depth: 1
+  cross_page: false
+  trigger_fields: [housing_type, referral_source, has_children]
+
+expected_other_specify:
+  - parent_name: referral_source
+    specify_name: referral_other
+    other_value: other
+
+expected_red_flag_codes: []
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+# Field inventory is scored after the production crawl terminates.
+fields:
+  - name: full_name
+    label: Full Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null   # no full-name canonical key exists
+
+  - name: zip_code
+    label: ZIP Code
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: zip_code
+
+  - name: housing_type
+    label: Housing (Choose One)
+    field_type: radio
+    # CORRECTION (2026-07-28): the rendered group legend explicitly contains
+    # both a leading asterisk and "(required)". The absence of a native
+    # `required` attribute on the SLDS-style radio inputs does not make the
+    # applicant-facing contract optional.
+    required: true
+    is_sensitive: false
+    expected_canonical_key: housing_status
+
+  - name: landlord_name
+    label: Landlord or property manager name
+    field_type: text
+    required: true                 # required whenever its branch is visible
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: monthly_rent
+    label: Monthly rent (whole dollars)
+    field_type: text
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: mortgage_lender
+    label: Mortgage lender
+    field_type: text
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: referral_source
+    label: How did you hear about Harvest Hill?
+    field_type: select
+    required: false
+    is_sensitive: false
+    expected_canonical_key: referral_source
+    expected_options:
+      - {value: "school", label: "My child's school"}
+      - {value: "agency", label: "Another agency"}
+      - {value: "faith",  label: "Faith community"}
+      - {value: "other",  label: "Other"}
+
+  - name: referral_other
+    label: Please specify
+    field_type: text
+    required: true                 # required whenever its branch is visible
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null   # companion specify box for referral_source=other
+
+  - name: has_children
+    label: There are children under 18 in my household
+    field_type: checkbox
+    required: false
+    is_sensitive: false
+    expected_canonical_key: has_children
+
+  - name: children_count
+    label: How many children?
+    field_type: number
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: num_children
+
+  - name: school_district
+    label: School district
+    field_type: text
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null

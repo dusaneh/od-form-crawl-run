@@ -1,0 +1,126 @@
+site_id: site_r_edgecases
+org_name: Anchor Family Services
+intake_url: http://localhost:9000/site_r_edgecases/intake
+has_intake_form: true
+form_type: general_intake
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# EDGE-CASE KITCHEN SINK — single page, no halt (tricky fields are optional or
+# satisfiable). Multiple features share this fixture.
+expected_red_flag_codes:
+  - missing_options       # empty <select> preferred_language
+  - failed_extract        # empty select (deterministic audit)
+  - unmappable_field      # full 9-digit SSN, required
+  - sensitive_field       # SSN → is_sensitive
+
+# Derived form metadata (deterministic post-extraction).
+expected_form_metadata:
+  needs_consent: false
+  has_file_upload: true
+  contains_admin_fields: false
+  contains_failed_extractions: true      # POSITIVE rollup (empty select failed)
+
+# Sections come from h3 headings (nearest-preceding-heading fallback; NO <fieldset>).
+# NONE is repeatable — the fixed member_1/member_2 block has no add-row control.
+expected_sections:
+  - text: Personal Information
+    multiple_rows: false
+  - text: Household Members
+    multiple_rows: false                 # repeatable FALSE-POSITIVE resistance
+  - text: Identity Verification
+    multiple_rows: false
+  - text: Additional Details
+    multiple_rows: false
+  - text: Documents
+    multiple_rows: false
+
+# Per-field feature expectations (understood by the feature harness; scoring ignores).
+expected_field_flags:
+  - name: ssn_full
+    expected_canonical_key: null         # full SSN unmappable
+    expected_is_sensitive: true
+  - name: preferred_language
+    expected_failed_extract: true        # enumerated with no options
+    expected_options_empty: true
+  - name: proof_of_income
+    field_type: file
+    expected_file_constraints:
+      max_size_bytes: 8388608            # "8 MB" parsed from prose (NO data-max-size)
+      max_files: 1                       # single (non-multiple)
+  - name: other_documents
+    field_type: file
+    expected_file_constraints:
+      max_files: null                    # multiple, no stated cap
+  - name: urgency
+    expected_failed_extract: true        # custom div widget (LLM-variance; best-effort)
+    llm_variance: true
+
+# Fields captured (mappable ones declared for field-recall sanity).
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+  # Fixed member_1/member_2 block (the repeatable false-positive fixture): no add-row
+  # control, so these are ordinary unmappable fields, NOT a repeatable section.
+  - name: member_1_name
+    label: Member Name
+    field_type: text
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+  - name: member_1_relationship
+    label: Relationship
+    field_type: select
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+  - name: member_2_name
+    label: Member Name
+    field_type: text
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+  - name: member_2_relationship
+    label: Relationship
+    field_type: select
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null
+  - name: ssn_full
+    label: Social Security Number
+    field_type: text
+    required: true
+    is_sensitive: true
+    expected_canonical_key: null
+  - name: preferred_language
+    label: Preferred Language
+    field_type: select
+    required: false
+    is_sensitive: false
+    expected_canonical_key: primary_language
+  - name: proof_of_income
+    label: Proof of Income
+    field_type: file
+    required: false
+    # A file-upload widget shows no PII to mask (is_sensitive drives screenshot masking),
+    # so it does not belong on the field itself — left false. The crawl marking it sensitive
+    # (from the "income" label) is an honest, un-graded disagreement.
+    is_sensitive: false
+    expected_canonical_key: null
+  - name: other_documents
+    label: Other Supporting Documents
+    field_type: file
+    required: false
+    is_sensitive: false
+    expected_canonical_key: null

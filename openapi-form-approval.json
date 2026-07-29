@@ -1,0 +1,162 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FormWeave — Approve or Reject Form",
+    "version": "1.0.0",
+    "description": "Records a human decision for one exact crawl-scoped form ID. Approval authorizes future run creation for the pinned script identity."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8787",
+      "description": "Local FormWeave API"
+    }
+  ],
+  "paths": {
+    "/api/forms/{formId}/approval": {
+      "post": {
+        "operationId": "decideFormApproval",
+        "summary": "Approve or reject one crawled form",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/FormId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalRequest"
+              },
+              "example": {
+                "decision": "approved",
+                "actor": "reviewer@example.org",
+                "notes": "Schema, flow, and evidence reviewed."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decision stored. If approved, this exact form ID may be passed to the run API.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "FormId": {
+        "name": "formId",
+        "in": "path",
+        "required": true,
+        "description": "Exact crawl-scoped form ID returned by the crawl.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "ApprovalRequest": {
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "rejected"
+            ]
+          },
+          "actor": {
+            "type": "string",
+            "description": "Reviewer identity recorded with the decision. Defaults to local-operator when omitted."
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ApprovalResponse": {
+        "type": "object",
+        "required": [
+          "form",
+          "approval"
+        ],
+        "properties": {
+          "form": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "approval": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid decision, actor, or request body.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The form ID does not exist.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "The form is ineligible, disqualified, incomplete, or missing a usable generated script.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -24,7 +24,7 @@ try {
     runId,
     {
       browserMode,
-      executionMode: "dry_run",
+      executionMode: "probe",
       allowLoopback: true,
       traversalSettings: {
         stableWindowMs: 300,
@@ -101,7 +101,7 @@ try {
     generatedAt: new Date().toISOString(),
     targets: [`${fixture.origin}/fixtures/start`],
     browserMode,
-    executionMode: "dry_run",
+    executionMode: "probe",
     renderEngine: "playwright-chromium",
     pages: reportPages,
     nodes: output.nodes,

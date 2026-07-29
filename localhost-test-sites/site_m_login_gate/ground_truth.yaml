@@ -1,0 +1,45 @@
+site_id: site_m_login_gate
+org_name: Gateway Housing Network
+intake_url: http://localhost:9000/site_m_login_gate/intake
+has_intake_form: true          # a form is present, but it is a login gate
+form_type: login_gated
+requires_login: true
+has_captcha: false
+pdf_links: []
+
+# ACCESS BARRIER — login gate.
+# The Builder captures the username/password inputs (fields are built before the
+# stop check) and then HALTS with stop_reason=login_required, raising the
+# login_required red flag. The Runner pre-flight blocks on it.
+#
+# Feature-harness assertion is the login_required red flag — NOT field recall.
+expected_red_flag_codes:
+  - login_required
+
+# Extended keys understood by the feature harness (scoring.py ignores them).
+expected_abort: null                  # builder halts+flags but still emits a config
+expected_login_required: true
+expected_runner_preflight: abort_preflight
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true          # fail-safe terminal at the halt page
+    advance_is_server_roundtrip: false
+
+# Login-form inputs (not intake data; expected_canonical_key null). Declared so
+# field-recall scoring isn't a false zero if this site is ever benchmarked.
+fields:
+  - name: username
+    label: Username or Email
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+  - name: password
+    label: Password
+    # CORRECTION (2026-07-18): the input is type=password — the crawl reports "password",
+    # which is more accurate than "text".
+    field_type: password
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null

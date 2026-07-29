@@ -1,0 +1,118 @@
+site_id: site_e_housing
+org_name: Safe Harbor Housing Alliance
+intake_url: http://localhost:9000/site_e_housing/intake
+has_intake_form: true
+form_type: housing_assistance
+requires_login: false
+has_captcha: true
+pdf_links: []
+
+# NOTE — CAPTCHA-halt configuration:
+# The Builder correctly halts on interactive_captcha before analyzing form fields.
+# sensitive_field and unmappable_field would both be raised if analysis continued,
+# but halting before field inspection is the correct safe behavior — attempting to
+# fill or advance past an interactive CAPTCHA with synthetic data would exercise
+# the real CAPTCHA-verification backend.
+#
+# Scoring rule: when interactive_captcha is raised and field count is zero, treat
+# the config as a CAPTCHA-halt.  The only scored metric in that mode is whether
+# interactive_captcha was raised.  field-recall, canonical-mapping, locator tiers,
+# and all other red-flag expectations are suppressed (N/A).
+#
+# expected_red_flag_codes lists what WOULD be raised on a non-CAPTCHA run;
+# the scoring module uses only interactive_captcha for the halt-mode check.
+expected_red_flag_codes:
+  - interactive_captcha
+  - sensitive_field
+  - unmappable_field
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+
+  - name: date_of_birth
+    label: Date of Birth
+    field_type: date
+    required: true
+    is_sensitive: true
+    expected_canonical_key: date_of_birth
+
+  - name: ssn
+    label: Social Security Number
+    field_type: text
+    required: true
+    is_sensitive: true
+    # CORRECTION (2026-07-18): the input is the FULL SSN (placeholder "XXX-XX-XXXX"),
+    # not the last four digits — so ssn_last4 is the wrong target. Mapping a full SSN
+    # onto a last-4 key would corrupt data; the crawl correctly leaves it unmappable
+    # (same rule as site_r's full-SSN field).
+    expected_canonical_key: null
+
+  - name: phone
+    label: Phone Number
+    field_type: tel
+    required: true
+    is_sensitive: false
+    expected_canonical_key: phone
+
+  - name: email
+    label: Email Address
+    field_type: email
+    required: false
+    is_sensitive: false
+    expected_canonical_key: email
+
+  - name: monthly_income
+    label: Monthly Household Income
+    field_type: number
+    required: false
+    # CORRECTION (2026-07-18): income is sensitive personal data (and one of the
+    # system's always-sensitive canonical keys) — was inconsistently false here while
+    # site_g marks it true. The crawl correctly infers sensitivity.
+    is_sensitive: true
+    expected_canonical_key: monthly_income
+
+  - name: current_address
+    label: Current Address
+    field_type: text
+    required: false
+    is_sensitive: false
+    expected_canonical_key: current_address
+
+  - name: reason_for_seeking
+    label: Reason for Seeking Housing Assistance
+    field_type: textarea
+    required: false
+    is_sensitive: false
+    # canonical_key intentionally UNSPECIFIED — a free-text narrative maps ambiguously
+    # (services_requested vs unmappable) and varies run-to-run; reported informationally.
+
+  - name: consent_to_share
+    label: I consent to share my information with partner agencies
+    field_type: checkbox
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+
+  - name: captcha_answer
+    label: CAPTCHA Answer
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null

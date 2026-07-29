@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emergency Aid Application &mdash; Cedar Valley Community Portal</title>
+<style>
+    body { font-family: system-ui, sans-serif; max-width: 660px; margin: 2rem auto; padding: 0 1rem; color: #22262a; }
+    .field { margin-bottom: .9rem; }
+    .field > label { display: block; font-weight: 600; margin-bottom: .25rem; }
+    .field input, .field select, .field textarea { width: 100%; padding: .45rem; box-sizing: border-box; }
+    .req { color: #b3261e; }
+    button { padding: .55rem 1.4rem; font-weight: 700; cursor: pointer; }
+    nav a { margin-right: 1rem; color:#6d3b12; font-weight:600; }
+    a.btn { display:inline-block; padding:.6rem 1.3rem; background:#6d3b12; color:#fff; text-decoration:none; border-radius:5px; }
+    fieldset { border:1px solid #ddd; border-radius:6px; margin-bottom:1.25rem; padding:1rem; }
+    legend { font-weight:700; }
+    .widget { background:#f3ede4; padding:.6rem .9rem; border-radius:6px; margin-bottom:1rem; }
+</style></head>
+<body>
+  <nav>
+    <a href="/site_ae_deep_portal/">Home</a>
+    <a href="/site_ae_deep_portal/programs">Programs</a>
+    <a href="/site_ae_deep_portal/about">About</a>
+    <a href="/site_ae_deep_portal/contact">Contact</a>
+  </nav>
+
+  <!-- Header search widget (its own form, before the application). -->
+  <div class="widget">
+    <form id="portal-search" role="search" action="/">
+      <label for="portal-q">Search the portal</label>
+      <input type="search" id="portal-q" name="q" placeholder="Search programs">
+      <button type="submit">Go</button>
+    </form>
+  </div>
+  <!-- Newsletter widget (second non-application form). -->
+  <div class="widget">
+    <form id="newsletter" action="/subscribe">
+      <label for="news_email">Monthly newsletter:</label>
+      <input type="email" id="news_email" name="news_email" placeholder="you@example.org">
+      <button type="submit">Sign Up</button>
+    </form>
+  </div>
+
+  <h1>Emergency Aid Application</h1>
+  <p>Required fields are marked <span class="req">*</span>.</p>
+
+  <form id="aid-form" method="post" action="#" novalidate>
+    <fieldset>
+      <legend>Applicant</legend>
+      <div class="field">
+        <label for="first_name">First Name <span class="req">*</span></label>
+        <input type="text" id="first_name" name="first_name" required>
+      </div>
+      <div class="field">
+        <label for="last_name">Last Name <span class="req">*</span></label>
+        <input type="text" id="last_name" name="last_name" required>
+      </div>
+      <div class="field">
+        <label for="email">Email Address</label>
+        <input type="email" id="email" name="email">
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Household</legend>
+      <div class="field">
+        <label for="household_size">Household Size <span class="req">*</span></label>
+        <input type="number" id="household_size" name="household_size" min="1" max="20" required>
+      </div>
+      <div class="field">
+        <label for="num_children">Number of children under 18</label>
+        <input type="number" id="num_children" name="num_children" min="0" max="15">
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Documents</legend>
+      <div class="field">
+        <label for="proof_docs">Proof of address and income (optional)</label>
+        <input type="file" id="proof_docs" name="proof_docs" multiple
+               accept=".pdf,.jpg,.png" data-max-files="2" data-max-size-mb="5">
+        <small>Up to 2 files, 5 MB each. PDF, JPG, or PNG.</small>
+      </div>
+    </fieldset>
+
+    <!-- Agreement checkbox sits outside every fieldset. -->
+    <div class="field">
+      <input type="checkbox" id="agree_share" name="agree_share" required style="width:auto">
+      <label for="agree_share" style="display:inline">I agree Cedar Valley may share this application with its partner agencies. <span class="req">*</span></label>
+    </div>
+
+    <button type="submit">Submit Application</button>
+  </form>
+
+  <!-- Footer search widget (a third non-application form, after the application). -->
+  <div class="widget">
+    <form id="footer-search" role="search" action="/">
+      <input type="search" name="q" aria-label="Search footer">
+      <button type="submit">Search</button>
+    </form>
+  </div>
+  <!-- fixture-only-completion-view: shows a completion view when the form is submitted with all
+       required fields filled. Fixture-only UX; the automated Builder/Runner never
+       click terminal submit outside live mode, and script tags are stripped from
+       the crawler's DOM context, so this is inert for the test harness. -->
+  <script>
+  (function () {
+    var SEL = '#aid-form';
+    var MODE = 'success'; /* 'success' | 'gate' */
+    function firstMissing(form) {
+      var els = form.querySelectorAll('[required]');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (el.disabled || el.offsetParent === null) continue;
+        if (el.type === 'checkbox') { if (!el.checked) return el; }
+        else if (el.type === 'radio') {
+          var any = false, grp = form.querySelectorAll('input[type="radio"][name="' + el.name + '"]');
+          for (var j = 0; j < grp.length; j++) if (grp[j].checked) any = true;
+          if (!any) return el;
+        } else if (!(el.value && String(el.value).trim())) { return el; }
+      }
+      return null;
+    }
+    document.addEventListener('submit', function (e) {
+      var form = e.target;
+      if (!form || !form.matches || !form.matches(SEL) || e.defaultPrevented) return;
+      var missing = firstMissing(form);
+      if (missing) {
+        e.preventDefault();
+        if (missing.reportValidity) { missing.reportValidity(); } else { missing.focus(); }
+        return;
+      }
+      if (MODE !== 'success') return;
+      e.preventDefault();
+      var d = document.createElement('div');
+      d.setAttribute('role', 'status');
+      d.style.cssText = 'margin:2rem auto;max-width:640px;padding:2rem;border:1px solid #b7dfc0;' +
+        'border-radius:8px;background:#f2fbf5;color:#1d5a2e;text-align:center;font-family:system-ui,sans-serif;';
+      d.innerHTML = '<div style="font-size:2.5rem;line-height:1;">&#10003;</div>' +
+        '<h2 style="margin:.5rem 0;">Submission received</h2>' +
+        '<p style="margin:0;">Thank you. Your information has been submitted successfully.</p>';
+      form.parentNode.insertBefore(d, form);
+      form.style.display = 'none';
+      if (d.scrollIntoView) { d.scrollIntoView({block: 'center'}); }
+    }, false);
+  })();
+  </script>
+</body>
+</html>

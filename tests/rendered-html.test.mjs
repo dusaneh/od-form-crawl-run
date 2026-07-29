@@ -4,9 +4,10 @@ import test from "node:test";
 import {
   buildCrawlOutput,
   fingerprintPage,
+  fingerprintPageInput,
   parsePageHtml,
   validateTargetUrl,
-} from "../worker/crawler.ts";
+} from "../local/crawl-core.ts";
 
 const fixture = `
 <!doctype html>
@@ -64,9 +65,68 @@ test("fingerprints observed form facts deterministically", () => {
     fields: page.fields.slice(0, 2),
   });
 
-  assert.match(first, /^[0-9a-f]{4}·[0-9a-f]{4}$/);
+  assert.match(first, /^[0-9a-f]{16}$/);
   assert.equal(first, second);
   assert.notEqual(first, changed);
+  assert.deepEqual(Object.keys(fingerprintPageInput(page)), [
+    "algorithmVersion",
+    "normalizedUrl",
+    "fields",
+    "stateCount",
+    "uploadPresence",
+  ]);
+  assert.ok(
+    fingerprintPageInput(page).fields.some(
+      (field) => field.nameOrId === "applicant_name"
+    )
+  );
+});
+
+test("fingerprints canonically and normalizes regenerated United Way upload IDs", () => {
+  const page = parsePageHtml(fixture, "https://services.example.gov/apply");
+  assert.equal(
+    fingerprintPage(page),
+    fingerprintPage({ ...page, fields: [...page.fields].reverse() })
+  );
+
+  const uploadPage = {
+    normalizedUrl:
+      "https://www.yourlocalunitedway.org/our-work/healthy-community/housing-navigation/",
+    title: "Housing navigation",
+    heading: "Housing navigation",
+    forms: 1,
+    fields: [
+      {
+        id: "html5_1ju8abc",
+        key: "html5_1ju8abc",
+        label: "Upload supporting documents",
+        control: "file",
+        required: false,
+        sensitive: false,
+        hidden: false,
+        options: 0,
+        selector: "#html5_1ju8abc",
+        sectionText: "Documents",
+      },
+    ],
+    formActions: [],
+    links: [],
+    hasScripts: true,
+  };
+  const regenerated = {
+    ...uploadPage,
+    fields: uploadPage.fields.map((field) => ({
+      ...field,
+      id: "html5_9zx7def",
+      key: "html5_9zx7def",
+      selector: "#html5_9zx7def",
+    })),
+  };
+  assert.equal(fingerprintPage(uploadPage), fingerprintPage(regenerated));
+  assert.equal(
+    fingerprintPageInput(uploadPage).fields[0].nameOrId,
+    "[generated:gravity-html5-upload]"
+  );
 });
 
 test("blocks private-network and credential-bearing crawl targets", () => {

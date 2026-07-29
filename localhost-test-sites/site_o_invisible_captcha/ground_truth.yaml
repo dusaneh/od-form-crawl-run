@@ -1,0 +1,58 @@
+site_id: site_o_invisible_captcha
+org_name: Harbor Point Outreach
+intake_url: http://localhost:9000/site_o_invisible_captcha/intake
+has_intake_form: true
+form_type: general_intake
+requires_login: false
+has_captcha: true              # invisible/score-based, NOT interactive
+pdf_links: []
+
+# ACCESS BARRIER — invisible / score-based CAPTCHA (reCAPTCHA v3 style).
+# Unlike an interactive CAPTCHA, this does NOT halt the Builder: it records
+# captcha_type=invisible on the step and captures all fields normally.
+# NOTE: interactive_captcha is NOT expected here — that would be the halt case.
+expected_red_flag_codes: []
+
+expected_captcha_type: invisible          # feature-harness assertion (step 0)
+expected_captcha_halt: false
+
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: true
+    advance_is_server_roundtrip: false
+
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+  - name: phone
+    label: Phone Number
+    field_type: tel
+    required: false
+    is_sensitive: false
+    expected_canonical_key: phone
+  - name: email
+    label: Email Address
+    field_type: email
+    required: false
+    is_sensitive: false
+    expected_canonical_key: email
+  - name: current_situation
+    label: Current Situation
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: housing_status
+    expected_options:
+      - {value: "unhoused", label: "Currently unhoused"}
+      - {value: "at_risk",  label: "At risk of losing housing"}
+      - {value: "housed",   label: "Currently housed"}

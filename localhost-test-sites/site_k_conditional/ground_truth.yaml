@@ -1,0 +1,88 @@
+site_id: site_k_conditional
+org_name: Cascade Mobility Services
+intake_url: http://localhost:9000/site_k_conditional/intake
+has_intake_form: true
+form_type: transportation_intake
+requires_login: false
+has_captcha: false
+pdf_links: []
+
+# CROSS-PAGE BRANCHING SITE — page 1 has NO same-page branching (fully linear),
+# but page 2's questions are phrased in terms of the page-1 `drives` answer
+# ("Because you said you do not drive…", "Since you indicated you rely on
+# transit…"). Only cross-page dependency detection catches this: the Builder
+# must raise cross_page_branching (confidence HIGH — conditional phrasing),
+# emit cross_page_branching_detected, and ABORT WITHOUT PERSISTING A CONFIG.
+# Features: crosspage_conditional_phrasing, branching_abort_not_emit.
+expected_abort: cross_page_branching
+
+expected_branching:
+  same_page: false
+  cross_page: true
+  trigger_fields: [drives]
+  confidence: high
+
+expected_red_flag_codes:
+  - cross_page_branching
+
+# Reference only — the crawl aborts on arrival at page 2, so a full traversal
+# is never certified. Page 1 advances via a real GET roundtrip to intake_p2.
+expected_pages:
+  - page_index: 0
+    is_terminal_submit: false
+    advance_is_server_roundtrip: true
+  - page_index: 1
+    is_terminal_submit: true
+    advance_is_server_roundtrip: true   # GET action to /confirmation
+
+# Field inventory for reference — NOT reachable as config assertions (abort).
+fields:
+  - name: first_name
+    label: First Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: first_name
+
+  - name: last_name
+    label: Last Name
+    field_type: text
+    required: true
+    is_sensitive: false
+    expected_canonical_key: last_name
+
+  - name: drives
+    label: Do you drive or have access to a vehicle?
+    field_type: select
+    required: true
+    is_sensitive: false
+    expected_canonical_key: null
+    expected_options:
+      - {value: "no_vehicle",  label: "No, I do not drive"}
+      - {value: "own_vehicle", label: "Yes, I have my own vehicle"}
+      - {value: "borrow",      label: "Sometimes, I borrow a vehicle"}
+
+  # ---- page 2 (conditioned on page-1 `drives` answer) ----
+  - name: transit_pass
+    label: Because you said you do not drive, do you currently have a transit pass?
+    field_type: select
+    required: true
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: nearest_stop
+    label: How far is the nearest bus stop from your home?
+    field_type: select
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
+
+  - name: appointment_notes
+    label: Since you indicated you rely on transit, tell us about any appointments you regularly need to reach.
+    field_type: textarea
+    required: false
+    is_sensitive: false
+    conditional: true
+    expected_canonical_key: null
