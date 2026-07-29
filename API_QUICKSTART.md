@@ -15,6 +15,35 @@ Use the FormWeave base URL supplied for your environment. Examples below use:
 <FORMWEAVE_BASE_URL>
 ```
 
+## What a client needs
+
+Before integrating, the client needs:
+
+- the FormWeave base URL for its environment;
+- a public target-form URL, or explicit loopback authority for a test fixture;
+- the ability to retain and pass opaque IDs between calls;
+- a reviewer identity for form approval;
+- the ability to construct user-input fields from JSON Schema;
+- a polling mechanism for asynchronous crawl and form-run status.
+
+The examples in this guide show the complete common-path workflow but
+intentionally omit uncommon optional properties and some extended response
+metadata. Each operation links to its focused OpenAPI contract. Use those
+contracts as the authoritative source for every supported field, enum, HTTP
+response, and error shape when generating a client or handling a less common
+case.
+
+Safe retries matter:
+
+- status, report, schema, screenshot, and execution `GET` requests are
+  read-only and may be retried;
+- retrying `POST /api/runs` creates another crawl and another `run.id`;
+- retrying `POST /api/forms/{formId}/runs` creates another execution and may
+  risk a duplicate submission if the first execution reached the target;
+- if a POST response is lost before its generated ID is received, treat the
+  outcome as ambiguous and require operator reconciliation instead of blindly
+  creating another operation.
+
 ## ID and payload flow
 
 The highlighted values must be carried into later calls. Treat them as opaque
@@ -55,7 +84,7 @@ POST <FORMWEAVE_BASE_URL>/api/runs
 Content-Type: application/json
 ```
 
-Request:
+Example request (common path):
 
 ```json
 {
@@ -79,7 +108,7 @@ Request fields:
 | `allowLocalTargets` | No | Must be `true` for loopback targets. It does not allow other private networks. |
 | `discoverRelatedPages` | No | Enables bounded same-origin page discovery. |
 
-Response: `201 Created`
+Example response: `201 Created`
 
 ```json
 {
@@ -112,7 +141,7 @@ Pass the exact `run.id` returned above:
 GET <FORMWEAVE_BASE_URL>/api/runs/run_8c3f09d1865c4f
 ```
 
-In-progress response:
+Example in-progress response:
 
 ```json
 {
@@ -127,7 +156,7 @@ In-progress response:
 }
 ```
 
-Terminal response:
+Example terminal response:
 
 ```json
 {
@@ -181,7 +210,7 @@ Full contract: [Check Crawl](./openapi-crawl-status.json).
 GET <FORMWEAVE_BASE_URL>/api/runs/run_8c3f09d1865c4f/report
 ```
 
-Abbreviated response:
+Example response (abbreviated):
 
 ```json
 {
@@ -274,7 +303,7 @@ Pass the selected `formId`:
 GET <FORMWEAVE_BASE_URL>/api/forms/form_5b6288d171cb4f23a87d39e9
 ```
 
-Abbreviated response:
+Example response (abbreviated):
 
 ```json
 {
@@ -370,7 +399,7 @@ POST <FORMWEAVE_BASE_URL>/api/forms/form_5b6288d171cb4f23a87d39e9/approval
 Content-Type: application/json
 ```
 
-Request:
+Example request (common path):
 
 ```json
 {
@@ -388,7 +417,7 @@ Request fields:
 | `actor` | No | Reviewer identity. Defaults to `local-operator` if omitted. |
 | `notes` | No | Review notes retained with the decision. |
 
-Response:
+Example response:
 
 ```json
 {
@@ -442,7 +471,7 @@ POST <FORMWEAVE_BASE_URL>/api/forms/form_5b6288d171cb4f23a87d39e9/runs
 Content-Type: application/json
 ```
 
-Request:
+Example request (common path):
 
 ```json
 {
@@ -464,7 +493,7 @@ Request fields:
 | `submit` | Yes | `false` populates and verifies without terminal submission. `true` authorizes the pinned terminal submit action. |
 | `browserMode` | No | `headless` or `headful`; defaults to `headless`. |
 
-Response: `201 Created`
+Example response: `201 Created`
 
 ```json
 {
@@ -511,7 +540,7 @@ GET <FORMWEAVE_BASE_URL>/api/executions/exec_2082914c56194509b646f30a26de1a23
 
 Poll while `execution.status` is `queued` or `running`.
 
-Successful submission response:
+Example successful-submission response:
 
 ```json
 {
@@ -536,7 +565,7 @@ Successful submission response:
 }
 ```
 
-Failed response:
+Example failed response:
 
 ```json
 {
@@ -602,6 +631,28 @@ The execution response does not return supplied field values. It records field
 keys and explicitly reports that sensitive input was not persisted.
 
 Full contract: [Check Form Run](./openapi-execution-status.json).
+
+## Client completion checklist
+
+A basic client integration is complete when it can:
+
+- start a crawl and retain `run.id`;
+- poll that exact run until a terminal crawl status;
+- require `reportAvailable = true` before requesting the report;
+- select the intended `formDefinitions[].formId`, rather than assuming the
+  first discovered form;
+- display or otherwise review the contract, flow, findings, and screenshot
+  evidence;
+- retrieve the exact form’s `inputSchema` and render its required,
+  conditional, enum, branch, consent, signature, and file fields;
+- approve or reject the same `formId` that was reviewed;
+- construct run `data` using only the exact schema keys and valid value shapes;
+- explicitly choose whether `submit` is `false` or `true`;
+- retain `execution.executionId` and poll that exact execution;
+- treat live submission as successful only when `status`, `outcome`, and
+  `submissionResult.verified` all satisfy the success conditions above;
+- surface `issues`, `failureCode`, and `detail` when a crawl or execution does
+  not succeed.
 
 ## OpenAPI contracts
 
