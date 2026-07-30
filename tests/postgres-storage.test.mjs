@@ -5,10 +5,15 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  FormWeaveDatabase,
   planFromSource,
   sha256,
   stableJson,
 } from "../local/postgres/database.mjs";
+import {
+  isRetryableDatabaseStartupError,
+  retryDatabaseStartup,
+} from "../local/postgres/startup.mjs";
 
 const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -51,4 +56,55 @@ test("PostgreSQL migration covers JSON, immutable scripts, and binary objects", 
   assert.match(migration, /formweave_script_versions_immutable/i);
   assert.match(migration, /formweave_events_immutable/i);
   assert.match(migration, /formweave_blobs_immutable/i);
+});
+
+test("PostgreSQL pools tolerate slow managed-database connection startup", async () => {
+  const database = new FormWeaveDatabase(
+    "postgres://formweave:test@localhost/formweave",
+  );
+  try {
+    assert.equal(database.pool.options.connectionTimeoutMillis, 45_000);
+    assert.equal(database.pool.options.idleTimeoutMillis, 60_000);
+    assert.equal(database.pool.options.keepAlive, true);
+  } finally {
+    await database.close();
+  }
+});
+
+test("release migration retries transient connection startup failures only", async () => {
+  let attempts = 0;
+  const result = await retryDatabaseStartup(
+    async () => {
+      attempts += 1;
+      if (attempts < 3) {
+        throw new Error("Connection terminated due to connection timeout", {
+          cause: Object.assign(new Error("Connection terminated unexpectedly"), {
+            code: "ECONNRESET",
+          }),
+        });
+      }
+      return "connected";
+    },
+    {
+      attempts: 4,
+      delaysMs: [0, 0, 0],
+    },
+  );
+  assert.equal(result, "connected");
+  assert.equal(attempts, 3);
+  assert.equal(
+    isRetryableDatabaseStartupError(
+      Object.assign(new Error("syntax error"), { code: "42601" }),
+    ),
+    false,
+  );
+  await assert.rejects(
+    retryDatabaseStartup(
+      async () => {
+        throw Object.assign(new Error("syntax error"), { code: "42601" });
+      },
+      { attempts: 4, delaysMs: [0, 0, 0] },
+    ),
+    /syntax error/,
+  );
 });

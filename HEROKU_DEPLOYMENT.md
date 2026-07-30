@@ -54,6 +54,11 @@ PLAYWRIGHT_BROWSERS_PATH=0
 ```
 
 Heroku supplies `DATABASE_URL`. Do not copy `.env` into Heroku or Git.
+Managed Postgres connection startup can occasionally be slow. The application
+pool allows 45 seconds to establish a connection, retains idle connections for
+60 seconds, and the release migration retries transient connection failures.
+`POSTGRES_CONNECT_TIMEOUT_MS` and `POSTGRES_IDLE_TIMEOUT_MS` may override those
+defaults if staging telemetry demonstrates a need.
 
 ## Seed UI users and the development API token
 

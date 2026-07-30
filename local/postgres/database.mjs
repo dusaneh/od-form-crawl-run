@@ -127,9 +127,19 @@ async function filesBeneath(root) {
 export class FormWeaveDatabase {
   constructor(connectionString, options = {}) {
     if (!connectionString) throw new Error("POSTGRES_URI is required.");
+    const connectionTimeoutMillis =
+      options.connectionTimeoutMillis ||
+      Number(process.env.POSTGRES_CONNECT_TIMEOUT_MS) ||
+      45_000;
+    const idleTimeoutMillis =
+      options.idleTimeoutMillis ||
+      Number(process.env.POSTGRES_IDLE_TIMEOUT_MS) ||
+      60_000;
     this.pool = new Pool({
       connectionString,
-      connectionTimeoutMillis: options.connectionTimeoutMillis || 15_000,
+      connectionTimeoutMillis,
+      idleTimeoutMillis,
+      keepAlive: options.keepAlive ?? true,
       max: options.maxConnections || 8,
       application_name: "formweave",
       ssl: options.ssl ?? sslConfiguration(connectionString),
