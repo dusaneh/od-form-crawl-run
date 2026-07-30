@@ -80,7 +80,14 @@ type RuntimeStatus = {
 };
 
 function apiUrl(path: string) {
-  return `http://127.0.0.1:8787${path}`;
+  if (
+    typeof window !== "undefined" &&
+    ["localhost", "127.0.0.1"].includes(window.location.hostname) &&
+    window.location.port === "3000"
+  ) {
+    return `http://127.0.0.1:8787${path}`;
+  }
+  return path;
 }
 
 function shortHost(url: string) {

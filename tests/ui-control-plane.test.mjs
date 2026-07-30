@@ -317,7 +317,7 @@ test(
         "base64"
       );
 
-      await page.route("http://127.0.0.1:8787/**", async (route) => {
+      await page.route("**/api/**", async (route) => {
         const request = route.request();
         const url = new URL(request.url());
         if (url.pathname === "/api/health") {
@@ -422,7 +422,7 @@ test(
         });
       });
 
-      await page.goto(appUrl, { waitUntil: "networkidle" });
+      await page.goto(`${appUrl}/control-plane`, { waitUntil: "networkidle" });
       await assert.doesNotReject(() =>
         page.getByText("1 pages and 1 visible fields captured.").waitFor()
       );
@@ -479,7 +479,7 @@ test(
       assert.equal(await evidenceLink.getAttribute("target"), "_blank");
       assert.equal(
         await evidenceLink.getAttribute("href"),
-        "http://127.0.0.1:8787/api/runs/run_ui_fixture/evidence/page_01_state_01"
+        "/api/runs/run_ui_fixture/evidence/page_01_state_01"
       );
       await assert.doesNotReject(() =>
         page
@@ -493,7 +493,7 @@ test(
       assert.equal(await selectedBranchEvidence.count(), 1);
       assert.equal(
         await selectedBranchEvidence.getAttribute("href"),
-        "http://127.0.0.1:8787/api/runs/run_ui_fixture/evidence/page_01_state_02"
+        "/api/runs/run_ui_fixture/evidence/page_01_state_02"
       );
 
       await page.getByRole("tab", { name: /Diagnostics/ }).click();

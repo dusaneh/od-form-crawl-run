@@ -907,7 +907,7 @@ export class FormWeaveDatabase {
 }
 
 export async function createFormWeaveDatabase(
-  connectionString = process.env.POSTGRES_URI,
+  connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URI,
   options = {},
 ) {
   const database = new FormWeaveDatabase(connectionString, options);

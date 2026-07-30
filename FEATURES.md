@@ -712,9 +712,39 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   run history.
 - `F4.5.1` Import preserves report facts and discloses any evidence that cannot
   be reconstructed from the download.
-- `F4.6` FormWeave has no hosted runtime path. The UI, API, browser, database,
-  reports, event logs, screenshots, and configuration run and persist on the
-  operator's machine; only explicitly configured LLM requests leave it.
+- `F4.6` Local-first ownership does not prohibit an explicitly configured
+  hosted deployment. The complete local path remains available, while a
+  hosted staging or production path may run the UI, API, Playwright browser,
+  and PostgreSQL in infrastructure controlled by the operator.
+- `F4.6.1` A hosted web process exposes one public port. A production gateway
+  routes `/api/*` to the crawler API and serves the public landing page plus
+  the protected `/control-plane` and `/api-console` UIs.
+- `F4.6.2` Hosted UI access requires an individual database-backed account.
+  Passwords are stored only as salted, resource-intensive one-way hashes;
+  plaintext passwords are never stored in the database. Successful login
+  creates a database-backed, `HttpOnly`, `SameSite` session with a bounded
+  lifetime.
+- `F4.6.3` Repeated failed authentication is rate-limited and locks the
+  principal for a configurable period. The default is five failures followed
+  by a fifteen-minute lockout, and every success, failure, and lock event is
+  auditable without retaining the submitted credential.
+- `F4.6.4` Hosted API access requires a high-entropy Bearer token over TLS.
+  Only a digest and non-secret prefix are stored server-side. Tokens have
+  explicit scopes, can be disabled or expired, and are independently
+  rotatable. HTTP Basic may be enabled for staging administration but is not
+  the preferred client API mechanism.
+- `F4.6.5` Hosted mode is headless-only and rejects loopback and
+  private-network crawl targets even if a client requests local-target
+  authority. Headful browsing and localhost fixtures remain local-workstation
+  capabilities.
+- `F4.6.6` Hosted state is PostgreSQL-authoritative. Ephemeral filesystem
+  storage is cache-only; durable screenshots and other binary evidence require
+  a durable object-store adapter before a multi-dyno production release.
+- `F4.6.7` Bootstrap credentials may be generated into an explicitly
+  Git-ignored local access file and seeded from a trusted workstation.
+  Plaintext credentials, API tokens, `.env` files, and authorization headers
+  must never be committed, placed in platform configuration as a bundle, or
+  written to application logs.
 - `F4.7` Local browser binaries are installed and managed through Playwright;
   local crawling does not require a remote browser or screenshot account.
 

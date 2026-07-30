@@ -6,7 +6,7 @@ evidence control plane for public web forms.
 **Current capability boundary:** Novel form states receive LLM semantic
 proposals, safety-approved actions compile into immutable per-form scripts,
 and Playwright deterministically validates/replays those scripts. Public D5,
-full coverage certification, authentication/tenant isolation, locale support,
+full coverage certification, tenant isolation, locale support,
 and automated execution-based drift remain release gates. The local API now
 supports crawl-scoped form approval and approved dry-run or submit execution;
 it is an initial local vertical slice, not yet a production multi-user API.
@@ -39,7 +39,8 @@ npm run local
 
 This starts:
 
-- UI: `http://127.0.0.1:3000`
+- control plane: `http://127.0.0.1:3000/control-plane`
+- API console: `http://127.0.0.1:3000/api-console`
 - local crawler API: `http://127.0.0.1:8787`
 - health: `http://127.0.0.1:8787/api/health`
 
@@ -168,6 +169,7 @@ retains the JSON facts and marks unavailable images honestly.
 ## PostgreSQL storage
 
 Set `POSTGRES_URI` in `.env` to make PostgreSQL the durable application store.
+Heroku supplies the equivalent `DATABASE_URL`, which takes precedence.
 The URI is consumed only by the server and database commands and is never
 returned by the health API or written to logs. `FORMWEAVE_STORAGE=filesystem`
 can be used explicitly for isolated filesystem tests.
@@ -205,6 +207,18 @@ its SHA-256 hash are retained for verification. Images and other files are
 stored in content-addressed `bytea` rows and deduplicated by SHA-256.
 Script versions, approvals, events, and blob content are append-only at the
 database level.
+
+## Hosted staging
+
+The production entry point consolidates the UI and crawler API behind one
+authenticated gateway on Heroku's assigned `$PORT`. Human routes use
+individual database-backed credentials and HttpOnly sessions; API routes
+accept scoped Bearer tokens. Hosted mode is headless-only and blocks
+loopback/private targets.
+
+See `HEROKU_DEPLOYMENT.md` for buildpacks, PostgreSQL, credential seeding,
+GitHub auto-deployment, and release verification. Plaintext bootstrap
+credentials are kept only in the gitignored local `access.md`.
 
 When PostgreSQL is active, `.formweave-cache/` contains disposable Playwright
 materializations. Retained scripts are hash-checked after materialization and

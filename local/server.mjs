@@ -29,6 +29,8 @@ const projectRoot = path.resolve(localDirectory, "..");
 
 loadEnvFile(path.join(projectRoot, ".env"));
 
+const hosted = process.env.FORMWEAVE_HOSTED === "1";
+const postgresUri = process.env.DATABASE_URL || process.env.POSTGRES_URI;
 const port = Number.parseInt(process.env.FORMWEAVE_API_PORT || "8787", 10);
 const host = process.env.FORMWEAVE_API_HOST || "127.0.0.1";
 const filesystemDataRoot = path.resolve(
@@ -38,9 +40,11 @@ const filesystemDataRoot = path.resolve(
 const requestedStorage = String(process.env.FORMWEAVE_STORAGE || "").toLowerCase();
 const postgresEnabled =
   requestedStorage === "postgres" ||
-  (!requestedStorage && Boolean(process.env.POSTGRES_URI));
-if (requestedStorage === "postgres" && !process.env.POSTGRES_URI) {
-  throw new Error("FORMWEAVE_STORAGE=postgres requires POSTGRES_URI.");
+  (!requestedStorage && Boolean(postgresUri));
+if (requestedStorage === "postgres" && !postgresUri) {
+  throw new Error(
+    "FORMWEAVE_STORAGE=postgres requires DATABASE_URL or POSTGRES_URI.",
+  );
 }
 const dataRoot = postgresEnabled
   ? path.resolve(
@@ -53,7 +57,7 @@ const formsRoot = path.join(dataRoot, "forms");
 const executionsRoot = path.join(dataRoot, "executions");
 const generatedScriptsRoot = path.join(dataRoot, "generated-scripts");
 const database = postgresEnabled
-  ? await createFormWeaveDatabase(process.env.POSTGRES_URI)
+  ? await createFormWeaveDatabase(postgresUri)
   : null;
 
 function isLoopbackUrl(value) {
@@ -113,6 +117,16 @@ function fixtureCaptureEndpoint(rawBaseUrl, action) {
 }
 
 async function proxyFixtureCapture(request) {
+  if (hosted) {
+    return jsonResponse(
+      request,
+      {
+        error: "Local fixture capture is disabled in the hosted service.",
+        code: "hosted_fixture_unavailable",
+      },
+      403,
+    );
+  }
   try {
     const payload = await bodyJson(request);
     const action = String(payload.action || "");
@@ -1626,8 +1640,9 @@ async function createRun(request) {
   }
   let urls;
   const allowLocalTargets =
-    payload.allowLocalTargets === true ||
-    process.env.FORMWEAVE_ALLOW_LOCAL_TARGETS === "1";
+    !hosted &&
+    (payload.allowLocalTargets === true ||
+      process.env.FORMWEAVE_ALLOW_LOCAL_TARGETS === "1");
   try {
     urls = [
       ...new Set(
@@ -1652,6 +1667,17 @@ async function createRun(request) {
     String(payload.name || "").trim().slice(0, 120) ||
     `${new URL(urls[0]).hostname.replace(/^www\./, "")} crawl`;
   const browserMode = payload.browserMode === "headful" ? "headful" : "headless";
+  if (hosted && browserMode === "headful") {
+    return jsonResponse(
+      request,
+      {
+        error:
+          "Headful Chromium is available only on a developer workstation. Use headless mode in the hosted service.",
+        code: "hosted_headful_unsupported",
+      },
+      400,
+    );
+  }
   const discoverRelatedPages = payload.discoverRelatedPages !== false;
   if (
     payload.mode &&
@@ -1922,6 +1948,17 @@ async function createApprovedRun(request, formId) {
       400,
     );
   }
+  if (hosted && payload.browserMode === "headful") {
+    return jsonResponse(
+      request,
+      {
+        error:
+          "Headful Chromium is available only on a developer workstation. Use headless mode in the hosted service.",
+        code: "hosted_headful_unsupported",
+      },
+      400,
+    );
+  }
   const executionId = `exec_${randomUUID().replaceAll("-", "")}`;
   const now = new Date().toISOString();
   const record = {
@@ -2003,8 +2040,9 @@ async function route(request) {
       },
       browser: {
         engine: "playwright-chromium",
-        modes: ["headless", "headful"],
+        modes: hosted ? ["headless"] : ["headless", "headful"],
       },
+      hosted,
       generationMode:
         process.env.FORMWEAVE_FORCE_FRESH_GENERATION === "1"
           ? "forced_fresh"
@@ -2290,7 +2328,11 @@ server.listen(port, host, () => {
   const openai = openAIConfiguration();
   console.log(`FormWeave local API: http://${host}:${port}`);
   console.log(`Local artifacts: ${dataRoot}`);
-  console.log("Browser renderer: local Playwright Chromium · headless + headful");
+  console.log(
+    `Browser renderer: local Playwright Chromium · ${
+      hostedMode ? "headless only (hosted mode)" : "headless + headful"
+    }`,
+  );
   console.log(
     `OpenAI analysis: ${openai.configured ? `configured via ${openai.keySource}` : "not configured"} · ${openai.model}`
   );

@@ -7,8 +7,12 @@
   },
   "servers": [
     {
+      "url": "https://onedeg-intake-form-staging.herokuapp.com",
+      "description": "One Degree staging"
+    },
+    {
       "url": "http://127.0.0.1:8787",
-      "description": "Local FormWeave API"
+      "description": "Local developer API"
     }
   ],
   "paths": {
@@ -49,6 +53,9 @@
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
@@ -156,7 +163,30 @@
             }
           }
         }
+      },
+      "Unauthorized": {
+        "description": "Bearer token missing, invalid, expired, or revoked.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque",
+        "description": "Server-side FormWeave API token. Never place it in a browser bundle, URL, or log."
       }
     }
-  }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
 }

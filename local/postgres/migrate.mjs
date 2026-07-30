@@ -11,7 +11,8 @@ const projectRoot = path.resolve(
 );
 loadEnvFile(path.join(projectRoot, ".env"));
 
-const database = await createFormWeaveDatabase(process.env.POSTGRES_URI, {
+const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URI;
+const database = await createFormWeaveDatabase(connectionString, {
   migrate: false,
 });
 try {

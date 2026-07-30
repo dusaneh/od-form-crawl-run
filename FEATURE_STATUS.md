@@ -13,10 +13,15 @@ Status snapshot for `FEATURES.md` under the binding architecture in
 
 ## Executive status
 
-FormWeave is a local application: React/vinext UI, Node API, Playwright
-Chromium, generated scripts, reports, screenshots, rendered HTML, and JSONL
-logs all run or persist on this machine under `data/`. OpenAI is the only
-remote compute dependency.
+FormWeave remains fully runnable as a local application: React/vinext UI, Node
+API, Playwright Chromium, generated scripts, reports, screenshots, rendered
+HTML, and JSONL logs all run or persist on this machine under `data/`.
+
+An optional hosted staging path is now implemented. One Node gateway owns the
+public port, serves the public API landing page, protects `/control-plane` and
+`/api-console`, and proxies authenticated `/api/*` traffic to the internal
+crawler API. PostgreSQL is authoritative in hosted mode. OpenAI remains the
+only external semantic-compute dependency.
 
 The active production path now follows the required decision boundary:
 
@@ -127,12 +132,15 @@ failure in the supported Phase 1 envelope.
 | `F3.13` loopback submit | **Built for current supported envelope** | Explicit loopback-only submission works after generated-script validation, including client-side result confirmation. Older-version selection remains under `F9.13`. |
 | `F3.15` option coverage | **Built for one-level envelope** | Probe outcomes, branch-producing choices, populated variants, and selected-branch restoration are reported. |
 | `F3.16 / F3.18` traversal/four layers | **Built for generated and retained runs** | State cards expose sensing, semantic proposal, stored script/version/path/hash, deterministic execution/readback, flags, and evidence. |
-| `F4` local ownership | **Built** | No hosted runtime or remote screenshot service remains. |
+| `F4` local-first ownership | **Built** | The complete local UI/API/browser/artifact path remains. An optional authenticated hosted gateway now consolidates UI and API access without removing local operation. |
 | `F4.1.3` localhost opt-in | **Built** | Loopback targets require explicit per-run opt-in; fixture submission is rejected elsewhere. |
+| `F4.6.1` hosted gateway | **Built locally; Heroku release pending** | One public process routes `/api/*`, protects the two operational UIs, serves compiled assets, and starts the API and UI on loopback-only internal ports. |
+| `F4.6.2–F4.6.4` authentication | **Built for staging** | Seven individual UI accounts use salted scrypt password hashes and database-backed HttpOnly sessions. Five failures cause a 15-minute principal lock. API clients use a high-entropy Bearer token whose digest, scopes, status, and audit events are stored in PostgreSQL. Tenant-level authorization and production identity-provider integration remain. |
+| `F4.6.5–F4.6.7` hosted boundaries/secrets | **Built for staging** | Hosted mode is headless-only, rejects private/loopback targets, treats `/tmp` as cache, and seeds credentials from a Git-ignored local file. Durable object storage for evidence remains. |
 | `F5` model context | **Built for production generation** | Each novel state receives DOM, accessibility, screenshot, sections, guidance, options, history, and failure context with provenance. |
 | `F6` observability | **Built** | Health, lifecycle, events, errors, paths, and interrupted-run reconciliation are inspectable. |
 | `F7` safety | **Partial** | Public Probe terminal submit remains blocked; CAPTCHA solving, credential entry, and payment are prohibited and CAPTCHA/login disqualify. Public/local synthetic upload, consent, review, acknowledgement, and signature modeling now share the same accepted-script boundary. Fresh public special-component proof remains. |
-| `F8` verification | **Partial** | Production build and 74/74 serialized tests pass; the blind 37-site local corpus is functionally green. Public D5 remains. |
+| `F8` verification | **Partial** | Production build passes; 78 automated checks pass and one optional PostgreSQL integration check is skipped when its dedicated test URI is absent. The authenticated production smoke suite and blind 37-site local corpus are green. Public D5 remains. |
 | `F8.9` execution conformance | **Built — conformance only** | Ground-truth-derived planners test physics, never discovery or flexibility. |
 | `F8.9.8 / F8.10.3` oracle isolation | **Built** | Production audit freezes all artifacts before offline answer-key reads and regenerates per-form learning reports afterward. |
 | `F8.10.4–F8.10.6` local corpus gate | **Built for supported envelope — 37/37 functional** | 244/244 fields, evidence on 37/37, zero failed runs, and 25/25 verified submissions. Twelve sensitivity-policy/oracle review items remain outside functional traversal. |
@@ -150,11 +158,11 @@ failure in the supported Phase 1 envelope.
 
 | Requirement | Status | Current reality |
 | --- | --- | --- |
-| `F10` real-data runner | **Partial — first vertical slice works** | The API returns a typed input JSON Schema, records exact form approval, validates client data, deterministically executes the pinned script, supports dry-run/submit, and reports field/submission failure detail. Full certified coverage, auth/tenant isolation, cancellation, and production security review remain. |
+| `F10` real-data runner | **Partial — first vertical slice works** | The authenticated API returns a typed input JSON Schema, records exact form approval, validates client data, deterministically executes the pinned script, supports dry-run/submit, and reports field/submission failure detail. Full certified coverage, tenant isolation, cancellation, and production security review remain. |
 | `F10.12` real uploads | **Partial** | Inline client file objects are validated against captured type/extension and a 5 MB bound, held in memory, uploaded through the pinned script, and read back. Authenticated document references, configurable size/count policy, and wider production evidence masking remain. |
 | `F10.13` coverage gate | **Not built** | Execution is not restricted to a human-certified coverage set. |
 | `F11` conditional delta consumption | **Not built** | Phase 2 does not consume/enforce expand-only deltas. |
-| `F12` masking | **Partial** | Approved execution persists only field keys, redacts event values, does not store input bytes/values, and redacts supplied scalar echoes and visible controls before post-submit model assessment. Comprehensive leak tests, authenticated API transport, and production secret management remain. |
+| `F12` masking | **Partial** | Approved execution persists only field keys, redacts event values, does not store input bytes/values, and redacts supplied scalar echoes and visible controls before post-submit model assessment. UI/session and Bearer-token authentication are built; comprehensive leak tests, tenant authorization, token lifecycle operations, and production secret-management review remain. |
 
 ## Verified evidence
 
@@ -182,8 +190,12 @@ failure in the supported Phase 1 envelope.
   15/15 fields verified, inline PDF uploaded and read back, terminal HTTP 200,
   and rendered success verified. Execution artifacts contain neither supplied
   scalar values nor file bytes.
-- Production build and serialized automated suite: **74/74 pass** on
-  2026-07-29.
+- Production build and serialized automated suite: **78 pass, 0 fail, 1
+  optional PostgreSQL integration check skipped** on 2026-07-29.
+- Authenticated production smoke verification: public landing and health,
+  login redirect/page, Basic-to-session UI access, session/Basic/Bearer API
+  access, Bearer rejection on human UI, lockout, hosted headful rejection, and
+  hosted loopback rejection all passed on 2026-07-29.
 - Fingerprint golden verification:
   `data/verification/fingerprint-task1-2026-07-24.json`.
 - Gate 0:
@@ -205,13 +217,15 @@ immediate work is Effort 2:
 1. **Metadata-policy closure:** human-review the twelve sensitivity/oracle
    disagreements and approve one product taxonomy without weakening masking.
 2. **Controlled real-data readiness:** finish canonical D1/D3 production
-   cutover, full coverage certification, API authentication/tenant isolation,
-   execution cancellation/timeouts, comprehensive sensitive evidence leak
-   tests, and a frozen-framework unseen public holdout. Typed mapping,
-   crawl-scoped approval, and the first approved execution slice now exist.
+   cutover, full coverage certification, tenant authorization, execution
+   cancellation/timeouts, comprehensive sensitive evidence leak tests,
+   durable hosted evidence storage, and a frozen-framework unseen public
+   holdout. Typed mapping, crawl-scoped approval, the first approved execution
+   slice, staging UI authentication, and development Bearer access now exist.
 
 The current slice can populate and submit an approved crawl-scoped form from
-typed client data. It is not yet a production-secure multi-user service:
-coverage certification, API authentication, comprehensive masking/leak tests,
-the public D5 attempt, locale variants, and full drift automation remain
-release gates.
+typed client data through an authenticated staging gateway. It is not yet a
+production-secure multi-tenant service: coverage certification, tenant
+authorization, durable browser-job execution and evidence storage,
+comprehensive masking/leak tests, the public D5 attempt, locale variants, and
+full drift automation remain release gates.

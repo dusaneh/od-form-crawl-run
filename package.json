@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=22.13.0"
+    "node": "22.x"
   },
   "scripts": {
     "dev": "vinext dev",
@@ -28,7 +28,11 @@
     "gate3:score": "node test-sites/gate3-localhost-scorer.mjs",
     "gate4:localhost": "node test-sites/gate4-localhost-harness.mjs",
     "build": "vinext build",
-    "start": "vinext start",
+    "heroku-postbuild": "npm run build && node production/install-browser.mjs",
+    "start": "node production/server.mjs",
+    "start:ui": "vinext start",
+    "auth:seed": "node production/seed-auth.mjs",
+    "smoke:production": "node production/smoke.mjs",
     "test": "npm run build && node --test --test-concurrency=1 tests/*.test.mjs",
     "test:crawler": "node --test tests/playwright-crawl.test.mjs",
     "test:api": "node --test tests/local-api.test.mjs",
@@ -39,10 +43,11 @@
     "live:harness:headed": "node test-sites/live-harness.mjs --headed"
   },
   "dependencies": {
-    "next": "16.2.6",
+    "next": "^16.2.12",
     "pg": "^8.22.0",
-    "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "playwright": "^1.61.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.2.1",
@@ -52,14 +57,17 @@
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.2.6",
-    "playwright": "^1.61.1",
-    "react-server-dom-webpack": "19.2.6",
+    "eslint-config-next": "^16.2.12",
+    "react-server-dom-webpack": "^19.2.8",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
     "vinext": "0.0.50",
-    "vite": "8.0.13",
+    "vite": "^8.1.5",
     "yaml": "^2.9.0"
+  },
+  "overrides": {
+    "postcss": "8.5.25",
+    "sharp": "0.35.3"
   },
   "type": "module"
 }

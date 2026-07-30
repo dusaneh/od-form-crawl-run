@@ -1,0 +1,50 @@
+{
+  "name": "FormWeave",
+  "description": "API-first public form crawl, certification, and execution service.",
+  "repository": "https://github.com/1deg/intake-automation",
+  "buildpacks": [
+    {
+      "url": "heroku-community/apt"
+    },
+    {
+      "url": "heroku/nodejs"
+    }
+  ],
+  "addons": [
+    {
+      "plan": "heroku-postgresql:essential-0"
+    }
+  ],
+  "env": {
+    "FORMWEAVE_STORAGE": {
+      "value": "postgres"
+    },
+    "FORMWEAVE_CACHE_DIR": {
+      "value": "/tmp/formweave-cache"
+    },
+    "FORMWEAVE_AUTH_MAX_FAILURES": {
+      "value": "5"
+    },
+    "FORMWEAVE_AUTH_LOCKOUT_SECONDS": {
+      "value": "900"
+    },
+    "FORMWEAVE_SESSION_SECONDS": {
+      "value": "28800"
+    },
+    "OPENAI_KEY": {
+      "description": "OpenAI API key used only by server-side semantic generation.",
+      "required": true
+    },
+    "OPENAI_MODEL": {
+      "value": "gpt-5.4-mini"
+    },
+    "OPENAI_SEMANTIC_MODEL": {
+      "value": "gpt-5.4-mini"
+    }
+  },
+  "formation": {
+    "web": {
+      "quantity": 1
+    }
+  }
+}

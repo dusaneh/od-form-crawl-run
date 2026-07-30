@@ -15,11 +15,28 @@ Use the FormWeave base URL supplied for your environment. Examples below use:
 <FORMWEAVE_BASE_URL>
 ```
 
+## Authentication
+
+Every `/api/*` request requires a Bearer token issued for the client
+environment:
+
+```http
+Authorization: Bearer <FORMWEAVE_API_TOKEN>
+```
+
+The token is a secret. Send it only from server-side code over HTTPS; never
+embed it in a browser bundle, mobile application, URL, query parameter, or
+log. A `401 authentication_required` response means the header was missing,
+expired, revoked, or invalid. A `429 authentication_locked` response means
+repeated invalid authentication attempts temporarily locked that principal.
+The focused OpenAPI contracts linked below define the same Bearer scheme.
+
 ## What a client needs
 
 Before integrating, the client needs:
 
 - the FormWeave base URL for its environment;
+- a server-side FormWeave Bearer token;
 - a public target-form URL, or explicit loopback authority for a test fixture;
 - the ability to retain and pass opaque IDs between calls;
 - a reviewer identity for form approval;

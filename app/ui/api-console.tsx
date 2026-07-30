@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type JsonObject = Record<string, unknown>;
 type Exchange = {
@@ -22,7 +22,7 @@ type ConsoleError = {
   response: unknown;
 };
 
-const DEFAULT_API = "http://127.0.0.1:8787";
+const DEFAULT_API = "";
 const DEFAULT_TARGET =
   "http://localhost:9000/site_af_branch_cards/intake";
 const DEFAULT_CAPTURE =
@@ -57,7 +57,11 @@ function curlCommand(
   url: string,
   body?: unknown,
 ) {
-  const parts = [`curl -sS -X ${method}`, shellQuote(url)];
+  const parts = [
+    `curl -sS -X ${method}`,
+    shellQuote(url),
+    "-H 'Authorization: Bearer <FORMWEAVE_API_TOKEN>'",
+  ];
   if (body !== undefined) {
     parts.push("-H 'Content-Type: application/json'");
     parts.push(`--data ${shellQuote(JSON.stringify(body))}`);
@@ -178,6 +182,19 @@ export function ApiConsole() {
   const exchangeSequence = useRef(0);
   const [error, setError] = useState<ConsoleError | null>(null);
   const [busy, setBusy] = useState("");
+
+  useEffect(() => {
+    if (apiBase) return;
+    const timer = window.setTimeout(() => {
+      const localDevelopment =
+        ["localhost", "127.0.0.1"].includes(window.location.hostname) &&
+        window.location.port === "3000";
+      setApiBase(
+        localDevelopment ? "http://127.0.0.1:8787" : window.location.origin,
+      );
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [apiBase]);
 
   const inputSchema = useMemo(() => {
     const value = form?.inputSchema;
@@ -510,14 +527,13 @@ export function ApiConsole() {
     <main className="api-console-shell">
       <header className="api-console-header">
         <div>
-          {/* Vinext's current next/link shim can duplicate React during HMR. */}
-          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-          <a href="/" className="api-console-back">← Form intelligence</a>
-          <span className="breadcrumb">LOCAL DEVELOPER TOOLS / API CONSOLE</span>
+          <a href="/control-plane" className="api-console-back">← Form intelligence</a>
+          <span className="breadcrumb">DEVELOPER TOOLS / API CONSOLE</span>
           <h1>Crawl, approve, and run a form</h1>
           <p>
-            A thin UI over the real APIs, including the fixture submission
-            capture needed to verify what the browser actually posted.
+            A thin UI over the real crawl, report, approval, and execution
+            APIs. Local fixture capture remains available only on a developer
+            workstation.
           </p>
         </div>
       </header>
