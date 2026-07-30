@@ -27,12 +27,24 @@ export function formDirectory(formsRoot, formId) {
 }
 
 export async function readFormRecord(formsRoot, formId, database = null) {
+  let record;
   if (database) {
-    const record = await database.getForm(safeFormId(formId));
+    record = await database.getForm(safeFormId(formId));
     if (!record) throw new Error("Form not found.");
+  } else {
+    record = await readJson(
+      path.join(formDirectory(formsRoot, formId), "form.json"),
+    );
+  }
+  try {
+    const stored = await loadApprovedFormScript(record.script.path);
+    return {
+      ...record,
+      inputSchema: approvedInputSchemaForPlan(stored.plan),
+    };
+  } catch {
     return record;
   }
-  return readJson(path.join(formDirectory(formsRoot, formId), "form.json"));
 }
 
 export async function listFormRecords(formsRoot, database = null) {

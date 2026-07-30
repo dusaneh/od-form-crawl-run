@@ -694,6 +694,51 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.api-console-capture-check {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid;
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.api-console-capture-check.passed {
+  border-color: #a9dcc3;
+  color: #286247;
+  background: #edf9f3;
+}
+
+.api-console-capture-check.failed {
+  border-color: #efb8b3;
+  color: #8c3e38;
+  background: #fff2f0;
+}
+
+.api-console-capture-check details {
+  margin-top: 5px;
+}
+
+.api-console-capture-check summary {
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.api-console-capture-check pre {
+  max-height: 260px;
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 7px;
+  color: #43554b;
+  background: rgba(255, 255, 255, 0.72);
+  font-family: var(--font-geist-mono);
+  font-size: 9px;
+  white-space: pre-wrap;
+}
+
 .api-console-boolean {
   min-height: 42px;
   display: flex;

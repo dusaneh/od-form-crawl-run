@@ -4,7 +4,7 @@ Concise implementation index for `FEATURES.md`, `FEATURES_CONTRACT_V2.md`, and
 `FEATURES_PHASE2.md`. See `FEATURE_STATUS.md` and `CORPUS_PROGRESS.md` for
 evidence and qualifications.
 
-- Snapshot: 2026-07-29, America/Los_Angeles
+- Snapshot: 2026-07-30, America/Los_Angeles
 - **Built**: implemented and verified through the active production path.
 - **Partial**: usable implementation exists, but some contract or acceptance
   work remains.
@@ -17,6 +17,7 @@ evidence and qualifications.
 | Canonical journey | `F1.1.3 / F1.3.5` | **Partial** | Multi-page journeys accumulate states, fields, actions, and evidence through terminal result. Explicit mid-flow warnings and missing-predecessor coverage remain. |
 | Synthetic values and readback | `F1.3.4.1 / F1.3.4.4` | **Built** | Format-plausible synthetic values are entered through exact generated mechanics and verified by browser readback. |
 | Question/section model | `F1.4` | **Partial** | First-class guidance, section trees, group legends, option labels, raw controls, and critical flags are retained. Some canonical mappings and policy semantics remain. |
+| Browser/API input contract | `F1.4.2.1–F1.4.2.3` | **Built** | Public input schemas retain browser-native formats, native HTML names, option labels, hints, read-only/multiple state, ranges, length/pattern rules, and numeric step; malformed values fail before browser launch. |
 | Guidance records | `F1.4.6.1–F1.4.6.6` | **Built for production generation** | Scoped, classified, deduplicated guidance with provenance reaches model input, scripts, reports, and UI. |
 | Section tree | `F1.4.7.1–F1.4.7.3` | **Built** | DOM-derived sections retain ordered question membership, guidance references, and unsectioned fallback. |
 | Option meaning | `F1.4.8` | **Built** | Group legends and per-option value/label meaning are retained separately. |
@@ -46,6 +47,7 @@ evidence and qualifications.
 | Synthetic crawl uploads | `F1.3.4.11 / F3.13.5 / F8.7.8` | **Built locally; public proof pending** | The crawler generates a harmless in-memory file from observed constraints, executes only an LLM-authored upload action, verifies browser readback, and retains non-user-data evidence. Policy/code no longer depend on loopback component flags. |
 | Automated tests | `F8` | **Partial** | Production build and 78 automated checks pass, with one optional PostgreSQL integration check skipped without its dedicated test URI. Authenticated production smoke and the blind corpus are green; public D5 remains. |
 | Execution-conformance corpus | `F8.9` | **Built — conformance only** | Ground-truth-derived planners validate executor mechanics only and are never flexibility evidence. |
+| Test submission capture | `F8.9.9–F8.9.9.2` | **Built** | Registered public/local testforms capture endpoints support latest/list/clear, dispatcher cookies, GET/POST/JS capture semantics, and schema-to-native-name payload comparison across multi-step entries. |
 | Scorer-only answer keys | `F8.9.8 / F8.10.3` | **Built** | The 37-site production audit froze every run before any oracle read, then scored offline and refreshed per-form `LEARNINGS.md`. |
 | Production corpus acceptance | `F8.10.4–F8.10.6` | **Built for supported envelope** | Current combined post-fix verification is 37/37 functional, 244/244 fields, evidence on 37/37, zero failed runs, and 25/25 verified submissions. Strict exact-oracle parity is 25/37 because twelve sensitivity-policy/oracle disagreements remain for human review. |
 | Script lineage/replay | `F9.12` | **Partial — production reuse verified** | Immutable hash-linked `data/generated-scripts/<artifact>/vN` plans preflight and replay with zero traversal-model calls. Canonical Gate-3 D1 and automatic N+1 remain separate. |

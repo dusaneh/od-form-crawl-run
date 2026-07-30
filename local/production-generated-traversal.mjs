@@ -950,8 +950,18 @@ function generatedStatePlan({
           pattern: rawFact.pattern || "",
           min: rawFact.min || "",
           max: rawFact.max || "",
+          step: rawFact.step || "",
           minLength: rawFact.minLength || "",
           maxLength: rawFact.maxLength || "",
+        },
+        browserConstraints: {
+          rawType: rawFact.rawType || "",
+          placeholder: rawFact.placeholder || "",
+          autocomplete: rawFact.autocomplete || "",
+          inputMode: rawFact.inputMode || "",
+          multiple: rawFact.multiple === true,
+          disabled: rawFact.disabled === true,
+          readOnly: rawFact.readOnly === true,
         },
         upload:
           field.controlType === "file"
@@ -5716,14 +5726,30 @@ function everyPlanField(plan) {
 }
 
 function inputPropertyFor(field) {
+  const controlType = String(field.controlType || "text");
+  const browserPattern = {
+    "datetime-local":
+      "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,3})?)?$",
+    month: "^\\d{4}-(?:0[1-9]|1[0-2])$",
+    week: "^\\d{4}-W(?:0[1-9]|[1-4]\\d|5[0-3])$",
+    time: "^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,3})?)?$",
+  }[controlType];
   const description = [
     field.label,
     field.required ? "Required when this field is active." : "Optional.",
     field.sensitive ? "Sensitive; never persisted in execution logs." : "",
+    {
+      date: "Supply an ISO calendar date in YYYY-MM-DD format.",
+      "datetime-local":
+        "Supply a local date and time in YYYY-MM-DDTHH:mm format; no timezone offset.",
+      month: "Supply a calendar month in YYYY-MM format.",
+      week: "Supply an ISO week in YYYY-Www format.",
+      time: "Supply a time in 24-hour HH:mm format.",
+    }[controlType] || "",
   ]
     .filter(Boolean)
     .join(" ");
-  if (field.controlType === "file") {
+  if (controlType === "file") {
     return {
       type: "object",
       description,
@@ -5740,10 +5766,10 @@ function inputPropertyFor(field) {
       "x-formweave-upload-constraints": field.upload || {},
     };
   }
-  if (["checkbox", "switch"].includes(field.controlType)) {
+  if (["checkbox", "switch"].includes(controlType)) {
     return { type: "boolean", description };
   }
-  if (field.controlType === "number") {
+  if (controlType === "number") {
     const minimum =
       field.validation?.min !== undefined &&
       field.validation?.min !== null &&
@@ -5756,11 +5782,19 @@ function inputPropertyFor(field) {
       String(field.validation.max).trim() !== ""
         ? Number(field.validation.max)
         : null;
+    const step =
+      field.validation?.step !== undefined &&
+      field.validation?.step !== null &&
+      String(field.validation.step).trim() !== "" &&
+      String(field.validation.step).toLowerCase() !== "any"
+        ? Number(field.validation.step)
+        : null;
     return {
       type: "number",
       description,
       ...(Number.isFinite(minimum) ? { minimum } : {}),
       ...(Number.isFinite(maximum) ? { maximum } : {}),
+      ...(Number.isFinite(step) && step > 0 ? { multipleOf: step } : {}),
     };
   }
   const values = (field.options || [])
@@ -5769,8 +5803,18 @@ function inputPropertyFor(field) {
   return {
     type: "string",
     description,
+    ...(["date", "email", "url"].includes(controlType)
+      ? {
+          format: {
+            date: "date",
+            email: "email",
+            url: "uri",
+          }[controlType],
+        }
+      : {}),
+    ...(browserPattern ? { pattern: browserPattern } : {}),
     ...(values.length ? { enum: values } : {}),
-    ...(field.validation?.pattern
+    ...(field.validation?.pattern && !browserPattern
       ? { pattern: field.validation.pattern }
       : {}),
     ...(field.validation?.minLength
@@ -5792,6 +5836,36 @@ export function approvedInputSchemaForPlan(plan) {
         "x-formweave-label": field.label,
         "x-formweave-control": field.controlType,
         "x-formweave-sensitive": Boolean(field.sensitive),
+        "x-formweave-native-name": field.rawIdentity?.name || field.key,
+        "x-formweave-options": (field.options || []).map((option) => ({
+          value: option.value,
+          label: option.label,
+        })),
+        "x-formweave-input-format":
+          {
+            date: "YYYY-MM-DD",
+            "datetime-local": "YYYY-MM-DDTHH:mm",
+            month: "YYYY-MM",
+            week: "YYYY-Www",
+            time: "HH:mm",
+          }[field.controlType] || null,
+        "x-formweave-browser-constraints": {
+          rawType:
+            field.browserConstraints?.rawType || field.controlType || "",
+          placeholder: field.browserConstraints?.placeholder || "",
+          autocomplete: field.browserConstraints?.autocomplete || "",
+          inputMode: field.browserConstraints?.inputMode || "",
+          min: field.validation?.min || "",
+          max: field.validation?.max || "",
+          step: field.validation?.step || "",
+          multiple: field.browserConstraints?.multiple === true,
+          disabled: field.browserConstraints?.disabled === true,
+          readOnly: field.browserConstraints?.readOnly === true,
+        },
+        ...(field.browserConstraints?.disabled === true ||
+        field.browserConstraints?.readOnly === true
+          ? { readOnly: true }
+          : {}),
         "x-formweave-legal-acceptance-type":
           field.legalAcceptanceType || null,
         ...(branch ? { "x-formweave-branch": branch } : {}),
@@ -5814,6 +5888,7 @@ export function approvedInputSchemaForPlan(plan) {
     }));
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
+    "x-formweave-contract-version": 2,
     type: "object",
     properties,
     required: [...new Set(baseRequired)].sort(),
@@ -5833,6 +5908,67 @@ function scalarInput(value) {
 function sameInputValue(left, right) {
   return `${typeof left}:${String(left)}` ===
     `${typeof right}:${String(right)}`;
+}
+
+function validCalendarDate(value) {
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
+  );
+}
+
+function browserFormatIssue(controlType, value) {
+  const text = String(value);
+  if (controlType === "date" && !validCalendarDate(text)) {
+    return "Date inputs require YYYY-MM-DD, for example 1980-12-14.";
+  }
+  if (
+    controlType === "datetime-local" &&
+    !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,3})?)?$/.test(
+      text,
+    )
+  ) {
+    return "Local date-time inputs require YYYY-MM-DDTHH:mm without a timezone offset.";
+  }
+  if (
+    controlType === "month" &&
+    !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(text)
+  ) {
+    return "Month inputs require YYYY-MM.";
+  }
+  if (
+    controlType === "week" &&
+    !/^\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])$/.test(text)
+  ) {
+    return "Week inputs require YYYY-Www.";
+  }
+  if (
+    controlType === "time" &&
+    !/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,3})?)?$/.test(text)
+  ) {
+    return "Time inputs require 24-hour HH:mm.";
+  }
+  if (
+    controlType === "email" &&
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)
+  ) {
+    return "Email inputs require a valid email address.";
+  }
+  if (controlType === "url") {
+    try {
+      new URL(text);
+    } catch {
+      return "URL inputs require an absolute URL.";
+    }
+  }
+  return "";
 }
 
 function validateProvidedValue(field, value) {
@@ -5891,10 +6027,34 @@ function validateProvidedValue(field, value) {
       field.validation?.max === "" ? null : Number(field.validation?.max);
     if (Number.isFinite(min) && value < min) return `Value is below ${min}.`;
     if (Number.isFinite(max) && value > max) return `Value is above ${max}.`;
+    const step =
+      field.validation?.step === "" ||
+      String(field.validation?.step || "").toLowerCase() === "any"
+        ? null
+        : Number(field.validation?.step);
+    if (Number.isFinite(step) && step > 0) {
+      const base = Number.isFinite(min) ? min : 0;
+      const quotient = (value - base) / step;
+      if (Math.abs(quotient - Math.round(quotient)) > 1e-9) {
+        return `Value does not satisfy the crawled step size ${step}.`;
+      }
+    }
     return "";
   }
   if (!scalarInput(value) || typeof value !== "string") {
     return "This input requires a string.";
+  }
+  const formatIssue = browserFormatIssue(field.controlType, value);
+  if (formatIssue) return formatIssue;
+  if (
+    ["date", "datetime-local", "month", "week", "time"].includes(
+      field.controlType,
+    )
+  ) {
+    const min = String(field.validation?.min || "");
+    const max = String(field.validation?.max || "");
+    if (min && value < min) return `Value is earlier than ${min}.`;
+    if (max && value > max) return `Value is later than ${max}.`;
   }
   const allowed = (field.options || [])
     .map((option) => option.value)
@@ -5976,6 +6136,18 @@ export function validateApprovedInput(plan, inputData) {
       continue;
     }
     if (active && Object.hasOwn(inputData, field.key)) {
+      if (
+        field.browserConstraints?.disabled === true ||
+        field.browserConstraints?.readOnly === true
+      ) {
+        issues.push({
+          fieldKey: field.key,
+          code: "outside_contract",
+          detail:
+            "The crawled control is disabled or read-only and cannot accept client input.",
+        });
+        continue;
+      }
       const detail = validateProvidedValue(field, inputData[field.key]);
       if (detail) {
         issues.push({

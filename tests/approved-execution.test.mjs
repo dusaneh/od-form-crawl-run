@@ -19,6 +19,7 @@ function field(key, label, controlType, overrides = {}) {
       pattern: "",
       min: "",
       max: "",
+      step: "",
       minLength: "",
       maxLength: "",
     },
@@ -32,6 +33,40 @@ const plan = {
     {
       fields: [
         field("name", "Full name", "text", { required: true }),
+        field("birth_date", "Birth date", "date", {
+          rawIdentity: { name: "dob" },
+          browserConstraints: {
+            rawType: "date",
+            placeholder: "mm/dd/yyyy",
+            autocomplete: "bday",
+            inputMode: "",
+            multiple: false,
+          },
+          validation: {
+            pattern: "",
+            min: "1900-01-01",
+            max: "2099-12-31",
+            step: "",
+            minLength: "",
+            maxLength: "",
+          },
+        }),
+        field("appointment", "Appointment", "datetime-local"),
+        field("email", "Email", "email"),
+        field("website", "Website", "url"),
+        field("month", "Month", "month"),
+        field("week", "Week", "week"),
+        field("time", "Time", "time"),
+        field("amount", "Amount", "number", {
+          validation: {
+            pattern: "",
+            min: "0",
+            max: "100",
+            step: "0.25",
+            minLength: "",
+            maxLength: "",
+          },
+        }),
         field("housing", "Housing", "radio", {
           required: true,
           options: [
@@ -81,6 +116,30 @@ test("approved input schema exposes legal, upload, and conditional branch contra
     classification: "same_page_branch",
   });
   assert.deepEqual(schema.allOf[0].then.required, ["landlord"]);
+  assert.equal(schema.properties.birth_date.format, "date");
+  assert.equal(
+    schema.properties.birth_date["x-formweave-input-format"],
+    "YYYY-MM-DD",
+  );
+  assert.equal(
+    schema.properties.birth_date["x-formweave-native-name"],
+    "dob",
+  );
+  assert.equal(
+    schema.properties.birth_date["x-formweave-browser-constraints"].max,
+    "2099-12-31",
+  );
+  assert.equal(schema.properties.appointment.pattern.startsWith("^"), true);
+  assert.equal(schema.properties.email.format, "email");
+  assert.equal(schema.properties.website.format, "uri");
+  assert.equal(schema.properties.month["x-formweave-input-format"], "YYYY-MM");
+  assert.equal(schema.properties.week["x-formweave-input-format"], "YYYY-Www");
+  assert.equal(schema.properties.time["x-formweave-input-format"], "HH:mm");
+  assert.equal(schema.properties.amount.multipleOf, 0.25);
+  assert.deepEqual(schema.properties.housing["x-formweave-options"], [
+    { value: "rent", label: "Rent" },
+    { value: "own", label: "Own" },
+  ]);
 });
 
 test("approved input validation fails closed outside the crawled branch and file contract", () => {
@@ -127,6 +186,51 @@ test("approved input validation fails closed outside the crawled branch and file
     },
   });
   assert.deepEqual(accepted, { ok: true, issues: [] });
+});
+
+test("approved input validation rejects browser-native format and step mismatches before actuation", () => {
+  const malformedDate = validateApprovedInput(plan, {
+    name: "Ada Example",
+    birth_date: "12/14/1980",
+    housing: "own",
+    consent: true,
+  });
+  assert.equal(malformedDate.ok, false);
+  assert.equal(malformedDate.issues[0].fieldKey, "birth_date");
+  assert.match(malformedDate.issues[0].detail, /YYYY-MM-DD/);
+
+  const malformedLocalDateTime = validateApprovedInput(plan, {
+    name: "Ada Example",
+    appointment: "2026-07-30 14:20",
+    housing: "own",
+    consent: true,
+  });
+  assert.equal(malformedLocalDateTime.ok, false);
+  assert.equal(malformedLocalDateTime.issues[0].fieldKey, "appointment");
+
+  const wrongStep = validateApprovedInput(plan, {
+    name: "Ada Example",
+    amount: 1.1,
+    housing: "own",
+    consent: true,
+  });
+  assert.equal(wrongStep.ok, false);
+  assert.equal(wrongStep.issues[0].fieldKey, "amount");
+
+  const browserCompatible = validateApprovedInput(plan, {
+    name: "Ada Example",
+    birth_date: "1980-12-14",
+    appointment: "2026-07-30T14:20",
+    email: "ada@example.org",
+    website: "https://example.org/",
+    month: "2026-07",
+    week: "2026-W31",
+    time: "14:20",
+    amount: 1.25,
+    housing: "own",
+    consent: true,
+  });
+  assert.deepEqual(browserCompatible, { ok: true, issues: [] });
 });
 
 test("approved result context redacts raw and URL-encoded client values", () => {

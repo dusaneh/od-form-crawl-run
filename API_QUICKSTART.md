@@ -342,7 +342,16 @@ Example response (abbreviated):
       "properties": {
         "full_name": {
           "type": "string",
-          "x-formweave-label": "Full name"
+          "x-formweave-label": "Full name",
+          "x-formweave-native-name": "full_name"
+        },
+        "date_of_birth": {
+          "type": "string",
+          "format": "date",
+          "x-formweave-label": "Date of birth",
+          "x-formweave-control": "date",
+          "x-formweave-native-name": "dob",
+          "x-formweave-input-format": "YYYY-MM-DD"
         },
         "housing_type": {
           "type": "string",
@@ -388,8 +397,18 @@ Critical schema fields:
 - Enforce each property’s `type`, `enum`, `pattern`, and numeric or length
   limits.
 - Enforce the base `required` list.
+- Treat `format: date` as `YYYY-MM-DD`. Browser-native `datetime-local`,
+  `month`, `week`, and `time` controls expose their exact wire encoding in
+  `x-formweave-input-format`.
+- Enforce numeric `multipleOf` when the crawled control declared a step size.
 - Evaluate conditional requirements in `allOf`.
 - Use `x-formweave-label` and `x-formweave-control` to render client fields.
+- Use `x-formweave-options` when a client needs both the submitted option value
+  and its human-readable label.
+- Use `x-formweave-browser-constraints` for observed placeholder,
+  autocomplete, input-mode, min/max, step, and multiple-value hints.
+- `x-formweave-native-name` is informational for audit and fixture-capture
+  comparison. Continue sending the semantic property key in Run API `data`.
 - Use `x-formweave-branch` to show only fields active for the selected branch.
 - Observe sensitivity and legal-acceptance annotations returned on properties.
 - Send a file field as:

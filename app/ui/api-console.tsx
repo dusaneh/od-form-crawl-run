@@ -104,6 +104,114 @@ function schemaProperties(inputSchema: JsonObject | null) {
     : {};
 }
 
+function schemaOptions(schema: JsonObject) {
+  const labels = Array.isArray(schema["x-formweave-options"])
+    ? (schema["x-formweave-options"] as JsonObject[])
+    : [];
+  return new Map(
+    labels.map((option) => [
+      String(option.value ?? ""),
+      String(option.label ?? option.value ?? ""),
+    ]),
+  );
+}
+
+function browserConstraints(schema: JsonObject) {
+  return schema["x-formweave-browser-constraints"] &&
+    typeof schema["x-formweave-browser-constraints"] === "object"
+    ? (schema["x-formweave-browser-constraints"] as JsonObject)
+    : {};
+}
+
+function browserInputType(schema: JsonObject, control: string) {
+  if (schema.type === "number" || schema.type === "integer") return "number";
+  return [
+    "date",
+    "datetime-local",
+    "email",
+    "month",
+    "password",
+    "tel",
+    "time",
+    "url",
+    "week",
+  ].includes(control)
+    ? control
+    : "text";
+}
+
+function capturedSubmissions(value: unknown) {
+  if (!value || typeof value !== "object") return [] as JsonObject[];
+  const object = value as JsonObject;
+  if (Array.isArray(object.submissions)) {
+    return object.submissions.filter(
+      (item): item is JsonObject =>
+        Boolean(item) && typeof item === "object" && !Array.isArray(item),
+    );
+  }
+  return object.fields && typeof object.fields === "object" ? [object] : [];
+}
+
+function captureVerification(
+  inputSchema: JsonObject | null,
+  runData: JsonObject,
+  capture: unknown,
+) {
+  const submissions = capturedSubmissions(capture);
+  if (!inputSchema || submissions.length === 0) return null;
+  const capturedFields = submissions
+    .map((submission) =>
+      submission.fields && typeof submission.fields === "object"
+        ? (submission.fields as JsonObject)
+        : {},
+    );
+  const checks = Object.entries(runData).map(([key, expected]) => {
+    const schema = schemaProperties(inputSchema)[key] || {};
+    const nativeName = String(schema["x-formweave-native-name"] || key);
+    const observed = capturedFields
+      .filter((fields) => Object.hasOwn(fields, nativeName))
+      .flatMap((fields) => {
+        const value = fields[nativeName];
+        return Array.isArray(value) ? value : [value];
+      })
+      .map((value) => String(value));
+    let matched = false;
+    let expectedDisplay = String(expected);
+    if (typeof expected === "boolean") {
+      expectedDisplay = expected ? "present/checked" : "absent/unchecked";
+      matched = expected ? observed.length > 0 : observed.length === 0;
+    } else if (
+      expected &&
+      typeof expected === "object" &&
+      !Array.isArray(expected) &&
+      typeof (expected as JsonObject).filename === "string"
+    ) {
+      expectedDisplay = String((expected as JsonObject).filename);
+      matched = observed.includes(expectedDisplay);
+    } else if (Array.isArray(expected)) {
+      const expectedValues = expected.map((value) => String(value));
+      expectedDisplay = expectedValues.join(", ");
+      matched = expectedValues.every((value) => observed.includes(value));
+    } else {
+      matched = observed.includes(String(expected));
+    }
+    return {
+      key,
+      nativeName,
+      expected: expectedDisplay,
+      observed,
+      matched,
+    };
+  });
+  return {
+    submissionsChecked: submissions.length,
+    matched: checks.filter((check) => check.matched).length,
+    total: checks.length,
+    passed: checks.length > 0 && checks.every((check) => check.matched),
+    checks,
+  };
+}
+
 function branchFor(schema: JsonObject) {
   return schema["x-formweave-branch"] &&
     typeof schema["x-formweave-branch"] === "object"
@@ -232,6 +340,10 @@ export function ApiConsole() {
   const runData = useMemo(
     () => activePayload(inputSchema, inputValues),
     [inputSchema, inputValues],
+  );
+  const captureCheck = useMemo(
+    () => captureVerification(inputSchema, runData, capture),
+    [inputSchema, runData, capture],
   );
   const exchange =
     exchanges.find((item) => item.id === selectedExchangeId) ||
@@ -545,8 +657,8 @@ export function ApiConsole() {
           <h1>Crawl, approve, and run a form</h1>
           <p>
             A thin UI over the real crawl, report, approval, and execution
-            APIs. Local fixture capture remains available only on a developer
-            workstation.
+            APIs. Registered test-harness submissions can be read back from
+            local or hosted testforms deployments.
           </p>
         </div>
       </header>
@@ -891,9 +1003,11 @@ export function ApiConsole() {
                     inputValues,
                   );
                   const options = Array.isArray(schema.enum) ? schema.enum : [];
+                  const optionLabels = schemaOptions(schema);
                   const control = String(
                     schema["x-formweave-control"] || schema.type || "text",
                   );
+                  const constraints = browserConstraints(schema);
                   const value = inputValues[key];
                   const branch = branchFor(schema);
                   const fileField =
@@ -926,7 +1040,7 @@ export function ApiConsole() {
                           </option>
                           {options.map((option) => (
                             <option key={String(option)} value={String(option)}>
-                              {String(option)}
+                              {optionLabels.get(String(option)) || String(option)}
                             </option>
                           ))}
                         </select>
@@ -959,10 +1073,7 @@ export function ApiConsole() {
                       ) : (
                         <input
                           type={
-                            schema.type === "number" ||
-                            schema.type === "integer"
-                              ? "number"
-                              : "text"
+                            browserInputType(schema, control)
                           }
                           value={
                             typeof value === "string" ||
@@ -974,11 +1085,60 @@ export function ApiConsole() {
                           min={
                             typeof schema.minimum === "number"
                               ? schema.minimum
-                              : undefined
+                              : typeof constraints.min === "string" &&
+                                  constraints.min
+                                ? constraints.min
+                                : undefined
                           }
                           max={
                             typeof schema.maximum === "number"
                               ? schema.maximum
+                              : typeof constraints.max === "string" &&
+                                  constraints.max
+                                ? constraints.max
+                                : undefined
+                          }
+                          step={
+                            typeof schema.multipleOf === "number"
+                              ? schema.multipleOf
+                              : undefined
+                          }
+                          minLength={
+                            typeof schema.minLength === "number"
+                              ? schema.minLength
+                              : undefined
+                          }
+                          maxLength={
+                            typeof schema.maxLength === "number"
+                              ? schema.maxLength
+                              : undefined
+                          }
+                          pattern={
+                            typeof schema.pattern === "string"
+                              ? schema.pattern
+                              : undefined
+                          }
+                          placeholder={
+                            typeof constraints.placeholder === "string" &&
+                            constraints.placeholder
+                              ? constraints.placeholder
+                              : typeof schema["x-formweave-input-format"] ===
+                                    "string" &&
+                                  schema["x-formweave-input-format"]
+                                ? String(schema["x-formweave-input-format"])
+                                : undefined
+                          }
+                          inputMode={
+                            typeof constraints.inputMode === "string" &&
+                            constraints.inputMode
+                              ? (constraints.inputMode as
+                                  | "decimal"
+                                  | "email"
+                                  | "numeric"
+                                  | "search"
+                                  | "tel"
+                                  | "text"
+                                  | "url")
                               : undefined
                           }
                           onChange={(event) =>
@@ -1067,7 +1227,11 @@ export function ApiConsole() {
               <span>5</span>
               <div>
                 <h2>Verify captured submission</h2>
-                <p>Reads what the opted-in localhost fixture actually received.</p>
+                <p>
+                  Reads what any registered test site actually received. Use
+                  all submissions for multi-step GET forms; the latest endpoint
+                  contains only the final step.
+                </p>
               </div>
             </div>
             <label>
@@ -1104,6 +1268,30 @@ export function ApiConsole() {
               <summary>Captured native form fields</summary>
               <pre>{pretty(capture) || "No captured submission loaded."}</pre>
             </details>
+            {captureCheck && (
+              <div
+                className={
+                  captureCheck.passed
+                    ? "api-console-capture-check passed"
+                    : "api-console-capture-check failed"
+                }
+              >
+                <strong>
+                  {captureCheck.passed
+                    ? "Captured payload matches"
+                    : "Captured payload differs"}
+                </strong>
+                <span>
+                  {captureCheck.matched}/{captureCheck.total} run fields matched
+                  across {captureCheck.submissionsChecked} retained submission
+                  {captureCheck.submissionsChecked === 1 ? "" : "s"}.
+                </span>
+                <details>
+                  <summary>Field comparison</summary>
+                  <pre>{pretty(captureCheck.checks)}</pre>
+                </details>
+              </div>
+            )}
           </article>
         </div>
 

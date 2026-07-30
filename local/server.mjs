@@ -75,19 +75,29 @@ function isLoopbackUrl(value) {
   }
 }
 
+const publicCaptureHosts = new Set([
+  "testforms.dbolab.io",
+  "common-35f0c1409e9f.herokuapp.com",
+]);
+
 function fixtureCaptureEndpoint(rawBaseUrl, action) {
   let baseUrl;
   try {
     baseUrl = new URL(String(rawBaseUrl || ""));
   } catch {
     throw Object.assign(
-      new Error("captureBaseUrl must be a valid localhost fixture URL."),
+      new Error("captureBaseUrl must be a valid registered test-site URL."),
       { statusCode: 400 },
     );
   }
+  const loopback = isLoopbackUrl(baseUrl.href);
+  const registeredPublicHost = publicCaptureHosts.has(
+    baseUrl.hostname.toLowerCase(),
+  );
   if (
     !["http:", "https:"].includes(baseUrl.protocol) ||
-    !isLoopbackUrl(baseUrl.href) ||
+    (!loopback && !registeredPublicHost) ||
+    (hosted && loopback) ||
     baseUrl.username ||
     baseUrl.password ||
     baseUrl.search ||
@@ -96,7 +106,7 @@ function fixtureCaptureEndpoint(rawBaseUrl, action) {
   ) {
     throw Object.assign(
       new Error(
-        "Submission capture is restricted to a loopback /site_* fixture base URL.",
+        "Submission capture is restricted to registered testforms hosts and local /site_* fixtures.",
       ),
       { statusCode: 400 },
     );
@@ -113,31 +123,46 @@ function fixtureCaptureEndpoint(rawBaseUrl, action) {
     );
   }
   baseUrl.pathname = `${baseUrl.pathname.replace(/\/$/, "")}${suffix}`;
-  return baseUrl;
+  return {
+    endpoint: baseUrl,
+    needsRoutingCookie:
+      baseUrl.hostname.toLowerCase() ===
+        "common-35f0c1409e9f.herokuapp.com" ||
+      (loopback && baseUrl.port === "5000"),
+  };
+}
+
+async function fixtureRoutingCookie(endpoint) {
+  const selector = new URL("/?subdomain=testforms", endpoint.origin);
+  const response = await fetch(selector, {
+    method: "GET",
+    redirect: "manual",
+    signal: AbortSignal.timeout(8_000),
+  });
+  const setCookie = response.headers.get("set-cookie") || "";
+  const match = setCookie.match(/(?:^|,\s*)(_subdomain=[^;,\s]+)/i);
+  if (!match) {
+    throw new Error("The dispatcher did not return its testforms routing cookie.");
+  }
+  return match[1];
 }
 
 async function proxyFixtureCapture(request) {
-  if (hosted) {
-    return jsonResponse(
-      request,
-      {
-        error: "Local fixture capture is disabled in the hosted service.",
-        code: "hosted_fixture_unavailable",
-      },
-      403,
-    );
-  }
   try {
     const payload = await bodyJson(request);
     const action = String(payload.action || "");
-    const endpoint = fixtureCaptureEndpoint(payload.captureBaseUrl, action);
-    const response = await fetch(endpoint, {
+    const target = fixtureCaptureEndpoint(payload.captureBaseUrl, action);
+    const routingCookie = target.needsRoutingCookie
+      ? await fixtureRoutingCookie(target.endpoint)
+      : "";
+    const response = await fetch(target.endpoint, {
       method: action === "clear" ? "DELETE" : "GET",
       headers: {
         accept: "application/json",
+        ...(routingCookie ? { cookie: routingCookie } : {}),
       },
       redirect: "error",
-      signal: AbortSignal.timeout(5_000),
+      signal: AbortSignal.timeout(8_000),
     });
     const body = await response.text();
     return new Response(body, {

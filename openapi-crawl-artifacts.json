@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FormWeave — Get Report, Schema, and Screenshots",
-    "version": "1.0.0",
-    "description": "Retrieves the crawl report, the executable input schema for a crawl-scoped form ID, and individual screenshot evidence."
+    "version": "1.1.0",
+    "description": "Retrieves the crawl report, the executable input schema for a crawl-scoped form ID, and individual screenshot evidence. Input schemas project browser-native formats and constraints so clients can validate values before execution."
   },
   "servers": [
     {
@@ -252,7 +252,7 @@
           },
           "inputSchema": {
             "type": "object",
-            "description": "JSON Schema for data sent to POST /api/forms/{formId}/runs.",
+            "description": "JSON Schema for data sent to POST /api/forms/{formId}/runs. Standard keywords include type, format, enum, pattern, minLength, maxLength, minimum, maximum, and multipleOf. x-formweave-input-format explains browser-native date/time encodings; x-formweave-native-name maps the semantic API key to the submitted HTML name; x-formweave-options preserves value/label pairs; x-formweave-browser-constraints preserves observed raw type, placeholder, autocomplete, input mode, min, max, step, and multiple state.",
             "additionalProperties": true
           },
           "script": {

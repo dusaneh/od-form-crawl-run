@@ -3,7 +3,7 @@
 Status snapshot for `FEATURES.md` under the binding architecture in
 `FEATURES_CONTRACT_V2.md`.
 
-- Snapshot: 2026-07-29, America/Los_Angeles
+- Snapshot: 2026-07-30, America/Los_Angeles
 - **Built** means implemented and verified through the active production path.
 - **Partial** means useful implementation exists but the complete requirement
   or acceptance gate has not passed.
@@ -120,6 +120,7 @@ failure in the supported Phase 1 envelope.
 | `F1.6` obstacles | **Partial** | Stable waits and scrolling are physics; disclosures/gates are LLM-authored. Pending disclosures block unrelated progression and exhausted disclosures cannot be reused. Interactive CAPTCHA and required login now produce explicit disqualified crawl/form eligibility; broader public proof remains. |
 | `F1.7.9 / F16.6–F16.13` same-page branching | **Built for exactly one level** | Clean-baseline exhaustive option probes, additions-only visible-control deltas, sibling replay, variant population, selected-branch restoration, and depth-exceeded halt are implemented. |
 | `F1.7.10 / F16.8–F16.13` cross-page branching | **Built as detection-only; execution intentionally unsupported** | Detected/uncertain dependence halts before dependent-page actuation or submit. Cross-page branch execution is outside the current product scope, not an outstanding implementation item. K and P passed this boundary. |
+| `F1.4.2.1–F1.4.2.3` browser/API input contract | **Built** | Published schemas retain native names, option labels, browser hints, read-only/multiple state, date/time encodings, and numeric step. Approved execution rejects malformed browser-native values before Chromium starts; existing form records derive the current schema from their pinned script when read. |
 | `F1.8` quality floor | **Built for current corpus** | All 37 final-cohort runs retained useful artifacts; no empty false success or lost prior states. Validation exhaustion now retains a durable `could_not_test` artifact instead of collapsing into an empty run. |
 | `F1.9` locale | **Not built** | Locale pinning, mismatch detection, variants, and locale-separated lineage remain. |
 | `F2.1–F2.4` local artifacts/logs | **Built** | Rendered HTML, PNGs, reports, model/script records, and JSONL logs persist locally. |
@@ -142,6 +143,7 @@ failure in the supported Phase 1 envelope.
 | `F7` safety | **Partial** | Public Probe terminal submit remains blocked; CAPTCHA solving, credential entry, and payment are prohibited and CAPTCHA/login disqualify. Public/local synthetic upload, consent, review, acknowledgement, and signature modeling now share the same accepted-script boundary. Fresh public special-component proof remains. |
 | `F8` verification | **Partial** | Production build passes; 78 automated checks pass and one optional PostgreSQL integration check is skipped when its dedicated test URI is absent. The authenticated production smoke suite and blind 37-site local corpus are green. Public D5 remains. |
 | `F8.9` execution conformance | **Built — conformance only** | Ground-truth-derived planners test physics, never discovery or flexibility. |
+| `F8.9.9–F8.9.9.2` universal test submission capture | **Built** | The console proxy supports all registered public or local testforms sites, dispatcher routing cookies, latest/list/clear semantics, native-name comparison, arrays, filenames, and multi-step aggregation. Arbitrary hosts remain blocked. |
 | `F8.9.8 / F8.10.3` oracle isolation | **Built** | Production audit freezes all artifacts before offline answer-key reads and regenerates per-form learning reports afterward. |
 | `F8.10.4–F8.10.6` local corpus gate | **Built for supported envelope — 37/37 functional** | 244/244 fields, evidence on 37/37, zero failed runs, and 25/25 verified submissions. Twelve sensitivity-policy/oracle review items remain outside functional traversal. |
 | `F9.12` script lineage | **Partial** | Immutable hash-linked `data/generated-scripts/<artifact>/vN` scripts preflight and replay. Canonical D1/N+1 remains. |

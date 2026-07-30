@@ -195,9 +195,11 @@ export async function captureNovelStateInput({
         description: describedBy(element),
         placeholder: element.getAttribute("placeholder") || null,
         autocomplete: element.getAttribute("autocomplete") || null,
+        inputMode: element.getAttribute("inputmode") || null,
         pattern: element.getAttribute("pattern") || null,
         min: element.getAttribute("min") || null,
         max: element.getAttribute("max") || null,
+        step: element.getAttribute("step") || null,
         minLength: element.getAttribute("minlength") || null,
         maxLength: element.getAttribute("maxlength") || null,
         accept: element.getAttribute("accept") || null,
@@ -231,6 +233,11 @@ export async function captureNovelStateInput({
         disabled:
           element.hasAttribute("disabled") ||
           element.getAttribute("aria-disabled") === "true",
+        readOnly:
+          element instanceof HTMLInputElement ||
+          element instanceof HTMLTextAreaElement
+            ? element.readOnly
+            : false,
         options: optionFacts,
         sectionText: sectionOf(element),
         selectorCandidates: selectors(element),

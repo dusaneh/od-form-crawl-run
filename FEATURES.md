@@ -190,6 +190,21 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   `min`, `max`, `minlength`, and `maxlength`), upload constraints (`accept`,
   maximum size, and maximum file count), repeatable-section membership and its
   add-row control, and any "Other, specify" companion linkage.
+- `F1.4.2.1` The client-facing Run API schema is derived from the same observed
+  browser facts used by the generated Playwright script. It preserves native
+  field name, raw type, option `{value, label}` pairs, placeholder,
+  autocomplete, input mode, disabled/read-only/multiple state, numeric step,
+  and browser-native date/time encoding rather than dropping them during
+  contract publication.
+- `F1.4.2.2` Standard JSON Schema keywords are used where semantics align:
+  `format` for date, email, and URI; `pattern` for local date-time, month,
+  week, and time; `multipleOf` for numeric step; and existing enumeration,
+  range, pattern, and length constraints. Browser-specific facts that lack a
+  standard keyword remain explicit `x-formweave-*` annotations.
+- `F1.4.2.3` Approved execution validates browser-native encodings and
+  constraints before launching Chromium. A localized display date such as
+  `12/14/1980` does not reach Playwright when the native date value requires
+  `1980-12-14`; the API returns a field-specific validation issue instead.
 - `F1.4.3` Visible fields and hidden/system controls remain distinguishable.
 - `F1.4.4` Client-rendered controls may be represented as rendered-DOM
   observations only after Playwright actually observes them; they remain
@@ -967,6 +982,19 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   is inaccessible before the first model call; a separate scorer may read it
   only after generation artifacts are frozen, and must verify those artifacts
   remain byte-for-byte unchanged while scoring.
+- `F8.9.9` Every registered test site exposes the same per-site submission
+  capture API: latest submission, newest-first retained list, clear, and
+  direct submit. Verification supports POST bodies, GET wizard-step captures,
+  and JavaScript submit endpoints; files compare by filename, repeated values
+  may be arrays, and multi-page verification uses the retained list rather
+  than assuming the latest entry contains every step.
+- `F8.9.9.1` The API console may proxy capture reads only to the documented
+  testforms hosts or a local `/site_*` fixture. Dispatcher deployments obtain
+  the testforms routing cookie before the capture call. Arbitrary public or
+  private targets remain forbidden.
+- `F8.9.9.2` The API console compares Run API semantic keys to captured native
+  HTML names using the published `x-formweave-native-name` mapping and reports
+  matched, missing, and differing fields across retained submissions.
 - `F8.10` Generated-script capability is scored only with strict separation:
   generation sees the website but not ground truth; a separate scorer loads
   hidden ground truth only after the generated script is frozen. Human
