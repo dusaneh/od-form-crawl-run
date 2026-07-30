@@ -617,7 +617,7 @@ test("synthetic upload modeling is accepted for public and local crawl scripts",
   );
 });
 
-test("retained fixture-authorized actions require fresh authority on every run", () => {
+test("retained protected component actions require fresh authority in every crawl mode", () => {
   const plan = {
     fields: [
       {
@@ -645,8 +645,8 @@ test("retained fixture-authorized actions require fresh authority on every run",
       consent: true,
       signature: true,
       upload: true,
-    }).map((issue) => issue.targetKey),
-    ["consent", "signature", "document"],
+    }),
+    [],
   );
   assert.deepEqual(
     replayAuthorityIssues(plan, "fixture_submit", {

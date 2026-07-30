@@ -68,12 +68,13 @@ and `127.0.0.0/8`; other private-network targets remain blocked.
 Both use the same browser physics, network guard, extraction, screenshots,
 logs, and filesystem persistence.
 
-Public targets use **Probe** and never activate a terminal submit control.
-Explicitly allowed loopback fixtures also expose a separately labeled
-submission-conformance mode. Intermediate `Next` actions may make same-origin
-POST requests after a form-specific planner classifies them as nonterminal.
-Validation, autosave, and intermediate round-trips can therefore leave partial
-server-side state even though the final submission is blocked.
+The crawl request independently chooses whether to stop before terminal
+submission or submit synthetic values and verify the result. The same choice
+is available for public targets and explicitly allowed loopback fixtures.
+Intermediate `Next` actions may make same-origin POST requests after the
+form-specific script classifies them as nonterminal. Validation, autosave, and
+intermediate round-trips can therefore leave partial server-side state even
+when terminal submission is blocked.
 
 ## Architecture
 
@@ -339,9 +340,9 @@ npm run corpus:drift
 negative path. Corpus artifacts are stored under
 `data/localhost-corpus/<timestamp>/`. Ground truth constructs these planners
 and later scores them, so the result is never evidence of discovery,
-generation, or flexibility. `fixture_submit` is hard-limited to explicitly
-allowed loopback URLs and is available through a separately labeled product-UI
-test option; it is never available for public targets.
+generation, or flexibility. The corpus still accepts the legacy
+`fixture_submit` token as an alias of the origin-neutral crawl
+`submit: true` boundary.
 
 Run the Gate 2 semantic-generation check separately:
 

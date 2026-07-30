@@ -502,6 +502,63 @@ export class PhysicsToolbox {
     return { verified: true, failureCode: null, detail: null };
   }
 
+  async clearControl(target, controlType) {
+    const locator = await this.resolveUnique(target);
+    if (!locator) {
+      return {
+        verified: false,
+        failureCode: "locator_unresolved",
+        detail: "No contract-scoped locator resolved uniquely for cleanup.",
+      };
+    }
+    try {
+      await this.withAuthorizedWrites("field", async () => {
+        await locator.evaluate((element, type) => {
+          if (!(element instanceof HTMLElement)) {
+            throw new Error("The cleanup target is not an HTML element.");
+          }
+          if (
+            (type === "checkbox" || type === "switch" || type === "radio") &&
+            element instanceof HTMLInputElement
+          ) {
+            element.checked = false;
+          } else if (
+            element instanceof HTMLInputElement ||
+            element instanceof HTMLTextAreaElement ||
+            element instanceof HTMLSelectElement
+          ) {
+            element.value = "";
+          } else {
+            throw new Error("The cleanup target is not a native form control.");
+          }
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+        }, controlType);
+      });
+      const current =
+        controlType === "checkbox" ||
+        controlType === "switch" ||
+        controlType === "radio"
+          ? await locator.isChecked().catch(() => true)
+          : await locator.inputValue().catch(() => "__unreadable__");
+      const verified =
+        typeof current === "boolean" ? current === false : current === "";
+      return {
+        verified,
+        failureCode: verified ? null : "actuation_unverified",
+        detail: verified
+          ? "The inactive script-declared branch control was cleared."
+          : "The inactive script-declared branch control did not clear.",
+      };
+    } catch (error) {
+      return {
+        verified: false,
+        failureCode: "actuation_unverified",
+        detail: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   async uploadGeneratedFile(target, constraints = {}) {
     const locator = await this.resolveUnique(target);
     if (!locator) {

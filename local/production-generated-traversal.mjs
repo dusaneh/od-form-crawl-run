@@ -166,17 +166,6 @@ function safeSegment(value) {
     .slice(0, 100) || "state";
 }
 
-function isLoopbackUrl(value) {
-  const hostname = new URL(value).hostname.toLowerCase().replace(/\.$/, "");
-  return (
-    hostname === "localhost" ||
-    hostname.endsWith(".localhost") ||
-    hostname === "::1" ||
-    hostname === "[::1]" ||
-    hostname.startsWith("127.")
-  );
-}
-
 function observedControlIdentity(fact) {
   if (fact?.id) return `id:${fact.id}`;
   if (fact?.name) {
@@ -1075,6 +1064,7 @@ export function replayAuthorityIssues(
   executionMode,
   fixtureAuthorities = {},
 ) {
+  void executionMode;
   const issues = [];
   for (const field of plan.fields || []) {
     const match = String(field.safetyAuthority || "").match(
@@ -1082,13 +1072,10 @@ export function replayAuthorityIssues(
     );
     if (!match) continue;
     const authority = match[1];
-    if (
-      executionMode !== "fixture_submit" ||
-      fixtureAuthorities?.[authority] !== true
-    ) {
+    if (fixtureAuthorities?.[authority] !== true) {
       issues.push({
         targetKey: field.key,
-        problem: `Retained action requires explicit fixture authority ${authority} for this run.`,
+        problem: `Retained action requires explicit component authority ${authority} for this crawl.`,
         selectorCandidates: field.selectors || [],
       });
     }
@@ -2732,6 +2719,64 @@ async function populateSelectedBranchVariants({
   };
 }
 
+async function clearInactiveBranchVariantFields({
+  toolbox,
+  plan,
+  onEvent,
+}) {
+  const activeVariantKeys = new Set();
+  for (const coverage of plan.choiceCoverage || []) {
+    if (!coverage.variantPlan) continue;
+    const parentField = plan.fields.find(
+      (field) => field.key === coverage.fieldKey,
+    );
+    if (
+      parentField &&
+      scalarKey(parentField.testValue) === scalarKey(coverage.value)
+    ) {
+      for (const field of coverage.variantPlan.fields || []) {
+        activeVariantKeys.add(field.key);
+      }
+    }
+  }
+  const cleared = new Set();
+  for (const coverage of plan.choiceCoverage || []) {
+    if (!coverage.variantPlan) continue;
+    const parentField = plan.fields.find(
+      (field) => field.key === coverage.fieldKey,
+    );
+    if (
+      !parentField ||
+      scalarKey(parentField.testValue) === scalarKey(coverage.value)
+    ) {
+      continue;
+    }
+    for (const field of coverage.variantPlan.fields || []) {
+      if (activeVariantKeys.has(field.key) || cleared.has(field.key)) continue;
+      const outcome = await toolbox.clearControl(
+        { selectors: field.selectors },
+        field.controlType,
+      );
+      if (!outcome.verified) {
+        throw new Error(
+          `Could not clear inactive branch field ${field.key}: ${outcome.detail}`,
+        );
+      }
+      cleared.add(field.key);
+      await onEvent?.(
+        "inactive_branch_field_cleared",
+        `Cleared inactive LLM-authored branch field ${field.label}.`,
+        {
+          fieldKey: field.key,
+          parentFieldKey: parentField.key,
+          inactiveValue: coverage.value,
+        },
+      );
+    }
+  }
+  return [...cleared];
+}
+
 function observedField(field, plan, result, stateKey) {
   const section = (plan.sections || []).find(
     (item) => item.key === field.sectionKey,
@@ -3133,7 +3178,7 @@ export function redactApprovedObservationText(
   return redacted;
 }
 
-async function submitFixtureTerminal({
+async function submitCrawlTerminal({
   page,
   toolbox,
   plan,
@@ -3144,9 +3189,6 @@ async function submitFixtureTerminal({
   approvedLive = false,
   redactionValues = [],
 }) {
-  if (!approvedLive && !isLoopbackUrl(page.url())) {
-    throw new Error("Generated fixture submission is restricted to loopback.");
-  }
   const beforeCount = await page
     .evaluate(() =>
       Number.parseInt(
@@ -3171,7 +3213,7 @@ async function submitFixtureTerminal({
   const click = await withOuterWriteWindow(
     authorizeWrites,
     "final-action",
-    `${approvedLive ? "approved live" : "explicit generated fixture"} submit ${plan.progression.key}`,
+    `${approvedLive ? "approved live" : "explicit synthetic crawl"} submit ${plan.progression.key}`,
     () =>
       toolbox.clickAction({
         selectors: plan.progression.selectors,
@@ -3348,8 +3390,8 @@ async function submitFixtureTerminal({
       ? "fixture_terminal_submission_completed"
       : "fixture_terminal_submission_unverified",
     submitted
-      ? `Submitted ${approvedLive ? "approved form" : "localhost fixture"} through generated action ${plan.progression.key}.`
-      : `Could not verify ${approvedLive ? "approved form" : "localhost fixture"} submission through ${plan.progression.key}.`,
+      ? `Submitted ${approvedLive ? "approved form" : "crawl target"} through generated action ${plan.progression.key}.`
+      : `Could not verify ${approvedLive ? "approved form" : "crawl target"} submission through ${plan.progression.key}.`,
     {
       label: plan.progression.key,
       submitEventsBefore: beforeCount,
@@ -3586,6 +3628,11 @@ async function replayStoredFormScript({
         `Validation replay failed a required field in ${plan.state.key}.`,
       );
     }
+    await clearInactiveBranchVariantFields({
+      toolbox,
+      plan,
+      onEvent,
+    });
     const selectedVariants = await populateSelectedBranchVariants({
       page,
       toolbox,
@@ -3632,7 +3679,7 @@ async function replayStoredFormScript({
     if (plan.progression.kind === "terminal_submit") {
       if (executionMode === "fixture_submit") {
         submissionsAttempted += 1;
-        const terminalResult = await submitFixtureTerminal({
+        const terminalResult = await submitCrawlTerminal({
           page,
           toolbox,
           plan,
@@ -3656,10 +3703,10 @@ async function replayStoredFormScript({
             sequence: evidence.length + 1,
             kind: "submitted",
             label: terminalResult.verified
-              ? "Generated localhost fixture submission verified"
+              ? "Generated crawl-time submission verified"
               : terminalResult.outcome === "failure"
-                ? "Generated localhost fixture submission failed"
-                : "Generated localhost fixture submission could not be verified",
+                ? "Generated crawl-time submission failed"
+                : "Generated crawl-time submission could not be verified",
             onEvent,
           }),
         );
@@ -4081,8 +4128,7 @@ export async function generateAndReplayForm({
         proposal: generated.proposal,
         observation: captured.observation,
         existingContract,
-        fixtureAuthorities:
-          executionMode === "fixture_submit" ? fixtureAuthorities : null,
+        fixtureAuthorities,
       });
       plan = generatedStatePlan({
         proposal: generated.proposal,
@@ -4377,8 +4423,7 @@ export async function generateAndReplayForm({
       beforeCapture: captured,
       existingContract,
       priorStates: generationStates.map((item) => item.proposal.state),
-      fixtureAuthorities:
-        executionMode === "fixture_submit" ? fixtureAuthorities : null,
+      fixtureAuthorities,
       authorizeWrites,
       onEvent,
       generatedRoot,
@@ -4524,6 +4569,11 @@ export async function generateAndReplayForm({
           .join(", ")}. No progression or submission was attempted.`,
       });
     }
+    await clearInactiveBranchVariantFields({
+      toolbox,
+      plan: stored.plan,
+      onEvent,
+    });
     const selectedVariants = await populateSelectedBranchVariants({
       page,
       toolbox,
@@ -5414,6 +5464,11 @@ export async function generateAndReplayForm({
         `Validation replay failed a required field in ${plan.state.key}.`,
       );
     }
+    await clearInactiveBranchVariantFields({
+      toolbox,
+      plan,
+      onEvent,
+    });
     const selectedVariants = await populateSelectedBranchVariants({
       page,
       toolbox,
@@ -5460,7 +5515,7 @@ export async function generateAndReplayForm({
     if (plan.progression.kind === "terminal_submit") {
       if (executionMode === "fixture_submit") {
         submissionsAttempted += 1;
-        const terminalResult = await submitFixtureTerminal({
+        const terminalResult = await submitCrawlTerminal({
           page,
           toolbox,
           plan,
@@ -5484,10 +5539,10 @@ export async function generateAndReplayForm({
             sequence: evidence.length + 1,
             kind: "submitted",
             label: terminalResult.verified
-              ? "Generated localhost fixture submission verified"
+              ? "Generated crawl-time submission verified"
               : terminalResult.outcome === "failure"
-                ? "Generated localhost fixture submission failed"
-                : "Generated localhost fixture submission could not be verified",
+                ? "Generated crawl-time submission failed"
+                : "Generated crawl-time submission could not be verified",
             onEvent,
           }),
         );
@@ -6373,7 +6428,7 @@ export async function executeApprovedFormScript({
           submissionResult: null,
         };
       }
-      submissionResult = await submitFixtureTerminal({
+      submissionResult = await submitCrawlTerminal({
         page,
         toolbox,
         plan,

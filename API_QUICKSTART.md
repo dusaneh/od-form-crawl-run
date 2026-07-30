@@ -108,9 +108,17 @@ Example request (common path):
   "urls": ["https://example.org/application"],
   "name": "Example application",
   "mode": "probe",
+  "submit": false,
   "browserMode": "headless",
   "allowLocalTargets": false,
-  "discoverRelatedPages": false
+  "discoverRelatedPages": false,
+  "componentAuthorities": {
+    "consent": false,
+    "signature": false,
+    "upload": false,
+    "acknowledgement": false,
+    "reviewConfirmation": false
+  }
 }
 ```
 
@@ -120,10 +128,12 @@ Request fields:
 | --- | --- | --- |
 | `urls` | Yes | One to twelve HTTP or HTTPS starting URLs. |
 | `name` | No | Client-facing crawl label. It is not artifact identity. |
-| `mode` | No | Use `probe` to traverse with synthetic values without terminal submission. `fixture_submit` is restricted to explicitly permitted loopback fixtures. |
+| `mode` | No | Compatibility field; send `probe`. Legacy `fixture_submit` is accepted as an alias for `submit: true`. |
+| `submit` | No | `false` traverses and verifies synthetic values but blocks the terminal action. `true` explicitly activates the LLM-authored terminal action and verifies the resulting state for either a public target or an allowed localhost target. |
 | `browserMode` | No | `headless` or `headful`; defaults to `headless`. |
 | `allowLocalTargets` | No | Must be `true` for loopback targets. It does not allow other private networks. |
 | `discoverRelatedPages` | No | Enables bounded same-origin page discovery. |
+| `componentAuthorities` | No | Fresh per-crawl permission to model consent, signature, upload, acknowledgement, or review-confirmation controls with synthetic values. These flags do not authorize terminal submission; use `submit` for that. |
 
 Example response: `201 Created`
 
@@ -135,6 +145,7 @@ Example response: `201 Created`
     "status": "running",
     "stage": "Queued for local browser crawl",
     "progress": 2,
+    "submit": false,
     "reportAvailable": false
   }
 }

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FormWeave — Check Crawl",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Polls exactly one crawl using the run ID returned by the kick-off call."
   },
   "servers": [
@@ -104,6 +104,22 @@
           },
           "reportAvailable": {
             "type": "boolean"
+          },
+          "submit": {
+            "type": "boolean",
+            "description": "Echoes whether terminal submission was explicitly requested for this crawl."
+          },
+          "componentAuthorities": {
+            "type": "object",
+            "description": "The fresh protected-component permissions recorded for this crawl.",
+            "properties": {
+              "acknowledgement": { "type": "boolean" },
+              "consent": { "type": "boolean" },
+              "reviewConfirmation": { "type": "boolean" },
+              "signature": { "type": "boolean" },
+              "upload": { "type": "boolean" }
+            },
+            "additionalProperties": false
           },
           "formIds": {
             "type": "array",

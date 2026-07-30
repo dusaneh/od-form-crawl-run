@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type JsonObject = Record<string, unknown>;
-type CrawlMode = "probe" | "fixture_submit";
+type CrawlMode = "probe" | "submit";
 type FixtureAuthorities = {
   acknowledgement: boolean;
   consent: boolean;
@@ -513,11 +513,12 @@ export function ApiConsole() {
       const payload = await request("Start crawl", "POST", "/api/runs", {
         urls: [targetUrl],
         name: "API console crawl",
-        mode: crawlMode,
+        mode: "probe",
+        submit: crawlMode === "submit",
         browserMode,
         allowLocalTargets,
         discoverRelatedPages,
-        fixtureAuthorities,
+        componentAuthorities: fixtureAuthorities,
       });
       const run =
         payload.run && typeof payload.run === "object"
@@ -697,9 +698,11 @@ export function ApiConsole() {
               <strong>Choose the crawl boundary explicitly.</strong>
               <span>
                 <code>probe</code> maps and tests with synthetic values but
-                stops before terminal submit. <code>fixture_submit</code> is
-                only for an explicitly allowed localhost test form; public
-                form submission happens later through the approved run API.
+                stops before terminal submit. <code>submit: true</code> uses
+                the same LLM-authored script and synthetic values, activates
+                the terminal action, and verifies the resulting state. This
+                choice is available for public and explicitly allowed
+                localhost targets.
               </span>
             </div>
             <div className="api-console-inline">
@@ -712,8 +715,8 @@ export function ApiConsole() {
                   }
                 >
                   <option value="probe">Probe — stop before submit</option>
-                  <option value="fixture_submit">
-                    Local fixture submit — synthetic only
+                  <option value="submit">
+                    Traverse and submit — synthetic values
                   </option>
                 </select>
               </label>
@@ -755,10 +758,9 @@ export function ApiConsole() {
                 <input
                   type="checkbox"
                   checked={allowLocalTargets}
-                  onChange={(event) => {
-                    setAllowLocalTargets(event.target.checked);
-                    if (!event.target.checked) setCrawlMode("probe");
-                  }}
+                  onChange={(event) =>
+                    setAllowLocalTargets(event.target.checked)
+                  }
                 />
                 <span>
                   <strong>Allow localhost test targets</strong>
@@ -766,13 +768,14 @@ export function ApiConsole() {
                 </span>
               </label>
             </div>
-            {crawlMode === "fixture_submit" && (
-              <fieldset className="api-console-authorities">
-                <legend>Local fixture component authorities</legend>
-                <p>
-                  These are sent with the request for an opted-in local fixture.
-                  The server still enforces the loopback boundary.
-                </p>
+            <fieldset className="api-console-authorities">
+              <legend>Per-crawl component authorities</legend>
+              <p>
+                These permit the LLM-authored script to model the selected
+                component types with synthetic values. They do not authorize
+                terminal submission; that is controlled separately by the
+                crawl boundary above.
+              </p>
                 {(
                   [
                     ["consent", "Consent / terms"],
@@ -796,16 +799,12 @@ export function ApiConsole() {
                     <span>{label}</span>
                   </label>
                 ))}
-              </fieldset>
-            )}
+            </fieldset>
             <div className="api-console-actions">
               <button
                 className="primary-button"
                 onClick={startCrawl}
-                disabled={
-                  Boolean(busy) ||
-                  (crawlMode === "fixture_submit" && !allowLocalTargets)
-                }
+                disabled={Boolean(busy)}
               >
                 {busy === "crawl" ? "Starting…" : "POST · Start crawl"}
               </button>
@@ -813,7 +812,10 @@ export function ApiConsole() {
             <div className="api-console-facts">
               <span><b>Crawl</b> {crawlId || "not started"}</span>
               <span><b>Initial status</b> {String(crawl?.status || "—")}</span>
-              <span><b>Mode</b> {crawlMode}</span>
+              <span>
+                <b>Terminal submit</b>{" "}
+                {crawlMode === "submit" ? "requested" : "blocked"}
+              </span>
               <span><b>Discovery</b> {discoverRelatedPages ? "on" : "off"}</span>
               <span><b>Local target</b> {allowLocalTargets ? "allowed" : "blocked"}</span>
             </div>

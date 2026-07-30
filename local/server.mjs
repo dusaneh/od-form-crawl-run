@@ -921,9 +921,11 @@ function initialRun(
     stage: "Queued for local browser crawl",
     progress: 2,
     mode,
+    submit: mode === "fixture_submit",
     browserMode,
     allowLocalTargets,
     discoverRelatedPages,
+    componentAuthorities: fixtureAuthorities,
     fixtureAuthorities,
     traversalSettings,
     nodes,
@@ -1712,13 +1714,42 @@ async function createRun(request) {
       request,
       {
         error:
-          "Execution mode must be probe or localhost fixture submission.",
+          "Execution mode must be probe; legacy fixture_submit is the only supported compatibility alias.",
       },
       400
     );
   }
+  if (payload.submit !== undefined && typeof payload.submit !== "boolean") {
+    return jsonResponse(
+      request,
+      {
+        error: "submit must be a boolean.",
+      },
+      400,
+    );
+  }
+  if (payload.mode === "fixture_submit" && payload.submit === false) {
+    return jsonResponse(
+      request,
+      {
+        error:
+          "Conflicting crawl boundary: legacy fixture_submit mode cannot be combined with submit=false.",
+      },
+      400,
+    );
+  }
+  const submitDuringCrawl =
+    payload.submit === true || payload.mode === "fixture_submit";
   const executionMode =
-    payload.mode === "fixture_submit" ? "fixture_submit" : "probe";
+    submitDuringCrawl ? "fixture_submit" : "probe";
+  const requestedAuthorities =
+    payload.componentAuthorities &&
+    typeof payload.componentAuthorities === "object"
+      ? payload.componentAuthorities
+      : payload.fixtureAuthorities &&
+          typeof payload.fixtureAuthorities === "object"
+        ? payload.fixtureAuthorities
+        : {};
   const fixtureAuthorities = Object.fromEntries(
     [
       "acknowledgement",
@@ -1728,23 +1759,9 @@ async function createRun(request) {
       "upload",
     ].map((key) => [
       key,
-      executionMode === "fixture_submit" &&
-        payload.fixtureAuthorities?.[key] === true,
+      requestedAuthorities[key] === true,
     ])
   );
-  if (
-    executionMode === "fixture_submit" &&
-    (!allowLocalTargets || urls.some((url) => !isLoopbackUrl(url)))
-  ) {
-    return jsonResponse(
-      request,
-      {
-        error:
-          "Test submission is restricted to explicitly allowed localhost targets.",
-      },
-      400
-    );
-  }
   if (
     executionMode === "fixture_submit" &&
     (!(process.env.OPENAI_KEY || process.env.OPENAI_API_KEY) ||
@@ -1754,7 +1771,7 @@ async function createRun(request) {
       request,
       {
         error:
-          "Submission is disabled because no LLM-generated script can be produced. Configure OPENAI_KEY or OPENAI_API_KEY first.",
+          "Crawl-time submission is disabled because no LLM-generated script can be produced. Configure OPENAI_KEY or OPENAI_API_KEY first.",
         code: "script_missing",
       },
       409

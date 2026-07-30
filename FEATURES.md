@@ -31,10 +31,9 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   applying controlled synthetic perturbations, mapping states and branches,
   and completing an LLM-disabled validation replay up to the verified
   final-submission boundary.
-- `F0.2` Phase 1 never infers or enters real applicant data. Public Phase 1
-  never submits a form; an explicitly labeled loopback-fixture validation run
-  may submit synthetic fixture data solely to prove generated-script
-  correctness under `F8.9.1`.
+- `F0.2` Phase 1 never infers or enters real applicant data. A crawl submits
+  only when the client explicitly sets `submit: true`, and then uses synthetic
+  crawl data solely to prove generated-script correctness under `F8.9.1`.
 - `F0.3` Phase 1 generates and validates versioned per-form Playwright scripts
   with synthetic data. Phase 2 consumes an existing certified generated script
   and permits real-data submission only after explicit human approval; its
@@ -605,16 +604,17 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   planning or script-generation path and their effect must be attributable in
   the resulting plan. Persisting unused instruction text does not satisfy this
   requirement.
-- `F3.13` The public Phase 1 new-crawl UI provides one execution mode: Probe.
-  A separately labeled loopback-fixture validation boundary is available only
-  after the localhost test opt-in and is never presented as public Live mode.
+- `F3.13` The crawl API and API console expose two explicit synthetic-data
+  boundaries for public and local targets equally: traverse without terminal
+  submission and traverse with terminal submission.
 - `F3.13.1` Phase 1 exposes Probe mode: it enters synthetic values, exercises
   branches, permits narrowly authorized validation/autosave/intermediate
   side effects, captures the completed state, and never activates the final
   submit control.
-- `F3.13.2` The previous Phase 1 Live mode is superseded by the approved-live
-  mode specified in `FEATURES_PHASE2.md` F10; it is not exposed by the Phase 1
-  UI or API.
+- `F3.13.2` `submit: true` explicitly authorizes the LLM-authored terminal
+  action during that crawl, using only synthetic crawl values, and requires
+  post-submit verification. It is distinct from Phase 2 approved-live
+  execution with real client data.
 - `F3.13.3` Run status, report facts, findings, actions, and UI trust copy
   truthfully identify Phase 1 Probe mode, accepted intermediate side effects,
   and the blocked terminal action.
@@ -622,14 +622,12 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   appears to be an intermediate step. The operator can choose the detected
   canonical entry or deliberately continue with a clearly labeled partial
   journey.
-- `F3.13.5` Loopback fixture-submit mode separately authorizes terminal
-  submission solely so test fixtures can verify the terminal result. Upload,
-  consent, acknowledgement, review-confirmation, and signature modeling are
-  ordinary LLM-authored crawl actions available on public and local targets
-  equally and do not require per-component fixture flags. They use only
-  conspicuously synthetic crawl values. Terminal submission remains governed
-  separately by the execution boundary.
-- `F3.13.6` Probe, loopback fixture validation, and future approved-live modes
+- `F3.13.5` Upload, consent, acknowledgement, review-confirmation, and
+  signature modeling are LLM-authored crawl actions available on public and
+  local targets equally. Fresh `componentAuthorities` explicitly permit those
+  action categories per crawl; they use only synthetic crawl values and do not
+  themselves authorize terminal submission.
+- `F3.13.6` Probe, explicit crawl submission, and approved-live modes
   show distinct badges throughout launch, live traversal, evidence, report,
   and download views.
 - `F3.14` The run view renders the state graph explicitly.
@@ -824,10 +822,9 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
 ## F7. Guarded Phase 1 execution boundary
 
 - `F7` Public and local Phase 1 traversal use the same synthetic-data and
-  generated-script rules and are structurally incapable of terminal
-  submission. A separately labeled loopback-fixture validation boundary may
-  exercise terminal submission under `F8.9.1`; it confers no terminal
-  authority on public or other private-network targets.
+  generated-script rules. Terminal submission is browser-blocked by default
+  and opens only for the exact LLM-authored terminal action when the client
+  explicitly sets `submit: true`.
 - `F7.1` The crawler may enter only obviously synthetic or fixture-safe test
   values; real user data is neither required nor inferred.
 - `F7.1.1` Required login/credential entry and interactive CAPTCHA disqualify
@@ -850,12 +847,15 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
 - `F7.1.4` Consent policy is category-specific and preserves the distinction
   between crawl-time modeling and real execution. Public Probe may exercise
   every consent/signature category with conspicuously synthetic values when
-  needed for discovery or mechanical verification, but it remains unable to
-  perform terminal submission. Phase 2 substitutes the end user's real value
-  only through a certified script and an authorized execution.
+  explicitly authorized for discovery or mechanical verification. Terminal
+  submission requires the separate per-crawl `submit: true` boundary. Phase 2
+  substitutes the end user's real value only through a certified script and
+  an authorized execution.
 - `F7.2` Probe mode never activates a control classified as the terminal
   submit action.
-- `F7.2.1` The terminal submit stays blocked at the browser layer. An
+- `F7.2.1` The terminal submit stays blocked at the browser layer unless the
+  crawl request explicitly sets `submit: true` or an approved-live execution
+  explicitly requests submission. An
   intermediate advance round-trip, including a POST, is permitted only after
   the form-specific script's terminality decision and deterministic
   corroboration establish that the selected control is not terminal. A state
@@ -866,20 +866,21 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   leave partial synthetic state server-side. This inherent Option A side
   effect is accepted and disclosed; the terminal browser-layer block remains
   the pollution guard.
-- `F7.2.2` The previous Phase 1 Live behavior is superseded by Phase 2
-  approved-live mode. Public Phase 1 cannot open the final-submit window; the
-  separately labeled loopback-fixture validation window in `F8.9.1` is
-  test-only authority and cannot be reused for public or real-data execution.
+- `F7.2.2` Synthetic crawl submission and Phase 2 approved-live execution are
+  separate authorities. Crawl submission may target public or local forms but
+  never receives real client data; approved-live execution requires approval
+  and the crawl-scoped input contract.
 - `F7.2.3` Browser requests using methods other than GET, HEAD, or OPTIONS are
   blocked before they reach the target server except as allowed by
-  `F1.6.11`; the final-action exception is retained internally for future
-  Phase 2 use but is unreachable from Phase 1.
+  `F1.6.11`; the final-action exception opens only for the exact
+  LLM-authored terminal action when `submit: true` or approved-live submission
+  is active.
 - `F7.2.3.1` Allowed initialization, interaction-scoped writes, blocked
   autonomous writes, and submission attempts are counted and logged with
   sanitized endpoints.
 - `F7.2.4` Submit events and programmatic form submission APIs are guarded
-  before site scripts execute and are released in Phase 1 only for a
-  corroborated intermediate action.
+  before site scripts execute and are released only for a corroborated
+  intermediate action or the exact explicitly authorized terminal action.
 - `F7.3` Screenshots use a fresh unauthenticated public-page context.
 - `F7.4` Private, authenticated, personalized, and tokenized targets are outside
   the supported boundary.
@@ -946,11 +947,11 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
 - `F8.9` A separate localhost-corpus harness consumes the user-provided
   `ground_truth.yaml` files instead of hard-coding a reduced duplicate of the
   expected behavior.
-- `F8.9.1` The corpus harness and an explicit product-UI test mode may use
-  `fixture_submit` solely for explicitly authorized loopback fixtures. The
-  crawler rejects that mode for every non-loopback target, and the UI keeps it
-  disabled until the localhost opt-in is selected.
-- `F8.9.2` Local fixture submission records pre-submit values, the terminal
+- `F8.9.1` The corpus harness may use the legacy `fixture_submit` token as an
+  alias of `submit: true`. The product API and console use the origin-neutral
+  `submit` boolean; localhost targets still require the separate private-target
+  opt-in.
+- `F8.9.2` Synthetic crawl submission records pre-submit values, the terminal
   action, submit-event telemetry, post-submit evidence, and a
   `fixture_submitted` certification. Ordinary Probe remains terminally blocked.
 - `F8.9.3` The corpus covers all 27 primary sites plus the image-CAPTCHA and
@@ -1277,8 +1278,9 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   numeric, progress, generic, readback-only, and mismatched-value echoes must
   not create false branches.
 - `F16.10` Choice and cross-page probing cannot submit the form. Terminal
-  fixture validation becomes eligible only after required option coverage and
-  dependency checks are complete or explicitly `could_not_test`.
+  crawl submission becomes eligible only after required option coverage and
+  dependency checks are complete or explicitly `could_not_test`, and only
+  when the crawl request sets `submit: true`.
 - `F16.11` Any discovered addition regenerates the affected state script and
   complete form script, increments the script version, and requires
   canonical-entry repair-to-green replay before the artifact can be reviewed
@@ -1297,3 +1299,7 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   ordinary linear next page, but once progression is determined or suspected
   to depend on an earlier answer it records the dependency and halts without
   actuating that dependent page.
+- `F16.14` Before terminal submission, deterministic replay clears values from
+  script-declared inactive sibling branch controls, then repopulates and
+  verifies the selected branch. Cleanup targets come only from LLM-authored
+  variant contracts; shared code may not infer branch membership.

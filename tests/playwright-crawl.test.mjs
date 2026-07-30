@@ -368,7 +368,7 @@ test(
               discoverLinks: false,
             }
           ),
-        /Phase 1 supports Probe mode only/
+        /must be probe or explicit synthetic submission/
       );
       assert.ok(
         fixture.requests.every(
@@ -376,21 +376,6 @@ test(
             request.path !== "/fixtures/write-probe" &&
             request.path !== "/fixtures/live-submit"
           )
-      );
-
-      await assert.rejects(
-        () =>
-          crawlTargetsWithPlaywright(
-            ["https://example.com/form"],
-            "run_remote_fixture_submit_rejected",
-            {
-              browserMode: "headless",
-              executionMode: "fixture_submit",
-              allowLoopback: true,
-              discoverLinks: false,
-            }
-          ),
-        /restricted to localhost|loopback/i
       );
 
       const fixtureSubmission = await crawlTargetsWithPlaywright(

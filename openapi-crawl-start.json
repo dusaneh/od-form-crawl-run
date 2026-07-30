@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FormWeave — Kick Off Crawl",
-    "version": "1.0.0",
-    "description": "Starts one asynchronous crawl and returns the run ID needed by the crawl-status API."
+    "version": "1.1.0",
+    "description": "Starts one asynchronous crawl and returns the run ID needed by the crawl-status API. The caller explicitly chooses whether the synthetic crawl stops at the terminal boundary or submits the form."
   },
   "servers": [
     {
@@ -33,10 +33,11 @@
                 ],
                 "name": "Example crawl",
                 "mode": "probe",
+                "submit": false,
                 "browserMode": "headless",
                 "allowLocalTargets": false,
                 "discoverRelatedPages": false,
-                "fixtureAuthorities": {
+                "componentAuthorities": {
                   "consent": false,
                   "signature": false,
                   "upload": false,
@@ -100,7 +101,13 @@
               "fixture_submit"
             ],
             "default": "probe",
-            "description": "probe generates/tests a synthetic script but stops before terminal submission. An eligible probe can be approved without submitting. fixture_submit may submit only an explicitly allowed loopback fixture with synthetic data."
+            "deprecated": true,
+            "description": "Compatibility field. Send probe and use the submit boolean to choose the terminal boundary. Legacy fixture_submit is equivalent to submit=true."
+          },
+          "submit": {
+            "type": "boolean",
+            "default": false,
+            "description": "false traverses with synthetic values and blocks the LLM-authored terminal action. true explicitly authorizes that terminal action and post-submit verification during this crawl. It applies equally to public targets and explicitly enabled localhost targets; it does not authorize CAPTCHA solving, login credentials, or payment."
           },
           "browserMode": {
             "type": "string",
@@ -120,9 +127,22 @@
             "default": false,
             "description": "Allows bounded same-origin page discovery."
           },
+          "componentAuthorities": {
+            "type": "object",
+            "description": "Fresh per-crawl permission for the LLM-authored script to model these component types with synthetic values. These permissions apply to public and local targets and are independent of the terminal submit choice.",
+            "properties": {
+              "acknowledgement": { "type": "boolean", "default": false },
+              "consent": { "type": "boolean", "default": false },
+              "reviewConfirmation": { "type": "boolean", "default": false },
+              "signature": { "type": "boolean", "default": false },
+              "upload": { "type": "boolean", "default": false }
+            },
+            "additionalProperties": false
+          },
           "fixtureAuthorities": {
             "type": "object",
-            "description": "Per-component fixture-submit authorities. They are considered only in fixture_submit mode for an explicitly allowed loopback target; hosted mode rejects loopback targets.",
+            "deprecated": true,
+            "description": "Legacy alias of componentAuthorities.",
             "properties": {
               "acknowledgement": { "type": "boolean", "default": false },
               "consent": { "type": "boolean", "default": false },

@@ -42,12 +42,13 @@ The current production path also:
 - exhaustively probes safe choice options from clean baselines;
 - supports exactly one level of same-page branch expansion;
 - populates each detected sibling variant and restores the final selected
-  branch before terminal submit;
+  branch before terminal submit, clearing script-declared inactive sibling
+  values so exploration data is not submitted;
 - detects but does not execute cross-page conditional branching;
 - retains partial contracts, exchanges, failures, and screenshots after safe
   halts;
 - requires transport proof plus explicit rendered success markers before a
-  normal loopback fixture submission counts as successful, with a separately
+  normal synthetic crawl submission counts as successful, with a separately
   reported client-side exception requiring exact terminal actuation, material
   state change, and high-confidence rendered success markers;
 - replays a retained immutable form script with zero traversal-model calls.
@@ -124,24 +125,24 @@ failure in the supported Phase 1 envelope.
 | `F1.8` quality floor | **Built for current corpus** | All 37 final-cohort runs retained useful artifacts; no empty false success or lost prior states. Validation exhaustion now retains a durable `could_not_test` artifact instead of collapsing into an empty run. |
 | `F1.9` locale | **Not built** | Locale pinning, mismatch detection, variants, and locale-separated lineage remain. |
 | `F2.1–F2.4` local artifacts/logs | **Built** | Rendered HTML, PNGs, reports, model/script records, and JSONL logs persist locally. |
-| `F2.2.11` result confirmation | **Built** | Success requires exact terminal actuation and explicit LLM-authored rendered success markers. Normal forms also require submit/write transport; the loopback-only client-side exception requires a material state change and reports its distinct basis. Decoy GET navigation fails. |
+| `F2.2.11` result confirmation | **Built** | Success requires exact terminal actuation and explicit LLM-authored rendered success markers. Normal forms also require submit/write transport; a client-side completion requires a material state change and reports its distinct basis. Decoy GET navigation fails. |
 | `F2.2.12–F2.3.5` evidence integrity | **Built** | Sensing is separated from populated/branch/transition/submitted proof; all screenshots are clickable and cumulative. |
 | `F2.5.4–F2.5.11` fingerprinting | **Built** | One versioned canonical DOM-fact implementation is used by production, lineage, harnesses, golden regression, and tests. |
 | `F3` control-plane UI | **Partial** | Runs, contracts, guidance, sections, choices, four-layer exchanges, scripts, diagnostics, result proof, and local evidence are visible. Version/certification browsing remains. |
 | `F3.11` headless/headful | **Built** | Both modes use the same production crawler and are selectable per run. |
 | `F3.12` settings | **Partial** | Typed settings and locked safety boundaries persist; free-form instructions do not yet alter planning. |
-| `F3.13` loopback submit | **Built for current supported envelope** | Explicit loopback-only submission works after generated-script validation, including client-side result confirmation. Older-version selection remains under `F9.13`. |
+| `F3.13` crawl submit boundary | **Built** | The crawl API and API console independently expose `submit: false` traversal and `submit: true` synthetic terminal submission for public and allowed-local targets. Both use only LLM-authored scripts and include result confirmation. |
 | `F3.15` option coverage | **Built for one-level envelope** | Probe outcomes, branch-producing choices, populated variants, and selected-branch restoration are reported. |
 | `F3.16 / F3.18` traversal/four layers | **Built for generated and retained runs** | State cards expose sensing, semantic proposal, stored script/version/path/hash, deterministic execution/readback, flags, and evidence. |
 | `F4` local-first ownership | **Built** | The complete local UI/API/browser/artifact path remains. An optional authenticated hosted gateway now consolidates UI and API access without removing local operation. |
-| `F4.1.3` localhost opt-in | **Built** | Loopback targets require explicit per-run opt-in; fixture submission is rejected elsewhere. |
+| `F4.1.3` localhost opt-in | **Built** | Loopback targets require explicit per-run opt-in. Terminal submission is a separate origin-neutral crawl choice. |
 | `F4.6.1` hosted gateway | **Built locally; Heroku release pending** | One public process routes `/api/*`, protects the two operational UIs, serves compiled assets, and starts the API and UI on loopback-only internal ports. |
 | `F4.6.2–F4.6.4` authentication | **Built for staging** | Seven individual UI accounts use salted scrypt password hashes and database-backed HttpOnly sessions. Five failures cause a 15-minute principal lock. API clients use a high-entropy Bearer token whose digest, scopes, status, and audit events are stored in PostgreSQL. Tenant-level authorization and production identity-provider integration remain. |
 | `F4.6.5–F4.6.7` hosted boundaries/secrets | **Built for staging** | Hosted mode is headless-only, rejects private/loopback targets, treats `/tmp` as cache, and seeds credentials from a Git-ignored local file. Durable object storage for evidence remains. |
 | `F5` model context | **Built for production generation** | Each novel state receives DOM, accessibility, screenshot, sections, guidance, options, history, and failure context with provenance. |
 | `F6` observability | **Built** | Health, lifecycle, events, errors, paths, and interrupted-run reconciliation are inspectable. |
-| `F7` safety | **Partial** | Public Probe terminal submit remains blocked; CAPTCHA solving, credential entry, and payment are prohibited and CAPTCHA/login disqualify. Public/local synthetic upload, consent, review, acknowledgement, and signature modeling now share the same accepted-script boundary. Fresh public special-component proof remains. |
-| `F8` verification | **Partial** | Production build passes; 78 automated checks pass and one optional PostgreSQL integration check is skipped when its dedicated test URI is absent. The authenticated production smoke suite and blind 37-site local corpus are green. Public D5 remains. |
+| `F7` safety | **Partial** | `submit: false` keeps terminal submission browser-blocked; `submit: true` opens a bounded final-action write window only for the LLM-authored terminal control. CAPTCHA solving, credential entry, and payment remain prohibited and CAPTCHA/login disqualify. Fresh public terminal-submit proof remains. |
+| `F8` verification | **Partial** | Production build passes; 80 automated checks pass and one optional PostgreSQL integration check is skipped when its dedicated test URI is absent. The authenticated production smoke suite and blind 37-site local corpus are green. Public D5 remains. |
 | `F8.9` execution conformance | **Built — conformance only** | Ground-truth-derived planners test physics, never discovery or flexibility. |
 | `F8.9.9–F8.9.9.2` universal test submission capture | **Built** | The console proxy supports all registered public or local testforms sites, dispatcher routing cookies, latest/list/clear semantics, native-name comparison, arrays, filenames, and multi-step aggregation. Arbitrary hosts remain blocked. |
 | `F8.9.8 / F8.10.3` oracle isolation | **Built** | Production audit freezes all artifacts before offline answer-key reads and regenerates per-form learning reports afterward. |

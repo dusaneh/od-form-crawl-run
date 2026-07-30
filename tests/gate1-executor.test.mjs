@@ -664,6 +664,42 @@ test(
   },
 );
 
+test("script-declared inactive branch cleanup clears hidden native controls", async () => {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  try {
+    await page.setContent(`
+      <form>
+        <input id="inactive_text" name="inactive_text" value="old branch value" hidden>
+        <input id="inactive_check" name="inactive_check" type="checkbox" checked hidden>
+      </form>
+    `);
+    const toolbox = new PhysicsToolbox(page);
+    assert.equal(
+      (
+        await toolbox.clearControl(
+          { selectors: ["#inactive_text"] },
+          "text",
+        )
+      ).verified,
+      true,
+    );
+    assert.equal(
+      (
+        await toolbox.clearControl(
+          { selectors: ["#inactive_check"] },
+          "checkbox",
+        )
+      ).verified,
+      true,
+    );
+    assert.equal(await page.locator("#inactive_text").inputValue(), "");
+    assert.equal(await page.locator("#inactive_check").isChecked(), false);
+  } finally {
+    await browser.close();
+  }
+});
+
 test("Gate 1 executor boundary contains no site-specific or semantic-label API", async () => {
   const files = [
     "local/executor/executor.mjs",
@@ -684,7 +720,7 @@ test("Gate 1 executor boundary contains no site-specific or semantic-label API",
   assert.doesNotMatch(source, /\bfingerprint\s*\(/i);
   assert.doesNotMatch(
     source,
-    /(?:async\s+)?(?:resolveUnique|writeControl|clickAction|isVisible)\s*\([^)]*\blabel\b/i,
+    /(?:async\s+)?(?:resolveUnique|writeControl|clearControl|clickAction|isVisible)\s*\([^)]*\blabel\b/i,
   );
 
   const physicsSource = await readFile(

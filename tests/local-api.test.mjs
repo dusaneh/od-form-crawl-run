@@ -245,6 +245,14 @@ test(
       const runId = created.run.id;
       assert.equal(created.run.browserMode, "headless");
       assert.equal(created.run.mode, "probe");
+      assert.equal(created.run.submit, false);
+      assert.deepEqual(created.run.componentAuthorities, {
+        acknowledgement: false,
+        consent: false,
+        reviewConfirmation: false,
+        signature: false,
+        upload: false,
+      });
       assert.equal(created.run.liveApproved, false);
       assert.equal(created.run.allowLocalTargets, true);
       assert.equal(created.run.traversalSettings.stableWindowMs, 300);
@@ -381,21 +389,24 @@ test(
         JSON.stringify(nonReadRequests, null, 2)
       );
 
-      const rejectedRemoteSubmit = await fetch(`${baseUrl}/api/runs`, {
+      const publicSubmitWithoutModel = await fetch(`${baseUrl}/api/runs`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           urls: ["https://example.com/form"],
-          mode: "fixture_submit",
+          mode: "probe",
+          submit: true,
           browserMode: "headless",
-          allowLocalTargets: true,
+          allowLocalTargets: false,
+          componentAuthorities: {
+            consent: true,
+          },
         }),
       });
-      assert.equal(rejectedRemoteSubmit.status, 400);
-      assert.match(
-        (await rejectedRemoteSubmit.json()).error,
-        /restricted to explicitly allowed localhost targets/i
-      );
+      assert.equal(publicSubmitWithoutModel.status, 409);
+      const publicSubmitError = await publicSubmitWithoutModel.json();
+      assert.equal(publicSubmitError.code, "script_missing");
+      assert.match(publicSubmitError.error, /crawl-time submission is disabled/i);
 
       const fixtureSubmitResponse = await fetch(`${baseUrl}/api/runs`, {
         method: "POST",

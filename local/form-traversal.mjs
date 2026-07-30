@@ -1820,7 +1820,7 @@ export async function traverseFormStates(
         : "pre_advance",
       classification === "final"
         ? executionMode === "fixture_submit"
-          ? "Completed fixture values before terminal test submission"
+          ? "Completed synthetic values before crawl-time terminal submission"
           : "Completed values before final submission"
         : `Completed values before ${advance.label}`,
       enteredValues,
@@ -1837,7 +1837,7 @@ export async function traverseFormStates(
           authorizeWrites({
             scope: "final-action",
             durationMs: 8_000,
-            reason: `explicit loopback fixture submission ${advance.label}`,
+            reason: `explicit synthetic crawl submission ${advance.label}`,
             origin,
           }) || (() => {});
         submissionsAttempted += 1;
@@ -1848,13 +1848,13 @@ export async function traverseFormStates(
             page,
             settings,
             onEvent,
-            `local fixture submission ${advance.label}`
+            `crawl-time submission ${advance.label}`
           );
         } catch (caught) {
           error =
             caught instanceof Error
               ? caught.message
-              : "Local fixture submission failed.";
+              : "Crawl-time submission failed.";
         } finally {
           closeWriteWindow();
         }
@@ -1873,15 +1873,15 @@ export async function traverseFormStates(
           browserMode,
           "submitted",
           submitted
-            ? "Local fixture terminal submission completed"
-            : "Local fixture terminal submission could not be verified",
+            ? "Crawl-time terminal submission completed"
+            : "Crawl-time terminal submission could not be verified",
           enteredValues,
           onEvent
         );
         actions.push({
           category: "final_submit_fixture",
           label: advance.label,
-          strategy: "loopback-only fixture terminal action",
+          strategy: "explicit synthetic crawl terminal action",
           beforeFingerprint,
           afterFingerprint,
           changed: beforeFingerprint !== afterFingerprint,
@@ -1889,7 +1889,7 @@ export async function traverseFormStates(
           stateId: postState?.id,
           classification: "deterministic",
           rationale:
-            "The operator explicitly authorized terminal submission for local stateless fixtures only.",
+            "The client explicitly authorized terminal submission with synthetic crawl data.",
           outcome: submitted ? "landed" : "could_not_test",
           ...(!submitted
             ? {
@@ -1907,8 +1907,8 @@ export async function traverseFormStates(
             ? "fixture_terminal_submission_completed"
             : "fixture_terminal_submission_unverified",
           submitted
-            ? `Submitted local fixture form through ${advance.label}.`
-            : `Could not verify local fixture submission through ${advance.label}.`,
+            ? `Submitted crawl target through ${advance.label}.`
+            : `Could not verify crawl-time submission through ${advance.label}.`,
           {
             label: advance.label,
             stateId: postState?.id || "",

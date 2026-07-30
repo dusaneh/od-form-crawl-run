@@ -1263,27 +1263,8 @@ export async function crawlTargetsWithPlaywright(
   }
   if (!["probe", "dry_run", "fixture_submit"].includes(executionMode)) {
     throw new Error(
-      "Phase 1 supports Probe mode only; approved-live execution belongs to Phase 2."
+      "Crawl execution mode must be probe or explicit synthetic submission."
     );
-  }
-  if (executionMode === "fixture_submit") {
-    if (!allowLoopback) {
-      throw new Error(
-        "Local fixture submission requires the explicit loopback target opt-in."
-      );
-    }
-    const nonLoopback = urls.find((url) => {
-      try {
-        return !isLoopback(new URL(url).hostname);
-      } catch {
-        return true;
-      }
-    });
-    if (nonLoopback) {
-      throw new Error(
-        "Local fixture submission is restricted to localhost and 127.0.0.0/8 targets."
-      );
-    }
   }
   const normalizedSettings = normalizeTraversalSettings(traversalSettings);
   const queue = urls.map((url) => ({
