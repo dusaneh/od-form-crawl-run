@@ -735,6 +735,13 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   can reset edits to that template, and synthetic harmless upload fixtures are
   visibly identified even though browser file inputs cannot display a
   programmatically selected filename.
+- `F3.19.6` The fetched crawl report includes and renders an ordered,
+  human-readable runner journey derived from the retained LLM-authored script.
+  Each state lists the fields the runner will complete, conditional one-level
+  field groups, prerequisite actions such as a modeled cookie gate, the
+  selected Next/Continue action, and the terminal Submit action. The
+  presentation distinguishes the crawl-observed outcome from the future
+  approved execution and never invents actions from screenshot text.
 - `F3.20` An operations-only audit dashboard summarizes critical login, API,
   crawl, approval, and execution outcomes from the durable audit stream.
 - `F3.20.1` The dashboard supports time-window, category, and severity filters

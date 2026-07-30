@@ -24,6 +24,7 @@ import {
 import { loadEnvFile } from "./env.mjs";
 import { createFormWeaveDatabase } from "./postgres/database.mjs";
 import { selectRetainedEvidence } from "./evidence-retention.mjs";
+import { buildRunnerJourney } from "./report-runner-journey.mjs";
 
 const localDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(localDirectory, "..");
@@ -296,7 +297,10 @@ async function retainedPlanForReport(report) {
     .map((page) => page.generatedArtifact)
     .find(
       (candidate) =>
-        candidate?.lifecycle === "retained_replay" && candidate?.path
+        candidate?.path &&
+        ["generated_and_published", "retained_replay"].includes(
+          candidate.lifecycle,
+        )
   );
   if (!artifact) return null;
   try {
@@ -525,6 +529,7 @@ async function retainedArchitectureExchangesFor(report) {
         progression: {
           key: state.progression?.key || "",
           kind: state.progression?.kind || "",
+          label: state.progression?.label || "",
           selectors: state.progression?.selectors || [],
         },
       },
@@ -684,6 +689,11 @@ async function architectureExchangesFor(runId, report) {
     );
     const terminal = proposal.state?.progression?.kind === "terminal_submit";
     const submitted = resultEvidence?.kind === "submitted";
+    const progressionFact = (observation.actions || []).find(
+      (action) =>
+        action.factId === proposal.mechanics?.progressionTarget?.sourceFactId,
+    );
+    const branchTrigger = observation.runtimeBranchScope?.trigger || null;
 
     exchanges.push({
       sequence: index + 1,
@@ -695,6 +705,12 @@ async function architectureExchangesFor(runId, report) {
           ? "failed"
           : "verified",
       decisionTiming: "generated_this_run",
+      condition: branchTrigger
+        ? {
+            fieldKey: branchTrigger.fieldKey || "",
+            value: branchTrigger.value,
+          }
+        : null,
       sensing: {
         from: "Executor + physics toolbox (run-local role)",
         to: "Semantic layer",
@@ -749,6 +765,7 @@ async function architectureExchangesFor(runId, report) {
         progression: {
           key: proposal.state?.progression?.key || "",
           kind: proposal.state?.progression?.kind || "",
+          label: progressionFact?.rawText || "",
           selectors: proposal.mechanics?.progressionTarget?.selectors || [],
         },
       },
@@ -795,9 +812,16 @@ async function enrichedReportFor(runId) {
     ? await database.getReport(runId)
     : await readJson(artifactsFor(runId).report);
   if (!report) throw new Error("Report not found.");
+  const architectureExchanges = await architectureExchangesFor(runId, report);
+  const generated = await retainedPlanForReport(report);
   return {
     ...report,
-    architectureExchanges: await architectureExchangesFor(runId, report),
+    architectureExchanges,
+    runnerJourney: buildRunnerJourney(
+      report,
+      architectureExchanges,
+      generated?.plan || null,
+    ),
   };
 }
 

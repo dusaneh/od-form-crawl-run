@@ -287,6 +287,51 @@ const report = {
       runEndpoint: `/api/forms/${crawlFormId}/runs`,
     },
   ],
+  runnerJourney: {
+    schemaVersion: 1,
+    available: true,
+    source: "llm_authored_script",
+    artifactId: "form_ui_artifact",
+    scriptVersion: 1,
+    summary:
+      "The approved runner will follow 1 ordered state, complete 1 modeled field, advance 0 times, and reach 1 terminal submission action.",
+    approvalNote:
+      "Runtime values come from the client payload; synthetic values are approval aids.",
+    fieldCount: 1,
+    stateCount: 1,
+    terminalActionCount: 1,
+    steps: [
+      {
+        sequence: 1,
+        type: "state",
+        stateKey: "application",
+        title: "Fixture application",
+        route: "/application",
+        description: "Complete 1 always-visible field.",
+        fields: [
+          {
+            key: field.key,
+            label: field.label,
+            control: field.control,
+            required: true,
+            section: "Applicant details",
+            action: "complete_field",
+            instruction:
+              "Enter the submitted value for “Participant email” (required).",
+          },
+        ],
+        conditionalGroups: [],
+        progression: {
+          kind: "terminal_submit",
+          label: "Submit application",
+          instruction:
+            "After completing the fields above, select “Submit application” to submit the completed form.",
+          rationale: "The LLM identified the terminal submit control.",
+          observedOutcome: "terminal_boundary_reached",
+        },
+      },
+    ],
+  },
   artifacts: run.artifacts,
 };
 const traversalSettings = {
@@ -747,6 +792,23 @@ test(
         .waitFor();
       await page
         .getByRole("heading", { name: "Forms, sections, and fields" })
+        .waitFor();
+      await page
+        .getByRole("heading", {
+          name: "How the approved runner will complete this form",
+        })
+        .waitFor();
+      await page
+        .getByText(
+          "Enter the submitted value for “Participant email” (required).",
+          { exact: true },
+        )
+        .waitFor();
+      await page
+        .getByText(
+          "After completing the fields above, select “Submit application” to submit the completed form.",
+          { exact: true },
+        )
         .waitFor();
       await page.getByText("Applicant details", { exact: true }).waitFor();
       await page.getByText("Participant email", { exact: true }).waitFor();

@@ -251,6 +251,41 @@ Example response (abbreviated):
     "fieldsEntered": 14,
     "entryFailures": 0
   },
+  "runnerJourney": {
+    "available": true,
+    "source": "llm_authored_script",
+    "artifactId": "form_artifact_243a",
+    "scriptVersion": 1,
+    "summary": "The approved runner will follow 3 ordered states, complete 14 modeled fields, advance 2 times, and reach 1 terminal submission action.",
+    "steps": [
+      {
+        "sequence": 1,
+        "type": "state",
+        "title": "Applicant contact information",
+        "fields": [
+          {
+            "key": "full_name",
+            "instruction": "Enter the submitted value for “Full name” (required)."
+          }
+        ],
+        "progression": {
+          "kind": "advance",
+          "label": "Next",
+          "instruction": "After completing the fields above, select “Next” to continue to the next state."
+        }
+      },
+      {
+        "sequence": 3,
+        "type": "state",
+        "title": "Review and submit",
+        "progression": {
+          "kind": "terminal_submit",
+          "label": "Submit application",
+          "instruction": "Select “Submit application” to submit the completed form."
+        }
+      }
+    ]
+  },
   "contract": [
     {
       "key": "full_name",
@@ -301,6 +336,7 @@ Critical report fields:
 | `formDefinitions[].targetUrl` | Confirms which discovered form the ID represents. |
 | `formDefinitions[].eligibility.status` | Must be `eligible` before approval. |
 | `formDefinitions[].script` | Identifies the generated script that approval will pin. |
+| `runnerJourney` | Review the ordered, human-readable actions the approved runner will replay. It is derived from the retained LLM-authored script and includes fields, conditional groups, Next/Continue controls, and terminal Submit. `available=false` means there is no executable script to approve. |
 | `contract` | Review detected fields, labels, types, options, required status, and sensitive classifications. |
 | `pages` and state flow | Confirm that traversal reached all supported states and stopped at the intended boundary. |
 | `pages[].stateEvidence` | Contains screenshot URLs and evidence metadata for populated states and transitions. |

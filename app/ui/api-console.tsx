@@ -433,6 +433,11 @@ function ReportPresentation({
   );
   const evidence = evidenceItemsForReport(report, crawlId);
   const definitions = objectItems(report.formDefinitions);
+  const runnerJourney =
+    report.runnerJourney && typeof report.runnerJourney === "object"
+      ? (report.runnerJourney as JsonObject)
+      : null;
+  const runnerSteps = objectItems(runnerJourney?.steps);
   const targets = Array.isArray(report.targets) ? report.targets : [];
   const forms = definitions.length
     ? definitions
@@ -466,6 +471,149 @@ function ReportPresentation({
         <div><strong>{String(stats.fieldsFound ?? contract.length)}</strong><span>Visible fields</span></div>
         <div><strong>{evidence.length}</strong><span>Evidence images</span></div>
       </div>
+
+      <section className="api-console-report-block">
+        <div className="api-console-report-block-heading">
+          <div>
+            <h4>How the approved runner will complete this form</h4>
+            <p>
+              Human-readable execution order from the retained LLM-authored
+              script. These are the actions approval authorizes the
+              deterministic runner to replay.
+            </p>
+          </div>
+          <span>{runnerSteps.length}</span>
+        </div>
+        {runnerJourney?.available === true && runnerSteps.length ? (
+          <>
+            <div className="api-console-runner-summary">
+              <strong>{String(runnerJourney.summary || "")}</strong>
+              {runnerJourney.approvalNote ? (
+                <p>{String(runnerJourney.approvalNote)}</p>
+              ) : null}
+              <div>
+                <span>Script {String(runnerJourney.scriptVersion || "—")}</span>
+                <span>{String(runnerJourney.fieldCount || 0)} modeled fields</span>
+                <span>
+                  {String(runnerJourney.terminalActionCount || 0)} submit action
+                </span>
+              </div>
+            </div>
+            <ol className="api-console-runner-journey">
+              {runnerSteps.map((step, stepIndex) => {
+                const fields = objectItems(step.fields);
+                const conditionalGroups = objectItems(step.conditionalGroups);
+                const progression =
+                  step.progression && typeof step.progression === "object"
+                    ? (step.progression as JsonObject)
+                    : null;
+                return (
+                  <li key={String(step.stateKey || `runner_step_${stepIndex}`)}>
+                    <div className="api-console-runner-step-number">
+                      {String(step.sequence || stepIndex + 1)}
+                    </div>
+                    <article>
+                      <header>
+                        <div>
+                          <small>
+                            {step.type === "preparation"
+                              ? "PREPARE"
+                              : `STATE ${stepIndex + 1}`}
+                          </small>
+                          <h5>{String(step.title || "Runner action")}</h5>
+                        </div>
+                        {step.route ? <code>{String(step.route)}</code> : null}
+                      </header>
+                      <p>{String(step.description || "")}</p>
+                      {fields.length ? (
+                        <div className="api-console-runner-fields">
+                          {fields.map((field, fieldIndex) => (
+                            <div key={String(field.key || `field_${fieldIndex}`)}>
+                              <span aria-hidden="true">✓</span>
+                              <div>
+                                <strong>{String(field.instruction || field.label)}</strong>
+                                <small>
+                                  {String(field.control || "field")}
+                                  {field.section ? ` · ${String(field.section)}` : ""}
+                                </small>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {conditionalGroups.map((group, groupIndex) => {
+                        const condition =
+                          group.condition && typeof group.condition === "object"
+                            ? (group.condition as JsonObject)
+                            : {};
+                        const conditionalFields = objectItems(group.fields);
+                        return (
+                          <section
+                            className="api-console-runner-condition"
+                            key={`${String(condition.fieldKey || "condition")}_${groupIndex}`}
+                          >
+                            <strong>
+                              If applicable: {String(condition.instruction || "complete the revealed fields")}
+                            </strong>
+                            <div className="api-console-runner-fields">
+                              {conditionalFields.map((field, fieldIndex) => (
+                                <div
+                                  key={String(
+                                    field.key || `conditional_${fieldIndex}`,
+                                  )}
+                                >
+                                  <span aria-hidden="true">↳</span>
+                                  <div>
+                                    <strong>
+                                      {String(field.instruction || field.label)}
+                                    </strong>
+                                    <small>{String(field.control || "field")}</small>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </section>
+                        );
+                      })}
+                      {progression ? (
+                        <div
+                          className={`api-console-runner-progression ${
+                            progression.kind === "terminal_submit"
+                              ? "terminal"
+                              : ""
+                          }`}
+                        >
+                          <span>
+                            {progression.kind === "terminal_submit" ? "SUBMIT" : "NEXT"}
+                          </span>
+                          <div>
+                            <strong>{String(progression.instruction || "")}</strong>
+                            {progression.rationale ? (
+                              <p>{String(progression.rationale)}</p>
+                            ) : null}
+                            {progression.observedOutcome ? (
+                              <small>
+                                Crawl result: {String(progression.observedOutcome).replaceAll("_", " ")}
+                              </small>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
+                    </article>
+                  </li>
+                );
+              })}
+            </ol>
+          </>
+        ) : (
+          <div className="api-console-empty">
+            {String(
+              runnerJourney?.summary ||
+                "No LLM-authored executable script was available, so this report cannot describe runner actions.",
+            )}
+          </div>
+        )}
+      </section>
 
       <section className="api-console-report-block">
         <div className="api-console-report-block-heading">

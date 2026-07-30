@@ -511,6 +511,10 @@ export type ArchitectureExchange = {
   route: string;
   status: "verified" | "failed" | "review";
   decisionTiming?: "generated_this_run" | "retained_prior_run";
+  condition?: {
+    fieldKey: string;
+    value: unknown;
+  } | null;
   sensing: {
     from: string;
     to: string;
@@ -576,6 +580,7 @@ export type ArchitectureExchange = {
     progression: {
       key: string;
       kind: string;
+      label?: string;
       selectors: string[];
     };
   };
@@ -597,6 +602,56 @@ export type ArchitectureExchange = {
       values: number;
     }[];
   };
+};
+
+export type RunnerJourneyField = {
+  key: string;
+  label: string;
+  control: string;
+  required: boolean;
+  section: string;
+  action: string;
+  instruction: string;
+};
+
+export type RunnerJourney = {
+  schemaVersion: number;
+  available: boolean;
+  source: "llm_authored_script";
+  artifactId?: string;
+  scriptVersion?: number;
+  summary: string;
+  approvalNote?: string;
+  fieldCount: number;
+  stateCount: number;
+  terminalActionCount: number;
+  steps: {
+    sequence: number;
+    type: "preparation" | "state";
+    stateKey?: string;
+    title: string;
+    route?: string;
+    description: string;
+    source?: string;
+    observedOutcome?: string;
+    fields?: RunnerJourneyField[];
+    conditionalGroups?: {
+      condition: {
+        fieldKey: string;
+        fieldLabel: string;
+        value: unknown;
+        instruction: string;
+      };
+      fields: RunnerJourneyField[];
+    }[];
+    progression?: {
+      kind: string;
+      label: string;
+      instruction: string;
+      rationale: string;
+      observedOutcome: string;
+    };
+  }[];
 };
 
 export type CrawlReport = {
@@ -623,6 +678,7 @@ export type CrawlReport = {
   };
   analysis?: CrawlAnalysis;
   architectureExchanges?: ArchitectureExchange[];
+  runnerJourney?: RunnerJourney;
   formDefinitions?: CrawlFormDefinition[];
   artifacts?: {
     runDirectory: string;

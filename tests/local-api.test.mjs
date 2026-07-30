@@ -372,6 +372,11 @@ test(
       assert.equal(servedReportResponse.status, 200);
       const servedReport = await servedReportResponse.json();
       assert.deepEqual(servedReport.architectureExchanges, []);
+      assert.equal(servedReport.runnerJourney.available, false);
+      assert.match(
+        servedReport.runnerJourney.summary,
+        /No executable LLM-authored script/i,
+      );
 
       const events = await readFile(
         path.join(runDirectory, "events.jsonl"),
