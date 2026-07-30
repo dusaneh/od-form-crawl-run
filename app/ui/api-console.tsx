@@ -52,6 +52,17 @@ function apiUrl(base: string, path: string) {
   return `${base.replace(/\/$/, "")}${path}`;
 }
 
+function isLoopbackHostname(hostname: string) {
+  const normalized = hostname.toLowerCase().replace(/\.$/, "");
+  return (
+    normalized === "localhost" ||
+    normalized.endsWith(".localhost") ||
+    normalized === "::1" ||
+    normalized === "[::1]" ||
+    normalized.startsWith("127.")
+  );
+}
+
 function pretty(value: unknown) {
   return value === undefined ? "" : JSON.stringify(value, null, 2);
 }
@@ -816,11 +827,11 @@ export function ApiConsole() {
   const [allowLocalTargets, setAllowLocalTargets] = useState(false);
   const [discoverRelatedPages, setDiscoverRelatedPages] = useState(false);
   const [fixtureAuthorities, setFixtureAuthorities] = useState<FixtureAuthorities>({
-    acknowledgement: false,
-    consent: false,
-    reviewConfirmation: false,
-    signature: false,
-    upload: false,
+    acknowledgement: true,
+    consent: true,
+    reviewConfirmation: true,
+    signature: true,
+    upload: true,
   });
   const [crawlId, setCrawlId] = useState("");
   const [crawl, setCrawl] = useState<JsonObject | null>(null);
@@ -850,6 +861,22 @@ export function ApiConsole() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [apiBase]);
+
+  const hostedApi = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const target = new URL(apiBase || window.location.origin);
+      return !isLoopbackHostname(target.hostname);
+    } catch {
+      return false;
+    }
+  }, [apiBase]);
+
+  useEffect(() => {
+    if (!hostedApi) return;
+    setBrowserMode("headless");
+    setAllowLocalTargets(false);
+  }, [hostedApi]);
 
   const inputSchema = useMemo(() => {
     const value = form?.inputSchema;
@@ -1052,8 +1079,8 @@ export function ApiConsole() {
         name: "API console crawl",
         mode: "probe",
         submit: crawlMode === "submit",
-        browserMode,
-        allowLocalTargets,
+        browserMode: hostedApi ? "headless" : browserMode,
+        allowLocalTargets: hostedApi ? false : allowLocalTargets,
         discoverRelatedPages,
         componentAuthorities: fixtureAuthorities,
       });
@@ -1266,8 +1293,16 @@ export function ApiConsole() {
                   }
                 >
                   <option value="headless">Headless</option>
-                  <option value="headful">Headful</option>
+                  <option value="headful" disabled={hostedApi}>
+                    Headful — local workstation only
+                  </option>
                 </select>
+                {hostedApi ? (
+                  <small>
+                    Hosted crawls run Chromium on the remote worker, so a
+                    visible browser cannot open on your computer.
+                  </small>
+                ) : null}
               </label>
               <label>
                 FormWeave API
@@ -1288,20 +1323,29 @@ export function ApiConsole() {
                 />
                 <span>
                   <strong>Discover related same-site pages</strong>
-                  <small>Bounded same-origin discovery; off means only the supplied URL.</small>
+                  <small>
+                    GET-open up to 12 likely form-related same-origin links,
+                    one level deep. This may return multiple forms; it does not
+                    choose one “best” form or actuate those links.
+                  </small>
                 </span>
               </label>
               <label>
                 <input
                   type="checkbox"
                   checked={allowLocalTargets}
+                  disabled={hostedApi}
                   onChange={(event) =>
                     setAllowLocalTargets(event.target.checked)
                   }
                 />
                 <span>
                   <strong>Allow localhost test targets</strong>
-                  <small>Required for a local fixture. Hosted FormWeave rejects this flag.</small>
+                  <small>
+                    {hostedApi
+                      ? "Unavailable on a hosted API: localhost would refer to the remote server, not your computer."
+                      : "Required only when the API and fixture are running on this workstation."}
+                  </small>
                 </span>
               </label>
             </div>
@@ -1760,7 +1804,7 @@ export function ApiConsole() {
                   checked={submit}
                   onChange={(event) => setSubmit(event.target.checked)}
                 />
-                Activate terminal submit
+                Submit the form at its terminal action
               </label>
               <button
                 className={submit ? "api-console-submit" : "primary-button"}

@@ -130,9 +130,9 @@ Request fields:
 | `name` | No | Client-facing crawl label. It is not artifact identity. |
 | `mode` | No | Compatibility field; send `probe`. Legacy `fixture_submit` is accepted as an alias for `submit: true`. |
 | `submit` | No | `false` traverses and verifies synthetic values but blocks the terminal action. `true` explicitly activates the LLM-authored terminal action and verifies the resulting state for either a public target or an allowed localhost target. |
-| `browserMode` | No | `headless` or `headful`; defaults to `headless`. |
-| `allowLocalTargets` | No | Must be `true` for loopback targets. It does not allow other private networks. |
-| `discoverRelatedPages` | No | Enables bounded same-origin page discovery. |
+| `browserMode` | No | `headless` or `headful`; defaults to `headless`. Hosted service deployments accept only `headless`; `headful` opens a visible browser only when FormWeave itself runs on the operator's workstation. |
+| `allowLocalTargets` | No | Must be `true` for loopback targets on a local FormWeave server. Hosted deployments reject it because their localhost is the remote worker, not the client's computer. It never allows other private networks. |
+| `discoverRelatedPages` | No | Enables GET-only observation of up to 12 likely form-related same-origin links, one level deep, subject to the 16-page run cap. It may return multiple forms and does not choose a single best form or click those links. |
 | `componentAuthorities` | No | Fresh per-crawl permission to model consent, signature, upload, acknowledgement, or review-confirmation controls with synthetic values. These flags do not authorize terminal submission; use `submit` for that. |
 
 Example response: `201 Created`

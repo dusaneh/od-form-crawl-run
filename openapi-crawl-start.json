@@ -115,17 +115,18 @@
               "headless",
               "headful"
             ],
-            "default": "headless"
+            "default": "headless",
+            "description": "headful opens visible Chromium only when FormWeave runs on the operator's workstation. Hosted deployments are headless-only and reject headful."
           },
           "allowLocalTargets": {
             "type": "boolean",
             "default": false,
-            "description": "Allows loopback targets such as localhost. Other private-network targets remain blocked."
+            "description": "Allows loopback targets only when FormWeave is itself running locally. Hosted deployments reject this flag because localhost would refer to the remote worker. Other private-network targets remain blocked."
           },
           "discoverRelatedPages": {
             "type": "boolean",
             "default": false,
-            "description": "Allows bounded same-origin page discovery."
+            "description": "GET-observes up to 12 likely form-related same-origin links one level deep, subject to the total page cap. It may return multiple forms; it does not choose one best form or authorize link clicks."
           },
           "componentAuthorities": {
             "type": "object",

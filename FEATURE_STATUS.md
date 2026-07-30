@@ -130,7 +130,7 @@ failure in the supported Phase 1 envelope.
 | `F2.2.12–F2.3.5` evidence integrity | **Built** | Model-sensing screenshots are transient. Reports retain a compact, labeled proof set around pre-action, selected branch, post-action, terminal result, and final failure boundaries; retained screenshots remain clickable and cumulative across pages. |
 | `F2.5.4–F2.5.11` fingerprinting | **Built** | One versioned canonical DOM-fact implementation is used by production, lineage, harnesses, golden regression, and tests. |
 | `F3` control-plane UI | **Partial** | Runs, contracts, guidance, sections, choices, four-layer exchanges, scripts, diagnostics, result proof, and local evidence are visible. The API console also renders fetched reports as evidence thumbnails and sectioned form/field summaries. Version/certification browsing remains. |
-| `F3.11` headless/headful | **Built** | Both modes use the same production crawler and are selectable per run. |
+| `F3.11` headless/headful | **Built** | Both modes use the same production crawler locally. Hosted launch surfaces disable Headful and localhost-target controls, and the hosted API rejects bypass attempts. |
 | `F3.12` settings | **Partial** | Typed settings and locked safety boundaries persist; free-form instructions do not yet alter planning. |
 | `F3.13` crawl submit boundary | **Built** | The crawl API and API console independently expose `submit: false` traversal and `submit: true` synthetic terminal submission for public and allowed-local targets. Both use only LLM-authored scripts and include result confirmation. |
 | `F3.15` option coverage | **Built for one-level envelope** | Probe outcomes, branch-producing choices, populated variants, and selected-branch restoration are reported. |

@@ -523,6 +523,7 @@ test(
                 engine: "playwright-chromium",
                 modes: ["headless", "headful"],
               },
+              hosted: false,
               activeCrawls: 0,
             }),
           });
@@ -746,11 +747,11 @@ test(
         allowLocalTargets: false,
         discoverRelatedPages: true,
         fixtureAuthorities: {
-          acknowledgement: false,
-          consent: false,
-          reviewConfirmation: false,
-          signature: false,
-          upload: false,
+          acknowledgement: true,
+          consent: true,
+          reviewConfirmation: true,
+          signature: true,
+          upload: true,
         },
       });
 
@@ -762,6 +763,32 @@ test(
       await page.getByRole("button", { name: /Close launch dialog/ }).click();
 
       await page.goto(`${appUrl}/api-console`, { waitUntil: "networkidle" });
+      for (const authorityLabel of [
+        "Consent / terms",
+        "Signature",
+        "File upload",
+        "Acknowledgement",
+        "Review confirmation",
+      ]) {
+        assert.equal(
+          await page.getByRole("checkbox", { name: authorityLabel }).isChecked(),
+          true,
+        );
+      }
+      const apiBaseInput = page.getByLabel("FormWeave API");
+      await apiBaseInput.fill("https://remote-formweave.example");
+      await page.waitForFunction(
+        () =>
+          document.querySelector('select option[value="headful"]')
+            ?.disabled === true,
+      );
+      assert.equal(
+        await page
+          .getByRole("checkbox", { name: /Allow localhost test targets/ })
+          .isDisabled(),
+        true,
+      );
+      await apiBaseInput.fill("http://127.0.0.1:8787");
       await page
         .getByLabel("Run ID returned by crawl kickoff")
         .fill(run.id);

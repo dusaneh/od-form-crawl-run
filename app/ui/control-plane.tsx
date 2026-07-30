@@ -74,6 +74,7 @@ type RuntimeStatus = {
     engine: string;
     modes: BrowserMode[];
   };
+  hosted?: boolean;
   generationMode?: "forced_fresh" | "reuse_or_generate";
   traversalSettingsVersion?: number;
   activeCrawls: number;
@@ -2013,6 +2014,7 @@ function LaunchModal({
   onClose,
   onLaunch,
   busy,
+  hosted,
 }: {
   open: boolean;
   onClose: () => void;
@@ -2025,6 +2027,7 @@ function LaunchModal({
     fixtureAuthorities: FixtureAuthorities
   ) => Promise<void>;
   busy: boolean;
+  hosted: boolean;
 }) {
   const [urls, setUrls] = useState("");
   const [browserMode, setBrowserMode] = useState<BrowserMode>("headless");
@@ -2032,12 +2035,19 @@ function LaunchModal({
   const [discoverRelatedPages, setDiscoverRelatedPages] = useState(true);
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("probe");
   const fixtureAuthorities: FixtureAuthorities = {
-    acknowledgement: false,
-    consent: false,
-    reviewConfirmation: false,
-    signature: false,
-    upload: false,
+    acknowledgement: true,
+    consent: true,
+    reviewConfirmation: true,
+    signature: true,
+    upload: true,
   };
+
+  useEffect(() => {
+    if (!hosted) return;
+    setBrowserMode("headless");
+    setAllowLocalTargets(false);
+    setExecutionMode("probe");
+  }, [hosted]);
 
   if (!open) return null;
 
@@ -2095,10 +2105,9 @@ function LaunchModal({
             <span>
               <strong>Discover related same-site pages</strong>
               <small>
-                Follow at most 12 same-origin links, one level deep, when the
-                link URL or text contains: apply, application, form, intake,
-                register, signup, enroll, eligibility, benefit, service,
-                request, step, page, start, or fixture.
+                GET-open at most 12 likely form-related same-origin links, one
+                level deep. This can discover multiple forms; it does not
+                choose one “best” form or actuate those links.
               </small>
             </span>
           </label>
@@ -2106,6 +2115,7 @@ function LaunchModal({
             <input
               type="checkbox"
               checked={allowLocalTargets}
+              disabled={hosted}
               onChange={(event) => {
                 setAllowLocalTargets(event.target.checked);
                 if (!event.target.checked) setExecutionMode("probe");
@@ -2114,8 +2124,9 @@ function LaunchModal({
             <span>
               <strong>Allow localhost test sites for this run</strong>
               <small>
-                Permits localhost, *.localhost, ::1, and 127.0.0.0/8. Other
-                private-network addresses remain blocked.
+                {hosted
+                  ? "Unavailable remotely: localhost would refer to the hosted worker, not your computer."
+                  : "Permits localhost, *.localhost, ::1, and 127.0.0.0/8. Other private-network addresses remain blocked."}
               </small>
             </span>
           </label>
@@ -2135,11 +2146,16 @@ function LaunchModal({
               type="button"
               className={browserMode === "headful" ? "selected" : ""}
               aria-pressed={browserMode === "headful"}
+              disabled={hosted}
               onClick={() => setBrowserMode("headful")}
             >
               <span aria-hidden="true">▣</span>
               <strong>Headful</strong>
-              <small>Open visible local Chromium so you can watch every page render.</small>
+              <small>
+                {hosted
+                  ? "Unavailable remotely; the browser would run on the hosted worker, not your computer."
+                  : "Open visible local Chromium so you can watch every page render."}
+              </small>
             </button>
           </fieldset>
           <fieldset className="execution-mode-fieldset">
@@ -3249,6 +3265,7 @@ export function ControlPlane() {
         onClose={() => setLaunchOpen(false)}
         onLaunch={launch}
         busy={launching}
+        hosted={runtime?.hosted === true}
       />
       {toast && <div className="toast"><span>✓</span>{toast}</div>}
     </div>

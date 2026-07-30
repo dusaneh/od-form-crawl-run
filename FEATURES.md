@@ -108,6 +108,9 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
 - `F1.3.1.1` New Crawl exposes whether related same-origin pages will be
   discovered and discloses the active depth, per-page link cap, same-origin
   restriction, and URL/text terms used by the discovery classifier.
+- `F1.3.1.2` Related-page discovery performs bounded GET observation only. It
+  may return multiple independently executable forms and does not select a
+  single "best" form or authorize clicks on the discovered pages.
 - `F1.3.2` A discovered page is represented in the run graph and final report.
 - `F1.3.3` Same-origin iframe documents and open shadow roots are included in
   rendered-DOM extraction with their origin recorded.
@@ -605,6 +608,10 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   watch pages render.
 - `F3.11.3` Both visibility modes use the same extraction, screenshot,
   persistence, logging, and safety pipeline.
+- `F3.11.4` Hosted launch surfaces disable Headful and localhost-target
+  controls because the browser and loopback interface belong to the remote
+  worker. The API continues to reject either request if a client bypasses the
+  UI.
 - `F3.12` The UI provides a dedicated traversal Settings surface.
 - `F3.12.1` Settings explain what is automatic, observed only, or requires
   human review.
@@ -644,6 +651,9 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   local targets equally. Fresh `componentAuthorities` explicitly permit those
   action categories per crawl; they use only synthetic crawl values and do not
   themselves authorize terminal submission.
+- `F3.13.5.1` Human launch surfaces select every supported component authority
+  by default while allowing an operator to opt out. API clients still send
+  their intended authority object explicitly.
 - `F3.13.6` Probe, explicit crawl submission, and approved-live modes
   show distinct badges throughout launch, live traversal, evidence, report,
   and download views.
