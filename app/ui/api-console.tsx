@@ -276,6 +276,365 @@ function fieldIsRequired(
   });
 }
 
+function objectItems(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is JsonObject =>
+          Boolean(item) && typeof item === "object" && !Array.isArray(item),
+      )
+    : [];
+}
+
+function evidenceItemsForReport(report: JsonObject, crawlId: string) {
+  const items: {
+    id: string;
+    url: string;
+    label: string;
+    kind: string;
+    detail: string;
+  }[] = [];
+  const seen = new Set<string>();
+  const add = (item: (typeof items)[number]) => {
+    if (!item.url || seen.has(item.url)) return;
+    seen.add(item.url);
+    items.push(item);
+  };
+
+  for (const [pageIndex, page] of objectItems(report.pages).entries()) {
+    const pageLabel = String(
+      page.heading || page.title || `Page ${pageIndex + 1}`,
+    );
+    for (const state of objectItems(page.stateEvidence)) {
+      if (
+        state.evidenceAvailable !== true ||
+        typeof state.evidence !== "string"
+      ) {
+        continue;
+      }
+      const values = Array.isArray(state.values) ? state.values.length : 0;
+      add({
+        id: String(state.id || `state_${pageIndex + 1}_${items.length + 1}`),
+        url: state.evidence,
+        label: String(state.label || pageLabel),
+        kind: String(state.kind || "state evidence").replaceAll("_", " "),
+        detail: `${values} entered ${values === 1 ? "value" : "values"} · ${String(
+          state.fieldsVisible ?? 0,
+        )} visible fields`,
+      });
+    }
+    if (page.screenshotArtifact) {
+      const evidenceId = `page_${String(pageIndex + 1).padStart(2, "0")}`;
+      add({
+        id: evidenceId,
+        url: `/api/runs/${encodeURIComponent(crawlId)}/evidence/${evidenceId}`,
+        label: pageLabel,
+        kind: "page capture",
+        detail: `${String(page.httpStatus || "—")} · ${String(
+          page.screenshotProvider || report.renderEngine || "browser",
+        )}`,
+      });
+    }
+  }
+
+  for (const exchange of objectItems(report.architectureExchanges)) {
+    const sensing =
+      exchange.sensing && typeof exchange.sensing === "object"
+        ? (exchange.sensing as JsonObject)
+        : null;
+    if (!sensing || typeof sensing.evidence !== "string") continue;
+    add({
+      id: String(exchange.id || `sensing_${items.length + 1}`),
+      url: sensing.evidence,
+      label: String(exchange.stateLabel || exchange.stateKey || "Model sensing"),
+      kind: "model sensing",
+      detail: `${String(sensing.visibleFields ?? 0)} visible fields supplied to the model`,
+    });
+  }
+  return items;
+}
+
+function fallbackSchemaFromContract(contract: JsonObject[]) {
+  return {
+    type: "object",
+    properties: Object.fromEntries(
+      contract.map((field) => [
+        String(field.key || field.name || field.id || "field"),
+        {
+          type: field.control === "number" ? "number" : "string",
+          "x-formweave-label": field.label || field.key || "Observed field",
+          "x-formweave-control": field.control || "text",
+          "x-formweave-sensitive": field.sensitive === true,
+          "x-formweave-legal-acceptance-type":
+            field.legalAcceptanceType || null,
+          "x-formweave-options": Array.isArray(field.optionSet)
+            ? field.optionSet
+            : [],
+        },
+      ]),
+    ),
+    required: contract
+      .filter((field) => field.required === true)
+      .map((field) => String(field.key || field.name || field.id || "field")),
+  } satisfies JsonObject;
+}
+
+function conditionalRequiredKeys(inputSchema: JsonObject) {
+  const keys = new Set<string>();
+  for (const condition of objectItems(inputSchema.allOf)) {
+    const then =
+      condition.then && typeof condition.then === "object"
+        ? (condition.then as JsonObject)
+        : null;
+    if (!then || !Array.isArray(then.required)) continue;
+    for (const key of then.required) keys.add(String(key));
+  }
+  return keys;
+}
+
+function ReportPresentation({
+  report,
+  crawlId,
+  apiBase,
+}: {
+  report: JsonObject;
+  crawlId: string;
+  apiBase: string;
+}) {
+  const stats =
+    report.stats && typeof report.stats === "object"
+      ? (report.stats as JsonObject)
+      : {};
+  const pages = objectItems(report.pages);
+  const contract = objectItems(report.contract);
+  const contractByKey = new Map(
+    contract.map((field) => [String(field.key || ""), field]),
+  );
+  const evidence = evidenceItemsForReport(report, crawlId);
+  const definitions = objectItems(report.formDefinitions);
+  const targets = Array.isArray(report.targets) ? report.targets : [];
+  const forms = definitions.length
+    ? definitions
+    : [
+        {
+          formId: "",
+          title: pages[0]?.title || pages[0]?.heading || "Observed form",
+          targetUrl: pages[0]?.finalUrl || targets[0] || "",
+          status: "observed",
+          eligibility: { status: "not evaluated" },
+          inputSchema: fallbackSchemaFromContract(contract),
+        },
+      ];
+
+  return (
+    <section
+      className="api-console-report-presentation"
+      aria-label="Crawl report presentation"
+    >
+      <div className="api-console-report-heading">
+        <div>
+          <span>REPORT REVIEW</span>
+          <h3>What the crawler captured</h3>
+        </div>
+        <code>{String(report.id || crawlId)}</code>
+      </div>
+
+      <div className="api-console-report-metrics">
+        <div><strong>{String(stats.pagesFetched ?? pages.length)}</strong><span>Pages</span></div>
+        <div><strong>{String(stats.formsFound ?? forms.length)}</strong><span>Forms</span></div>
+        <div><strong>{String(stats.fieldsFound ?? contract.length)}</strong><span>Visible fields</span></div>
+        <div><strong>{evidence.length}</strong><span>Evidence images</span></div>
+      </div>
+
+      <section className="api-console-report-block">
+        <div className="api-console-report-block-heading">
+          <div>
+            <h4>Screenshot evidence</h4>
+            <p>
+              Populated and transition evidence appears first. Open any original
+              in a separate tab for full-resolution review.
+            </p>
+          </div>
+          <span>{evidence.length}</span>
+        </div>
+        {evidence.length ? (
+          <div className="api-console-evidence-grid">
+            {evidence.map((item) => (
+              <article key={`${item.id}-${item.url}`}>
+                <a
+                  href={apiUrl(apiBase, item.url)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Open ${item.label} evidence in a new tab`}
+                >
+                  {/* Evidence is private and served directly by the authenticated API. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={apiUrl(apiBase, item.url)}
+                    alt={`${item.label} evidence thumbnail`}
+                    loading="lazy"
+                  />
+                  <span>Open original ↗</span>
+                </a>
+                <div>
+                  <small>{item.kind}</small>
+                  <strong>{item.label}</strong>
+                  <p>{item.detail}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="api-console-empty">
+            This report did not retain any available screenshot evidence.
+          </div>
+        )}
+      </section>
+
+      <section className="api-console-report-block">
+        <div className="api-console-report-block-heading">
+          <div>
+            <h4>Forms, sections, and fields</h4>
+            <p>
+              A readable view of the same crawl-scoped schema returned in the
+              report. Step 3 still retrieves the exact executable schema.
+            </p>
+          </div>
+          <span>{forms.length}</span>
+        </div>
+        <div className="api-console-form-overviews">
+          {forms.map((definition, formIndex) => {
+            const schema =
+              definition.inputSchema &&
+              typeof definition.inputSchema === "object"
+                ? (definition.inputSchema as JsonObject)
+                : fallbackSchemaFromContract(contract);
+            const properties = schemaProperties(schema);
+            const baseRequired = new Set(
+              Array.isArray(schema.required)
+                ? schema.required.map((key) => String(key))
+                : [],
+            );
+            const conditionalRequired = conditionalRequiredKeys(schema);
+            const requiredKeys = new Set([
+              ...baseRequired,
+              ...conditionalRequired,
+            ]);
+            const sectionGroups = new Map<
+              string,
+              [string, JsonObject][]
+            >();
+            for (const entry of Object.entries(properties)) {
+              const observed = contractByKey.get(entry[0]);
+              const section = String(
+                observed?.sectionText || observed?.sectionId || "General",
+              );
+              const group = sectionGroups.get(section) || [];
+              group.push(entry);
+              sectionGroups.set(section, group);
+            }
+            const eligibility =
+              definition.eligibility &&
+              typeof definition.eligibility === "object"
+                ? String(
+                    (definition.eligibility as JsonObject).status || "unknown",
+                  )
+                : "unknown";
+            return (
+              <article
+                className="api-console-form-overview"
+                key={String(definition.formId || `observed_${formIndex}`)}
+              >
+                <header>
+                  <div>
+                    <small>FORM {formIndex + 1}</small>
+                    <h5>{String(definition.title || "Observed form")}</h5>
+                    {definition.formId ? (
+                      <code>{String(definition.formId)}</code>
+                    ) : (
+                      <span>No executable form ID was produced</span>
+                    )}
+                  </div>
+                  <div className="api-console-form-statuses">
+                    <span>{String(definition.status || "observed")}</span>
+                    <span className={eligibility === "eligible" ? "eligible" : ""}>
+                      {eligibility}
+                    </span>
+                  </div>
+                </header>
+                <div className="api-console-form-summary">
+                  <span><b>{Object.keys(properties).length}</b> fields</span>
+                  <span><b>{requiredKeys.size}</b> required</span>
+                  <span>
+                    <b>
+                      {Object.values(properties).filter(
+                        (field) => field["x-formweave-sensitive"] === true,
+                      ).length}
+                    </b>{" "}
+                    sensitive
+                  </span>
+                  <span><b>{sectionGroups.size}</b> sections</span>
+                </div>
+                <div className="api-console-section-list">
+                  {[...sectionGroups.entries()].map(([section, fields]) => (
+                    <section key={section}>
+                      <div className="api-console-section-heading">
+                        <strong>{section}</strong>
+                        <span>{fields.length} {fields.length === 1 ? "field" : "fields"}</span>
+                      </div>
+                      <div className="api-console-field-list">
+                        {fields.map(([key, field]) => {
+                          const control = String(
+                            field["x-formweave-control"] ||
+                              field.type ||
+                              "text",
+                          );
+                          const branch = branchFor(field);
+                          const legal = String(
+                            field["x-formweave-legal-acceptance-type"] || "",
+                          );
+                          const options = Array.isArray(
+                            field["x-formweave-options"],
+                          )
+                            ? field["x-formweave-options"].length
+                            : Array.isArray(field.enum)
+                              ? field.enum.length
+                              : 0;
+                          return (
+                            <div className="api-console-field-row" key={key}>
+                              <div>
+                                <strong>
+                                  {String(field["x-formweave-label"] || key)}
+                                </strong>
+                                <code>{key}</code>
+                              </div>
+                              <div className="api-console-field-badges">
+                                <span>{control}</span>
+                                {requiredKeys.has(key) && (
+                                  <span className="critical">required</span>
+                                )}
+                                {branch && <span className="dynamic">conditional</span>}
+                                {field["x-formweave-sensitive"] === true && (
+                                  <span className="sensitive">sensitive</span>
+                                )}
+                                {legal && <span className="legal">{legal}</span>}
+                                {options > 0 && <span>{options} options</span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    </section>
+  );
+}
+
 export function ApiConsole() {
   const [apiBase, setApiBase] = useState(DEFAULT_API);
   const [targetUrl, setTargetUrl] = useState(DEFAULT_TARGET);
@@ -884,6 +1243,13 @@ export function ApiConsole() {
                   : "—"}
               </span>
             </div>
+            {report && (
+              <ReportPresentation
+                report={report}
+                crawlId={crawlId}
+                apiBase={apiBase}
+              />
+            )}
             <details className="api-console-json">
               <summary>Retrieved report</summary>
               <pre>{pretty(report) || "Fetch the report after it becomes available."}</pre>

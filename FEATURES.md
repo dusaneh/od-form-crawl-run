@@ -698,6 +698,21 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   provenance beside the current run's sensing, readback, transition, and
   evidence results. It explicitly distinguishes zero traversal-generation
   calls from any separate optional post-crawl report-analysis call.
+- `F3.19` After the API console fetches a completed crawl report, it renders a
+  client-readable report summary in addition to the raw response.
+- `F3.19.1` The summary shows page, form, visible-field, and available-evidence
+  totals.
+- `F3.19.2` Available state, page, and sensing screenshots render as
+  authenticated thumbnails. Each thumbnail opens its full-resolution evidence
+  route in a new browser tab and identifies the page, state, and evidence kind
+  when those facts are available.
+- `F3.19.3` Each discovered form renders its identity and eligibility plus
+  fields grouped into observed sections. Field rows show the displayed label,
+  stable key, browser control type, required, conditional, sensitive, legal,
+  and option-count metadata when present.
+- `F3.19.4` The presentation layer must derive from the fetched report and
+  published form schema without changing crawl facts. Raw JSON remains
+  inspectable for complete client integration and diagnostics.
 
 ## F4. Local-first operation and ownership
 

@@ -8,6 +8,7 @@ import { chromium } from "playwright";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const now = new Date().toISOString();
+const crawlFormId = "form_ui_fixture";
 const field = {
   key: "participant_email",
   label: "Participant email",
@@ -24,6 +25,8 @@ const field = {
   testValues: ["crawler.user@example.invalid"],
   testValueSource: "deterministic",
   entryStatus: "entered",
+  sectionText: "Applicant details",
+  sectionId: "section_applicant",
 };
 const hiddenField = {
   key: "csrf_token",
@@ -178,6 +181,7 @@ const run = {
   liveApproved: false,
   createdAt: now,
   updatedAt: now,
+  formIds: [crawlFormId],
 };
 const report = {
   id: run.id,
@@ -210,6 +214,18 @@ const report = {
       rendered: true,
       renderEngine: "playwright-chromium",
       browserMode: "headless",
+      sections: [
+        {
+          id: "section_applicant",
+          label: "Applicant details",
+          ordinal: 1,
+          selector: "form",
+          frameUrl: run.targetUrl,
+          questionKeys: [field.key],
+          guidanceIds: [],
+        },
+      ],
+      stateEvidence: run.nodes[0].stateEvidence,
     },
   ],
   contract: [field, hiddenField],
@@ -224,6 +240,44 @@ const report = {
     keyFindings: [],
     limitations: ["AI disabled for deterministic UI fixture."],
   },
+  formDefinitions: [
+    {
+      formId: crawlFormId,
+      sourceRunId: run.id,
+      targetUrl: run.targetUrl,
+      title: "Fixture application",
+      status: "observed",
+      eligibility: {
+        status: "eligible",
+        reasons: [],
+      },
+      script: {
+        artifactId: "form_ui_artifact",
+        scriptVersion: 1,
+        sourceHash: "fixture-source-hash",
+        path: "C:\\fixture\\generated\\form_ui_artifact\\v1",
+      },
+      inputSchema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: {
+          [field.key]: {
+            type: "string",
+            format: "email",
+            "x-formweave-label": field.label,
+            "x-formweave-control": field.control,
+            "x-formweave-sensitive": true,
+            "x-formweave-native-name": field.key,
+            "x-formweave-options": [],
+          },
+        },
+        required: [field.key],
+        additionalProperties: false,
+      },
+      approvalEndpoint: `/api/forms/${crawlFormId}/approval`,
+      runEndpoint: `/api/forms/${crawlFormId}/runs`,
+    },
+  ],
   artifacts: run.artifacts,
 };
 const traversalSettings = {
@@ -407,6 +461,17 @@ test(
           });
           return;
         }
+        if (
+          url.pathname === `/api/runs/${run.id}` &&
+          request.method() === "GET"
+        ) {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ run }),
+          });
+          return;
+        }
         if (url.pathname.startsWith(`/api/runs/${run.id}/evidence/`)) {
           await route.fulfill({
             status: 200,
@@ -552,6 +617,44 @@ test(
         0
       );
       await page.getByRole("button", { name: /Close launch dialog/ }).click();
+
+      await page.goto(`${appUrl}/api-console`, { waitUntil: "networkidle" });
+      await page
+        .getByLabel("Run ID returned by crawl kickoff")
+        .fill(run.id);
+      await page.getByRole("button", { name: /Poll crawl once/ }).click();
+      await page.waitForFunction(
+        (expectedFormId) =>
+          document.querySelector('input[placeholder="form_..."]')?.value ===
+          expectedFormId,
+        crawlFormId,
+      );
+      await page.getByRole("button", { name: /Fetch report/ }).click();
+
+      const reportEvidence = page.getByRole("link", {
+        name: "Open Populated fixture application evidence in a new tab",
+      });
+      await reportEvidence.waitFor();
+      assert.equal(await reportEvidence.getAttribute("target"), "_blank");
+      assert.equal(
+        (await reportEvidence.getAttribute("href"))?.endsWith(
+          "/api/runs/run_ui_fixture/evidence/page_01_state_01",
+        ),
+        true,
+      );
+      await page
+        .getByRole("img", {
+          name: "Populated fixture application evidence thumbnail",
+        })
+        .waitFor();
+      await page
+        .getByRole("heading", { name: "Forms, sections, and fields" })
+        .waitFor();
+      await page.getByText("Applicant details", { exact: true }).waitFor();
+      await page.getByText("Participant email", { exact: true }).waitFor();
+      await page.getByText("email", { exact: true }).last().waitFor();
+      await page.getByText("required", { exact: true }).last().waitFor();
+      await page.getByText("sensitive", { exact: true }).last().waitFor();
     } finally {
       await browser?.close();
       child.kill();
