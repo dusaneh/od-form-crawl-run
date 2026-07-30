@@ -35,7 +35,14 @@
                 "mode": "probe",
                 "browserMode": "headless",
                 "allowLocalTargets": false,
-                "discoverRelatedPages": false
+                "discoverRelatedPages": false,
+                "fixtureAuthorities": {
+                  "consent": false,
+                  "signature": false,
+                  "upload": false,
+                  "acknowledgement": false,
+                  "reviewConfirmation": false
+                }
               }
             }
           }
@@ -93,7 +100,7 @@
               "fixture_submit"
             ],
             "default": "probe",
-            "description": "probe stops before terminal submission. fixture_submit may submit only an explicitly allowed loopback fixture."
+            "description": "probe generates/tests a synthetic script but stops before terminal submission. An eligible probe can be approved without submitting. fixture_submit may submit only an explicitly allowed loopback fixture with synthetic data."
           },
           "browserMode": {
             "type": "string",
@@ -112,6 +119,18 @@
             "type": "boolean",
             "default": false,
             "description": "Allows bounded same-origin page discovery."
+          },
+          "fixtureAuthorities": {
+            "type": "object",
+            "description": "Per-component fixture-submit authorities. They are considered only in fixture_submit mode for an explicitly allowed loopback target; hosted mode rejects loopback targets.",
+            "properties": {
+              "acknowledgement": { "type": "boolean", "default": false },
+              "consent": { "type": "boolean", "default": false },
+              "reviewConfirmation": { "type": "boolean", "default": false },
+              "signature": { "type": "boolean", "default": false },
+              "upload": { "type": "boolean", "default": false }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false

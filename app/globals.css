@@ -487,9 +487,77 @@ textarea:focus-visible {
 
 .api-console-inline {
   display: grid;
-  grid-template-columns: 160px minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin-top: 11px;
+}
+
+.api-console-switches {
+  display: grid;
+  gap: 8px;
+  margin-top: 11px;
+}
+
+.api-console-switches > label,
+.api-console-authorities > label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: #4b5e54;
+  background: #fbfcfb;
+  font-size: 11px;
+}
+
+.api-console-switches input,
+.api-console-authorities input {
+  width: 16px;
+  min-height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--mint-dark);
+}
+
+.api-console-switches span,
+.api-console-authorities span {
+  display: grid;
+  gap: 3px;
+}
+
+.api-console-switches strong {
+  color: var(--ink);
+}
+
+.api-console-switches small,
+.api-console-authorities p {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 550;
+  line-height: 1.4;
+}
+
+.api-console-authorities {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 12px;
+  border: 1px solid #c5e4d6;
+  border-radius: 10px;
+  background: #f4fbf7;
+}
+
+.api-console-authorities legend {
+  padding: 0 4px;
+  color: #2a6f51;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.api-console-authorities > p {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .api-console-actions,
@@ -918,6 +986,10 @@ textarea:focus-visible {
   }
 
   .api-console-inline {
+    grid-template-columns: 1fr;
+  }
+
+  .api-console-authorities {
     grid-template-columns: 1fr;
   }
 

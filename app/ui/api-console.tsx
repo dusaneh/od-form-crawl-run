@@ -3,6 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type JsonObject = Record<string, unknown>;
+type CrawlMode = "probe" | "fixture_submit";
+type FixtureAuthorities = {
+  acknowledgement: boolean;
+  consent: boolean;
+  reviewConfirmation: boolean;
+  signature: boolean;
+  upload: boolean;
+};
 type Exchange = {
   id: string;
   sequence: number;
@@ -167,6 +175,16 @@ export function ApiConsole() {
   const [browserMode, setBrowserMode] = useState<"headless" | "headful">(
     "headless",
   );
+  const [crawlMode, setCrawlMode] = useState<CrawlMode>("probe");
+  const [allowLocalTargets, setAllowLocalTargets] = useState(false);
+  const [discoverRelatedPages, setDiscoverRelatedPages] = useState(false);
+  const [fixtureAuthorities, setFixtureAuthorities] = useState<FixtureAuthorities>({
+    acknowledgement: false,
+    consent: false,
+    reviewConfirmation: false,
+    signature: false,
+    upload: false,
+  });
   const [crawlId, setCrawlId] = useState("");
   const [crawl, setCrawl] = useState<JsonObject | null>(null);
   const [report, setReport] = useState<JsonObject | null>(null);
@@ -357,9 +375,8 @@ export function ApiConsole() {
   }
 
   async function startCrawl() {
-    let hostname;
     try {
-      hostname = new URL(targetUrl).hostname.toLowerCase();
+      new URL(targetUrl);
     } catch (caught) {
       setError({
         status: 0,
@@ -380,19 +397,15 @@ export function ApiConsole() {
     setExecution(null);
     setCapture(null);
     try {
-      const local =
-        hostname === "localhost" ||
-        hostname.endsWith(".localhost") ||
-        hostname === "::1" ||
-        hostname.startsWith("127.");
       setCaptureBaseUrl(captureBaseFor(targetUrl));
       const payload = await request("Start crawl", "POST", "/api/runs", {
         urls: [targetUrl],
         name: "API console crawl",
-        mode: "probe",
+        mode: crawlMode,
         browserMode,
-        allowLocalTargets: local,
-        discoverRelatedPages: false,
+        allowLocalTargets,
+        discoverRelatedPages,
+        fixtureAuthorities,
       });
       const run =
         payload.run && typeof payload.run === "object"
@@ -568,7 +581,30 @@ export function ApiConsole() {
                 }}
               />
             </label>
+            <div className="api-console-callout">
+              <strong>Choose the crawl boundary explicitly.</strong>
+              <span>
+                <code>probe</code> maps and tests with synthetic values but
+                stops before terminal submit. <code>fixture_submit</code> is
+                only for an explicitly allowed localhost test form; public
+                form submission happens later through the approved run API.
+              </span>
+            </div>
             <div className="api-console-inline">
+              <label>
+                Crawl mode
+                <select
+                  value={crawlMode}
+                  onChange={(event) =>
+                    setCrawlMode(event.target.value as CrawlMode)
+                  }
+                >
+                  <option value="probe">Probe — stop before submit</option>
+                  <option value="fixture_submit">
+                    Local fixture submit — synthetic only
+                  </option>
+                </select>
+              </label>
               <label>
                 Browser
                 <select
@@ -589,11 +625,75 @@ export function ApiConsole() {
                 />
               </label>
             </div>
+            <div className="api-console-switches">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={discoverRelatedPages}
+                  onChange={(event) =>
+                    setDiscoverRelatedPages(event.target.checked)
+                  }
+                />
+                <span>
+                  <strong>Discover related same-site pages</strong>
+                  <small>Bounded same-origin discovery; off means only the supplied URL.</small>
+                </span>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={allowLocalTargets}
+                  onChange={(event) => {
+                    setAllowLocalTargets(event.target.checked);
+                    if (!event.target.checked) setCrawlMode("probe");
+                  }}
+                />
+                <span>
+                  <strong>Allow localhost test targets</strong>
+                  <small>Required for a local fixture. Hosted FormWeave rejects this flag.</small>
+                </span>
+              </label>
+            </div>
+            {crawlMode === "fixture_submit" && (
+              <fieldset className="api-console-authorities">
+                <legend>Local fixture component authorities</legend>
+                <p>
+                  These are sent with the request for an opted-in local fixture.
+                  The server still enforces the loopback boundary.
+                </p>
+                {(
+                  [
+                    ["consent", "Consent / terms"],
+                    ["signature", "Signature"],
+                    ["upload", "File upload"],
+                    ["acknowledgement", "Acknowledgement"],
+                    ["reviewConfirmation", "Review confirmation"],
+                  ] as [keyof FixtureAuthorities, string][]
+                ).map(([key, label]) => (
+                  <label key={key}>
+                    <input
+                      type="checkbox"
+                      checked={fixtureAuthorities[key]}
+                      onChange={(event) =>
+                        setFixtureAuthorities((current) => ({
+                          ...current,
+                          [key]: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </fieldset>
+            )}
             <div className="api-console-actions">
               <button
                 className="primary-button"
                 onClick={startCrawl}
-                disabled={Boolean(busy)}
+                disabled={
+                  Boolean(busy) ||
+                  (crawlMode === "fixture_submit" && !allowLocalTargets)
+                }
               >
                 {busy === "crawl" ? "Starting…" : "POST · Start crawl"}
               </button>
@@ -601,6 +701,9 @@ export function ApiConsole() {
             <div className="api-console-facts">
               <span><b>Crawl</b> {crawlId || "not started"}</span>
               <span><b>Initial status</b> {String(crawl?.status || "—")}</span>
+              <span><b>Mode</b> {crawlMode}</span>
+              <span><b>Discovery</b> {discoverRelatedPages ? "on" : "off"}</span>
+              <span><b>Local target</b> {allowLocalTargets ? "allowed" : "blocked"}</span>
             </div>
           </article>
 
@@ -692,6 +795,15 @@ export function ApiConsole() {
                 placeholder="form_..."
               />
             </label>
+            <div className="api-console-callout">
+              <strong>Approval is a human review decision, not a submission test.</strong>
+              <span>
+                A completed eligible probe may be approved without terminal
+                submission. Approval pins the exact crawl-scoped script and
+                schema; the later run response is the evidence of whether an
+                actual submission succeeded.
+              </span>
+            </div>
             {definitions.length > 1 && (
               <label className="api-console-secondary-field">
                 Select another form found in the report
