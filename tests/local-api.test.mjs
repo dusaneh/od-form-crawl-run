@@ -109,6 +109,17 @@ test(
       assert.deepEqual(health.browser.modes, ["headless", "headful"]);
       assert.equal(health.generationMode, "reuse_or_generate");
       assert.equal(health.traversalSettingsVersion, 4);
+      const localAuditResponse = await fetch(`${baseUrl}/api/ops/audit`, {
+        headers: {
+          "x-formweave-auth-mechanism": "session",
+          "x-formweave-auth-principal": "spoofed@example.test",
+        },
+      });
+      assert.equal(localAuditResponse.status, 403);
+      assert.equal(
+        (await localAuditResponse.json()).code,
+        "operator_login_required",
+      );
       const corsResponse = await fetch(`${baseUrl}/api/health`, {
         headers: { origin: "http://127.0.0.1:3000" },
       });

@@ -837,14 +837,14 @@ function actorFromRequest(request) {
   const principal = String(
     request.headers.get("x-formweave-auth-principal") || "",
   ).trim();
-  if (mechanism === "bearer" && principal) {
+  if (hosted && mechanism === "bearer" && principal) {
     return {
       actorType: "api_token",
       actorId: principal,
       mechanism,
     };
   }
-  if (["basic", "session"].includes(mechanism) && principal) {
+  if (hosted && ["basic", "session"].includes(mechanism) && principal) {
     return {
       actorType: "user",
       actorId: principal,
@@ -2403,6 +2403,18 @@ async function route(request) {
     });
   }
   if (url.pathname === "/api/ops/audit" && request.method === "GET") {
+    const actor = actorFromRequest(request);
+    if (actor.actorType !== "user") {
+      return jsonResponse(
+        request,
+        {
+          error:
+            "An authenticated operator UI session is required to view audit data.",
+          code: "operator_login_required",
+        },
+        403,
+      );
+    }
     return jsonResponse(request, {
       audit: await operationalAuditDashboard({
         hours: url.searchParams.get("hours"),

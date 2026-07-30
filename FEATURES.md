@@ -736,6 +736,10 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
 - `F3.20.3` API Bearer credentials used by integrations cannot retrieve the
   operations dashboard or its data. Dashboard access requires the hosted UI
   login/session boundary.
+- `F3.20.4` The audit-data API independently verifies a trusted hosted
+  UI-user identity. Direct local API requests and caller-supplied identity
+  headers are insufficient; local operators use the authenticated hosted
+  dashboard for shared PostgreSQL audit data.
 
 ## F4. Local-first operation and ownership
 
