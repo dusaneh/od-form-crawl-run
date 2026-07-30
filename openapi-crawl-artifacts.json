@@ -252,7 +252,7 @@
           },
           "inputSchema": {
             "type": "object",
-            "description": "JSON Schema for data sent to POST /api/forms/{formId}/runs. Standard keywords include type, format, enum, pattern, minLength, maxLength, minimum, maximum, and multipleOf. x-formweave-input-format explains browser-native date/time encodings; x-formweave-native-name maps the semantic API key to the submitted HTML name; x-formweave-options preserves value/label pairs; x-formweave-browser-constraints preserves observed raw type, placeholder, autocomplete, input mode, min, max, step, and multiple state.",
+            "description": "JSON Schema for data sent to POST /api/forms/{formId}/runs. Standard keywords include type, format, enum, pattern, minLength, maxLength, minimum, maximum, and multipleOf. x-formweave-input-format explains browser-native date/time encodings; x-formweave-native-name maps the semantic API key to the submitted HTML name; x-formweave-options preserves value/label pairs; x-formweave-browser-constraints preserves observed raw type, placeholder, autocomplete, input mode, min, max, step, and multiple state. x-formweave-test-data is a client-ready synthetic payload from the pinned script's crawl validation; each included property also carries x-formweave-test-value and x-formweave-test-value-source. These values are debugging and approval aids, not applicant data.",
             "additionalProperties": true
           },
           "script": {

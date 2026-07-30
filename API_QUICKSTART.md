@@ -349,12 +349,22 @@ Example response (abbreviated):
     },
     "approval": null,
     "inputSchema": {
+      "x-formweave-contract-version": 3,
+      "x-formweave-test-data": {
+        "full_name": "FORMWEAVE TEST PERSON",
+        "date_of_birth": "1980-12-14",
+        "housing_type": "Rent",
+        "landlord_name": "FORMWEAVE TEST LANDLORD"
+      },
+      "x-formweave-test-data-purpose": "Synthetic values used to validate the pinned crawl-generated script. They are debugging and approval aids, not real applicant data.",
       "type": "object",
       "properties": {
         "full_name": {
           "type": "string",
           "x-formweave-label": "Full name",
-          "x-formweave-native-name": "full_name"
+          "x-formweave-native-name": "full_name",
+          "x-formweave-test-value": "FORMWEAVE TEST PERSON",
+          "x-formweave-test-value-source": "llm-authored-generated-script"
         },
         "date_of_birth": {
           "type": "string",
@@ -403,6 +413,13 @@ Example response (abbreviated):
 
 Critical schema fields:
 
+- `inputSchema.x-formweave-test-data` is a ready-to-edit synthetic `data`
+  payload containing the values used to validate the pinned crawl script.
+  It is useful for approval, debugging, and a first dry run; it is not real
+  applicant data and does not itself authorize submission.
+- Each populated property repeats its value in `x-formweave-test-value` and
+  identifies its origin in `x-formweave-test-value-source`. This lets clients
+  show which individual fields were initialized from crawl validation.
 - Use the exact keys under `inputSchema.properties` in the future `data`
   object.
 - Enforce each property’s `type`, `enum`, `pattern`, and numeric or length

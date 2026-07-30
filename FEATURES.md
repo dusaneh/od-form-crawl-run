@@ -204,6 +204,12 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   constraints before launching Chromium. A localized display date such as
   `12/14/1980` does not reach Playwright when the native date value requires
   `1980-12-14`; the API returns a field-specific validation issue instead.
+- `F1.4.2.4` The published input schema includes client-ready synthetic test
+  data derived from the exact pinned script values used during crawl
+  validation. Test values appear both as a top-level payload template and on
+  their individual field schemas, with source and purpose metadata. They are
+  explicitly debugging and approval aids, never applicant data or implicit
+  authorization to submit.
 - `F1.4.3` Visible fields and hidden/system controls remain distinguishable.
 - `F1.4.4` Client-rendered controls may be represented as rendered-DOM
   observations only after Playwright actually observes them; they remain
@@ -713,6 +719,11 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
 - `F3.19.4` The presentation layer must derive from the fetched report and
   published form schema without changing crawl facts. Raw JSON remains
   inspectable for complete client integration and diagnostics.
+- `F3.19.5` After the API console retrieves a form schema, the editable Run API
+  fields initialize from its published synthetic crawl test data. The operator
+  can reset edits to that template, and synthetic harmless upload fixtures are
+  visibly identified even though browser file inputs cannot display a
+  programmatically selected filename.
 
 ## F4. Local-first operation and ownership
 

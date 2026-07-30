@@ -94,7 +94,7 @@
         "properties": {
           "data": {
             "type": "object",
-            "description": "User values keyed exactly as required by GET /api/forms/{formId}'s inputSchema. A file field uses {filename, contentType, contentBase64}.",
+            "description": "User values keyed exactly as required by GET /api/forms/{formId}'s inputSchema. Clients may initialize this object from inputSchema.x-formweave-test-data for debugging or approval, but should replace synthetic values with real client data before a live run. A file field uses {filename, contentType, contentBase64}.",
             "additionalProperties": true
           },
           "submit": {

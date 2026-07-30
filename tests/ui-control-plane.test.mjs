@@ -259,6 +259,12 @@ const report = {
       },
       inputSchema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
+        "x-formweave-contract-version": 3,
+        "x-formweave-test-data": {
+          [field.key]: field.testValue,
+        },
+        "x-formweave-test-data-purpose":
+          "Synthetic crawl validation values.",
         type: "object",
         properties: {
           [field.key]: {
@@ -269,6 +275,9 @@ const report = {
             "x-formweave-sensitive": true,
             "x-formweave-native-name": field.key,
             "x-formweave-options": [],
+            "x-formweave-test-value": field.testValue,
+            "x-formweave-test-value-source":
+              "llm-authored-generated-script",
           },
         },
         required: [field.key],
@@ -480,6 +489,17 @@ test(
           });
           return;
         }
+        if (
+          url.pathname === `/api/forms/${crawlFormId}` &&
+          request.method() === "GET"
+        ) {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ form: report.formDefinitions[0] }),
+          });
+          return;
+        }
         await route.fulfill({
           status: 404,
           contentType: "application/json",
@@ -655,6 +675,17 @@ test(
       await page.getByText("email", { exact: true }).last().waitFor();
       await page.getByText("required", { exact: true }).last().waitFor();
       await page.getByText("sensitive", { exact: true }).last().waitFor();
+      await page.getByRole("button", { name: /Get schema/ }).click();
+      await page
+        .getByText("1 crawler test value loaded", { exact: true })
+        .waitFor();
+      assert.equal(
+        await page
+          .locator('.api-console-generated-field input[type="email"]')
+          .inputValue(),
+        field.testValue,
+      );
+      await page.getByText("Test value", { exact: true }).waitFor();
     } finally {
       await browser?.close();
       child.kill();

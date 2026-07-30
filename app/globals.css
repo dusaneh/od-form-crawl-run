@@ -639,6 +639,52 @@ textarea:focus-visible {
   gap: 10px;
 }
 
+.api-console-test-data-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+  padding: 11px 12px;
+  border: 1px solid #b8ddc9;
+  border-radius: 10px;
+  color: #315947;
+  background: #edf8f2;
+}
+
+.api-console-test-data-banner > div {
+  display: grid;
+  gap: 2px;
+}
+
+.api-console-test-data-banner strong {
+  font-size: 10px;
+}
+
+.api-console-test-data-banner span {
+  color: #60766b;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.api-console-test-data-banner button {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #93c9ab;
+  border-radius: 7px;
+  color: #286148;
+  background: white;
+  font-size: 9px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.api-console-test-data-banner button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .api-console-generated-field {
   min-width: 0;
   display: grid;
@@ -666,7 +712,8 @@ textarea:focus-visible {
 }
 
 .api-console-field-heading em,
-.api-console-field-heading i {
+.api-console-field-heading i,
+.api-console-field-heading b {
   padding: 3px 5px;
   border-radius: 4px;
   font-size: 8px;
@@ -683,6 +730,16 @@ textarea:focus-visible {
 .api-console-field-heading i {
   color: #745411;
   background: #fff1d4;
+}
+
+.api-console-field-heading b {
+  color: #27624a;
+  background: #e2f5eb;
+}
+
+.api-console-test-file {
+  color: #4d6b5d;
+  font-size: 8px;
 }
 
 .api-console-generated-field > code {
@@ -1427,6 +1484,11 @@ textarea:focus-visible {
 
   .api-console-check {
     margin: 0 0 5px;
+  }
+
+  .api-console-test-data-banner {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .api-console-report-heading,

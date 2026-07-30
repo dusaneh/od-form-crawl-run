@@ -4,7 +4,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { stableJson } from "./contracts/artifact-store.mjs";
-import { PhysicsToolbox } from "./executor/physics-toolbox.mjs";
+import {
+  generatedUploadPayload,
+  PhysicsToolbox,
+} from "./executor/physics-toolbox.mjs";
 import { captureNovelStateInput } from "./semantic/novel-state-input.mjs";
 import {
   fixtureLegalAuthority,
@@ -5881,51 +5884,100 @@ function inputPropertyFor(field) {
   };
 }
 
+function schemaTestValueFor(field, property) {
+  if (
+    field.actuate === false ||
+    field.browserConstraints?.disabled === true ||
+    field.browserConstraints?.readOnly === true
+  ) {
+    return undefined;
+  }
+  if (field.controlType === "file") {
+    const upload = generatedUploadPayload(field.upload || {});
+    return upload.ok
+      ? {
+          filename: upload.name,
+          contentType: upload.mimeType,
+          contentBase64: upload.buffer.toString("base64"),
+        }
+      : undefined;
+  }
+  const value = field.testValue;
+  if (value === undefined || value === null) return undefined;
+  if (property.type === "boolean") {
+    if (typeof value === "boolean") return value;
+    if (String(value).toLowerCase() === "true") return true;
+    if (String(value).toLowerCase() === "false") return false;
+    return undefined;
+  }
+  if (property.type === "number" || property.type === "integer") {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : undefined;
+  }
+  if (property.type === "string") return String(value);
+  return undefined;
+}
+
 export function approvedInputSchemaForPlan(plan) {
   const rows = everyPlanField(plan);
+  const testData = {};
   const properties = Object.fromEntries(
-    rows.map(({ field, branch }) => [
-      field.key,
-      {
-        ...inputPropertyFor(field),
-        "x-formweave-label": field.label,
-        "x-formweave-control": field.controlType,
-        "x-formweave-sensitive": Boolean(field.sensitive),
-        "x-formweave-native-name": field.rawIdentity?.name || field.key,
-        "x-formweave-options": (field.options || []).map((option) => ({
-          value: option.value,
-          label: option.label,
-        })),
-        "x-formweave-input-format":
-          {
-            date: "YYYY-MM-DD",
-            "datetime-local": "YYYY-MM-DDTHH:mm",
-            month: "YYYY-MM",
-            week: "YYYY-Www",
-            time: "HH:mm",
-          }[field.controlType] || null,
-        "x-formweave-browser-constraints": {
-          rawType:
-            field.browserConstraints?.rawType || field.controlType || "",
-          placeholder: field.browserConstraints?.placeholder || "",
-          autocomplete: field.browserConstraints?.autocomplete || "",
-          inputMode: field.browserConstraints?.inputMode || "",
-          min: field.validation?.min || "",
-          max: field.validation?.max || "",
-          step: field.validation?.step || "",
-          multiple: field.browserConstraints?.multiple === true,
-          disabled: field.browserConstraints?.disabled === true,
-          readOnly: field.browserConstraints?.readOnly === true,
+    rows.map(({ field, branch }) => {
+      const property = inputPropertyFor(field);
+      const testValue = schemaTestValueFor(field, property);
+      if (testValue !== undefined) testData[field.key] = testValue;
+      return [
+        field.key,
+        {
+          ...property,
+          "x-formweave-label": field.label,
+          "x-formweave-control": field.controlType,
+          "x-formweave-sensitive": Boolean(field.sensitive),
+          "x-formweave-native-name": field.rawIdentity?.name || field.key,
+          "x-formweave-options": (field.options || []).map((option) => ({
+            value: option.value,
+            label: option.label,
+          })),
+          "x-formweave-input-format":
+            {
+              date: "YYYY-MM-DD",
+              "datetime-local": "YYYY-MM-DDTHH:mm",
+              month: "YYYY-MM",
+              week: "YYYY-Www",
+              time: "HH:mm",
+            }[field.controlType] || null,
+          "x-formweave-browser-constraints": {
+            rawType:
+              field.browserConstraints?.rawType || field.controlType || "",
+            placeholder: field.browserConstraints?.placeholder || "",
+            autocomplete: field.browserConstraints?.autocomplete || "",
+            inputMode: field.browserConstraints?.inputMode || "",
+            min: field.validation?.min || "",
+            max: field.validation?.max || "",
+            step: field.validation?.step || "",
+            multiple: field.browserConstraints?.multiple === true,
+            disabled: field.browserConstraints?.disabled === true,
+            readOnly: field.browserConstraints?.readOnly === true,
+          },
+          ...(field.browserConstraints?.disabled === true ||
+          field.browserConstraints?.readOnly === true
+            ? { readOnly: true }
+            : {}),
+          "x-formweave-legal-acceptance-type":
+            field.legalAcceptanceType || null,
+          ...(branch ? { "x-formweave-branch": branch } : {}),
+          ...(testValue !== undefined
+            ? {
+                "x-formweave-test-value": testValue,
+                "x-formweave-test-value-source":
+                  field.controlType === "file"
+                    ? "crawler-generated-harmless-upload"
+                    : "llm-authored-generated-script",
+              }
+            : {}),
         },
-        ...(field.browserConstraints?.disabled === true ||
-        field.browserConstraints?.readOnly === true
-          ? { readOnly: true }
-          : {}),
-        "x-formweave-legal-acceptance-type":
-          field.legalAcceptanceType || null,
-        ...(branch ? { "x-formweave-branch": branch } : {}),
-      },
-    ]),
+      ];
+    }),
   );
   const baseRequired = rows
     .filter(({ field, branch }) => !branch && field.required)
@@ -5943,7 +5995,15 @@ export function approvedInputSchemaForPlan(plan) {
     }));
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
-    "x-formweave-contract-version": 2,
+    "x-formweave-contract-version": 3,
+    "x-formweave-test-data": testData,
+    "x-formweave-test-data-purpose":
+      "Synthetic values used to validate the pinned crawl-generated script. They are debugging and approval aids, not real applicant data.",
+    "x-formweave-test-data-script": {
+      artifactId: plan.artifactId || null,
+      scriptVersion: plan.scriptVersion || null,
+      proposalId: plan.proposalId || null,
+    },
     type: "object",
     properties,
     required: [...new Set(baseRequired)].sort(),

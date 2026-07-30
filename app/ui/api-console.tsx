@@ -240,6 +240,26 @@ function activePayload(
   return result;
 }
 
+function crawlTestData(inputSchema: JsonObject | null) {
+  if (!inputSchema) return {};
+  const published =
+    inputSchema["x-formweave-test-data"] &&
+    typeof inputSchema["x-formweave-test-data"] === "object" &&
+    !Array.isArray(inputSchema["x-formweave-test-data"])
+      ? (inputSchema["x-formweave-test-data"] as JsonObject)
+      : {};
+  const values = { ...published };
+  for (const [key, schema] of Object.entries(schemaProperties(inputSchema))) {
+    if (
+      !Object.hasOwn(values, key) &&
+      Object.hasOwn(schema, "x-formweave-test-value")
+    ) {
+      values[key] = schema["x-formweave-test-value"];
+    }
+  }
+  return values;
+}
+
 function fieldIsRequired(
   key: string,
   inputSchema: JsonObject | null,
@@ -685,6 +705,10 @@ export function ApiConsole() {
     const value = form?.inputSchema;
     return value && typeof value === "object" ? (value as JsonObject) : null;
   }, [form]);
+  const schemaTestValues = useMemo(
+    () => crawlTestData(inputSchema),
+    [inputSchema],
+  );
   const definitions = useMemo(() => {
     const value = report?.formDefinitions;
     return Array.isArray(value) ? (value as JsonObject[]) : [];
@@ -837,7 +861,11 @@ export function ApiConsole() {
           ? (payload.form as JsonObject)
           : null;
       setForm(nextForm);
-      setInputValues({});
+      const nextSchema =
+        nextForm?.inputSchema && typeof nextForm.inputSchema === "object"
+          ? (nextForm.inputSchema as JsonObject)
+          : null;
+      setInputValues(crawlTestData(nextSchema));
     } catch {
       // The structured error is already displayed.
     } finally {
@@ -1362,8 +1390,31 @@ export function ApiConsole() {
                 Call <strong>GET · Get schema</strong> to create the run fields.
               </div>
             ) : (
-              <div className="api-console-generated-form">
-                {activeFields.map(([key, schema]) => {
+              <>
+                <div className="api-console-test-data-banner">
+                  <div>
+                    <strong>
+                      {Object.keys(schemaTestValues).length} crawler test{" "}
+                      {Object.keys(schemaTestValues).length === 1
+                        ? "value"
+                        : "values"}{" "}
+                      loaded
+                    </strong>
+                    <span>
+                      These are the synthetic values used to validate the
+                      pinned script. Edit or replace them before a real run.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setInputValues(schemaTestValues)}
+                    disabled={Object.keys(schemaTestValues).length === 0}
+                  >
+                    Reset to crawl test data
+                  </button>
+                </div>
+                <div className="api-console-generated-form">
+                  {activeFields.map(([key, schema]) => {
                   const label = String(schema["x-formweave-label"] || key);
                   const required = fieldIsRequired(
                     key,
@@ -1377,6 +1428,10 @@ export function ApiConsole() {
                   );
                   const constraints = browserConstraints(schema);
                   const value = inputValues[key];
+                  const hasCrawlTestValue = Object.hasOwn(
+                    schema,
+                    "x-formweave-test-value",
+                  );
                   const branch = branchFor(schema);
                   const fileField =
                     control === "file" ||
@@ -1388,6 +1443,7 @@ export function ApiConsole() {
                     <label className="api-console-generated-field" key={key}>
                       <span className="api-console-field-heading">
                         <strong>{label}</strong>
+                        {hasCrawlTestValue && <b>Test value</b>}
                         {required && <em>Required</em>}
                         {branch && <i>Conditional</i>}
                       </span>
@@ -1431,13 +1487,25 @@ export function ApiConsole() {
                           <option value="false">False</option>
                         </select>
                       ) : fileField ? (
-                        <input
-                          type="file"
-                          required={required}
-                          onChange={(event) =>
-                            void setFileValue(key, event.target.files?.[0])
-                          }
-                        />
+                        <>
+                          <input
+                            type="file"
+                            required={required}
+                            onChange={(event) =>
+                              void setFileValue(key, event.target.files?.[0])
+                            }
+                          />
+                          {value &&
+                            typeof value === "object" &&
+                            !Array.isArray(value) &&
+                            typeof (value as JsonObject).filename ===
+                              "string" && (
+                              <small className="api-console-test-file">
+                                Ready:{" "}
+                                {String((value as JsonObject).filename)}
+                              </small>
+                            )}
+                        </>
                       ) : (
                         <input
                           type={
@@ -1527,8 +1595,9 @@ export function ApiConsole() {
                       <code>{key}</code>
                     </label>
                   );
-                })}
-              </div>
+                  })}
+                </div>
+              </>
             )}
             <details className="api-console-json" open>
               <summary>Generated run data payload</summary>

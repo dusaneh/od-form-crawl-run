@@ -32,8 +32,12 @@ const plan = {
   states: [
     {
       fields: [
-        field("name", "Full name", "text", { required: true }),
+        field("name", "Full name", "text", {
+          required: true,
+          testValue: "FORMWEAVE TEST PERSON",
+        }),
         field("birth_date", "Birth date", "date", {
+          testValue: "1980-12-14",
           rawIdentity: { name: "dob" },
           browserConstraints: {
             rawType: "date",
@@ -58,6 +62,7 @@ const plan = {
         field("week", "Week", "week"),
         field("time", "Time", "time"),
         field("amount", "Amount", "number", {
+          testValue: "25.5",
           validation: {
             pattern: "",
             min: "0",
@@ -69,6 +74,7 @@ const plan = {
         }),
         field("housing", "Housing", "radio", {
           required: true,
+          testValue: "rent",
           options: [
             { value: "rent", label: "Rent" },
             { value: "own", label: "Own" },
@@ -77,6 +83,7 @@ const plan = {
         field("consent", "Consent", "checkbox", {
           required: true,
           legalAcceptanceType: "consent",
+          testValue: true,
         }),
         field("document", "Document", "file", {
           upload: { accept: ".pdf" },
@@ -89,7 +96,10 @@ const plan = {
           classification: "same_page_branch",
           variantPlan: {
             fields: [
-              field("landlord", "Landlord", "text", { required: true }),
+              field("landlord", "Landlord", "text", {
+                required: true,
+                testValue: "FORMWEAVE TEST LANDLORD",
+              }),
             ],
             choiceCoverage: [],
           },
@@ -101,6 +111,36 @@ const plan = {
 
 test("approved input schema exposes legal, upload, and conditional branch contracts", () => {
   const schema = approvedInputSchemaForPlan(plan);
+  assert.equal(schema["x-formweave-contract-version"], 3);
+  assert.deepEqual(schema["x-formweave-test-data"], {
+    name: "FORMWEAVE TEST PERSON",
+    birth_date: "1980-12-14",
+    amount: 25.5,
+    housing: "rent",
+    consent: true,
+    document: {
+      filename: "formweave-test-upload.pdf",
+      contentType: "application/pdf",
+      contentBase64:
+        schema.properties.document["x-formweave-test-value"].contentBase64,
+    },
+    landlord: "FORMWEAVE TEST LANDLORD",
+  });
+  assert.equal(
+    schema.properties.name["x-formweave-test-value-source"],
+    "llm-authored-generated-script",
+  );
+  assert.equal(
+    schema.properties.document["x-formweave-test-value-source"],
+    "crawler-generated-harmless-upload",
+  );
+  assert.equal(
+    Buffer.from(
+      schema.properties.document["x-formweave-test-value"].contentBase64,
+      "base64",
+    ).byteLength > 0,
+    true,
+  );
   assert.deepEqual(schema.required, ["consent", "housing", "name"]);
   assert.equal(
     schema.properties.consent["x-formweave-legal-acceptance-type"],

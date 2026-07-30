@@ -17,7 +17,7 @@ evidence and qualifications.
 | Canonical journey | `F1.1.3 / F1.3.5` | **Partial** | Multi-page journeys accumulate states, fields, actions, and evidence through terminal result. Explicit mid-flow warnings and missing-predecessor coverage remain. |
 | Synthetic values and readback | `F1.3.4.1 / F1.3.4.4` | **Built** | Format-plausible synthetic values are entered through exact generated mechanics and verified by browser readback. |
 | Question/section model | `F1.4` | **Partial** | First-class guidance, section trees, group legends, option labels, raw controls, and critical flags are retained. Some canonical mappings and policy semantics remain. |
-| Browser/API input contract | `F1.4.2.1–F1.4.2.3` | **Built** | Public input schemas retain browser-native formats, native HTML names, option labels, hints, read-only/multiple state, ranges, length/pattern rules, and numeric step; malformed values fail before browser launch. |
+| Browser/API input contract | `F1.4.2.1–F1.4.2.4` | **Built** | Public input schemas retain browser-native formats, native HTML names, option labels, hints, read-only/multiple state, ranges, length/pattern rules, numeric step, and the synthetic payload used by the pinned crawl script; malformed values fail before browser launch. |
 | Guidance records | `F1.4.6.1–F1.4.6.6` | **Built for production generation** | Scoped, classified, deduplicated guidance with provenance reaches model input, scripts, reports, and UI. |
 | Section tree | `F1.4.7.1–F1.4.7.3` | **Built** | DOM-derived sections retain ordered question membership, guidance references, and unsectioned fallback. |
 | Option meaning | `F1.4.8` | **Built** | Group legends and per-option value/label meaning are retained separately. |
@@ -37,6 +37,7 @@ evidence and qualifications.
 | Live traversal review | `F3.16 / F3.18` | **Built for generated/replayed states** | Collapsible state cards expose sensing → semantic decision → stored script → execution/readback, with generated versus retained timing and direct evidence links. |
 | Completion reporting | `F3.2 / F3.5 / F3.17` | **Built** | UI separates attempts from verified submissions and shows transport facts, rendered markers/confidence, model provenance, and submitted-state screenshots. |
 | API-console report presentation | `F3.19` | **Built** | Completed report responses render crawl totals, clickable authenticated evidence thumbnails, and readable forms grouped by section with field types and critical flags; raw JSON remains inspectable. |
+| API-console crawl-value prefill | `F3.19.5` | **Built** | The schema call publishes crawler-used synthetic values and initializes editable run fields from them, with reset and test-data labeling. |
 | Local-first ownership | `F4` | **Built** | UI, API, Playwright, reports, logs, scripts, fixtures, and configuration still run locally. An optional hosted path is now explicit rather than contradicting local ownership. |
 | Loopback opt-in | `F4.1.3` | **Built** | Localhost/127.0.0.0/8 require explicit per-run authority; fixture submission is rejected for public/private-network targets. |
 | Hosted gateway | `F4.6.1` | **Built locally; Heroku release pending** | One public process serves the API landing page and assets, protects `/control-plane` and `/api-console`, proxies `/api/*`, and runs API/UI children on loopback-only ports. |
