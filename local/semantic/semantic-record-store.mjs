@@ -52,6 +52,7 @@ export async function writeSemanticGenerationRecord({
   safety,
   events = [],
 }) {
+  void screenshot;
   const root = path.join(
     path.resolve(dataRoot),
     "semantic-generation",
@@ -67,7 +68,6 @@ export async function writeSemanticGenerationRecord({
         stableJson(observation),
         { encoding: "utf8", flag: "wx" },
       ),
-      writeFile(path.join(stage, "sensing.png"), screenshot, { flag: "wx" }),
       writeFile(path.join(stage, "proposal.json"), stableJson(proposal), {
         encoding: "utf8",
         flag: "wx",

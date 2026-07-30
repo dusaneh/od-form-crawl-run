@@ -20,6 +20,7 @@ import {
   generateSubmissionResultAssessment,
   verifyStoredSubmissionResultCriteria,
 } from "./semantic/submission-result-assessment.mjs";
+import { shouldCaptureStateScreenshot } from "./evidence-retention.mjs";
 import { detectCaptcha } from "./traversal-automation.mjs";
 
 const GENERATED_FORM_SCRIPT_VERSION = 11;
@@ -1412,7 +1413,10 @@ async function captureEvidence({
   label,
   onEvent,
 }) {
-  const screenshot = await page.screenshot({ fullPage: true, type: "png" });
+  const retainableScreenshot = shouldCaptureStateScreenshot(kind, fieldResults);
+  const screenshot = retainableScreenshot
+    ? await page.screenshot({ fullPage: true, type: "png" })
+    : null;
   const values = fieldResults
     .filter((result) => result.outcome.verified)
     .map((result) =>
@@ -1444,14 +1448,18 @@ async function captureEvidence({
       .count()
       .catch(() => 0),
     values,
-    screenshot,
-    screenshotContentType: "image/png",
-    screenshotProvider: "playwright-generated-d1",
+    ...(screenshot
+      ? {
+          screenshot,
+          screenshotContentType: "image/png",
+          screenshotProvider: "playwright-generated-d1",
+        }
+      : {}),
     capturedAt: new Date().toISOString(),
   };
   await onEvent?.(
     "state_evidence_captured",
-    `Captured ${kind.replaceAll("_", " ")} evidence: ${label}.`,
+    `${screenshot ? "Captured" : "Recorded"} ${kind.replaceAll("_", " ")} state: ${label}.`,
     {
       stateId: state.id,
       sequence,
@@ -1460,6 +1468,7 @@ async function captureEvidence({
       fingerprint: identity,
       fieldsVisible: state.fieldsVisible,
       values,
+      screenshotCaptured: Boolean(screenshot),
     },
   );
   return state;

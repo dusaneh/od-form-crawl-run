@@ -444,8 +444,11 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
 - `F2` Every completed crawl must provide inspectable evidence of what happened.
 - `F2.1` Each successfully rendered page stores its serialized DOM as a separate
   artifact.
-- `F2.2` Each examined state has full-page screenshot evidence, tiled when a
-  single capture would reduce text below legibility, unless safe capture fails.
+- `F2.2` Client-facing screenshot evidence is retained at key action
+  boundaries: immediately before and after progression, at a blocked terminal
+  boundary, after terminal submission, and at the final failure boundary.
+  Full-page captures are tiled when a single capture would reduce text below
+  legibility, unless safe capture fails.
 - `F2.2.1` Screenshot evidence is associated with the exact run and page.
 - `F2.2.2` Screenshot bytes are stored locally for local crawls.
 - `F2.2.3` Screenshot failure must be reported and must not erase successful
@@ -456,14 +459,17 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   must not depend on a third-party screenshot service.
 - `F2.2.6` Every available screenshot preview in the UI opens the full local
   evidence image when clicked.
-- `F2.2.7` The crawler captures a screenshot after values have been entered in
-  each populated or branch state and before it moves forward.
-- `F2.2.8` State evidence records the entered synthetic values, state kind,
+- `F2.2.7` Before a progression or terminal action, the crawler retains the
+  completed base state and, when applicable, the final selected first-level
+  branch state. Intermediate option probes and sibling branch variants do not
+  each become durable screenshots.
+- `F2.2.8` Retained state evidence records the entered synthetic values, state kind,
   sequence, URL, observed runtime state identity per `F13.3`, timestamp, and
   local screenshot artifact.
 - `F2.2.9` Initial, populated, choice-probe, first-level
   branch-variant-populated, final-selected-branch-populated, pre-advance,
-  post-advance, blocked-final, and submitted states remain distinguishable.
+  post-advance, blocked-final, and submitted states remain distinguishable in
+  traversal metadata even when their transient screenshots are not retained.
 - `F2.2.10` The UI and report semantics distinguish sensing captures used for
   DOM/model context from traversal proof captured before an advance and after a
   verified transition or authorized localhost submission.
@@ -493,16 +499,21 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   markers. The report records this verification basis separately from
   transport proof. This exception does not authorize public or Phase 2
   submission.
-- `F2.2.12` Every state attempt retains a sensing image and, when any value was
-  entered, a populated or failure-boundary image. Protected required fields,
-  locator exhaustion, CAPTCHA, ambiguous terminality, and validation failure
-  are evidence-producing outcomes rather than reasons to discard screenshots.
+- `F2.2.12` Screenshots supplied to an LLM for state understanding are
+  transient inputs by default. Their digest, byte count, and model provenance
+  remain inspectable, but the image is not persisted merely because a model
+  saw it. Protected required fields, locator exhaustion, CAPTCHA, ambiguous
+  terminality, and validation failure retain one final failure-boundary image.
 - `F2.2.13` Multi-page evidence remains ordered under one journey and includes
   the state before and after every verified transition. Evidence counts and
   UI nodes are cumulative across the journey even when the final state halts.
 - `F2.2.14` Loopback file-upload evidence records generated filename,
   non-sensitive size/type facts, browser readback, and page echo without
   retaining file content. Phase 2 masking rules continue to govern real files.
+- `F2.2.15` Every report declares its evidence-retention policy and labels each
+  retained state image as pre-action, selected-branch pre-action, post-action,
+  terminal result, or failure boundary. An observation-only page screenshot is
+  retained only when no stronger key-moment evidence exists.
 - `F2.3` Every crawl produces a complete machine-readable JSON report.
 - `F2.3.1` The report includes targets, timestamps, aggregate statistics,
   per-page facts, the full field contract, findings, analysis, and artifact
@@ -815,10 +826,11 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
 - `F5.1.2` The credential is server-only and must never be returned to the UI,
   committed, or logged.
 - `F5.2` Full-page screenshots, tiled when a single image would reduce
-  legibility, are standard sensing input alongside the rendered DOM for every
-  analysis and metadata-generation pass. Bounding is permitted only as a
-  documented cost control for exceptionally tall pages; archiving the same
-  captures as evidence is secondary.
+  legibility, are standard transient sensing input alongside the rendered DOM
+  for every analysis and metadata-generation pass. Bounding is permitted only
+  as a documented cost control for exceptionally tall pages. Supplying an
+  image to the model does not require persisting or returning it as evidence;
+  durable images follow `F2.2`.
 - `F5.3` The model returns schema-constrained structured JSON.
 - `F5.4` Model output includes a summary, apparent page purpose, form
   inventory, conservative inferred controls, default synthetic test values,

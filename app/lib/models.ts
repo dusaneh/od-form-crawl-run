@@ -415,6 +415,12 @@ export type StateEvidence = {
   screenshotArtifact?: string;
   screenshotContentType?: string;
   screenshotProvider?: string;
+  evidenceRole?:
+    | "pre_action"
+    | "pre_action_branch"
+    | "post_action"
+    | "terminal_result"
+    | "failure_boundary";
 };
 
 export type LiveTraversalField = {
@@ -608,6 +614,13 @@ export type CrawlReport = {
   discoverRelatedPages?: boolean;
   renderEngine?: string;
   traversalSettings?: TraversalSettings;
+  evidencePolicy?: {
+    version: number;
+    mode: "key_moments";
+    retainedMoments: string[];
+    transientModelScreenshotsPersisted: boolean;
+    detail: string;
+  };
   analysis?: CrawlAnalysis;
   architectureExchanges?: ArchitectureExchange[];
   formDefinitions?: CrawlFormDefinition[];

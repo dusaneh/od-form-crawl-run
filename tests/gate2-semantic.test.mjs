@@ -1545,6 +1545,10 @@ test("semantic generation records are immutable and retain safety/provenance", a
       .promptVersion,
     SEMANTIC_PROMPT_VERSION,
   );
+  await assert.rejects(
+    () => readFile(path.join(recordPath, "sensing.png")),
+    /ENOENT/,
+  );
   await assert.rejects(() => writeSemanticGenerationRecord(args));
 });
 

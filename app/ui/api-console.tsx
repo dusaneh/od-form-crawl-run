@@ -336,7 +336,9 @@ function evidenceItemsForReport(report: JsonObject, crawlId: string) {
         id: String(state.id || `state_${pageIndex + 1}_${items.length + 1}`),
         url: state.evidence,
         label: String(state.label || pageLabel),
-        kind: String(state.kind || "state evidence").replaceAll("_", " "),
+        kind: String(
+          state.evidenceRole || state.kind || "state evidence",
+        ).replaceAll("_", " "),
         detail: `${values} entered ${values === 1 ? "value" : "values"} · ${String(
           state.fieldsVisible ?? 0,
         )} visible fields`,
@@ -470,8 +472,8 @@ function ReportPresentation({
           <div>
             <h4>Screenshot evidence</h4>
             <p>
-              Populated and transition evidence appears first. Open any original
-              in a separate tab for full-resolution review.
+              Only key transition, terminal, and failure moments are retained.
+              Open any original in a separate tab for full-resolution review.
             </p>
           </div>
           <span>{evidence.length}</span>

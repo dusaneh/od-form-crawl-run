@@ -23,6 +23,7 @@ import {
 } from "./form-registry.mjs";
 import { loadEnvFile } from "./env.mjs";
 import { createFormWeaveDatabase } from "./postgres/database.mjs";
+import { selectRetainedEvidence } from "./evidence-retention.mjs";
 
 const localDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(localDirectory, "..");
@@ -1499,6 +1500,31 @@ async function executeCrawl(run) {
       const pageNumber = String(index + 1).padStart(2, "0");
       let htmlArtifact;
       let screenshotArtifact;
+      const retainedStateEvidence = selectRetainedEvidence(
+        page.stateEvidence || [],
+        {
+          halted:
+            Boolean(page.error) ||
+            Boolean(page.haltReason) ||
+            Number(page.entryFailures || 0) > 0 ||
+            page.certificationStatus === "could_not_test",
+        },
+      );
+      const hasKeyMomentScreenshot = retainedStateEvidence.some(
+        (state) => state.screenshot,
+      );
+      const retainedEvidenceIds = new Set(
+        retainedStateEvidence.map((state) => `${node.id}_${state.id}`),
+      );
+      for (const candidate of output.nodes) {
+        if (
+          candidate.id.startsWith(`${node.id}_`) &&
+          !retainedEvidenceIds.has(candidate.id)
+        ) {
+          candidate.evidence = "";
+          candidate.evidenceAvailable = false;
+        }
+      }
 
       if (page.html) {
         const objectKey = `pages/page_${pageNumber}.html`;
@@ -1525,7 +1551,7 @@ async function executeCrawl(run) {
           bytes: page.bytesFetched,
         });
       }
-      if (page.screenshot) {
+      if (page.screenshot && !hasKeyMomentScreenshot) {
         const evidenceName = `${node.id}${extensionFor(page.screenshotContentType)}`;
         if (database) {
           screenshotArtifact = (
@@ -1560,11 +1586,14 @@ async function executeCrawl(run) {
             provider: page.screenshotProvider || "unknown",
           }
         );
+      } else {
+        node.evidence = "";
+        node.evidenceAvailable = false;
       }
 
       const reportStateEvidence = [];
       node.stateEvidence = [];
-      for (const state of page.stateEvidence || []) {
+      for (const state of retainedStateEvidence) {
         const evidenceId = `${node.id}_${state.id}`;
         const stateArtifact = path.join(
           artifacts.evidenceDirectory,
@@ -1676,7 +1705,7 @@ async function executeCrawl(run) {
         0
       ),
       captchaPages: output.pages.filter((page) => page.captchaDetected).length,
-      statesCaptured: output.pages.reduce(
+      statesCaptured: reportPages.reduce(
         (sum, page) => sum + (page.stateEvidence?.length || 0),
         0
       ),
@@ -1703,7 +1732,6 @@ async function executeCrawl(run) {
       startedAt,
       finishedAt,
     };
-
     await updateRun(run, {
       progress: 88,
       stage: "Analyzing crawl with OpenAI",
@@ -1750,6 +1778,21 @@ async function executeCrawl(run) {
       fixtureAuthorities: run.fixtureAuthorities || {},
       discoverRelatedPages: run.discoverRelatedPages !== false,
       traversalSettings: run.traversalSettings,
+      evidencePolicy: {
+        version: 2,
+        mode: "key_moments",
+        retainedMoments: [
+          "pre_action",
+          "pre_action_branch",
+          "post_action",
+          "terminal_result",
+          "failure_boundary",
+          "observation_fallback",
+        ],
+        transientModelScreenshotsPersisted: false,
+        detail:
+          "The report retains transition, terminal, and failure proof. Model-sensing and successful option-probe screenshots are transient.",
+      },
       analysis,
       artifacts,
     };

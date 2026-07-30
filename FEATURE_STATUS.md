@@ -94,7 +94,7 @@ cohort with those post-fix repetitions gives the current measured position:
 | Branch execution misses | 0 |
 | Verified submissions | 25/25 attempted |
 | Unsafe conditional submissions | 0 |
-| Full automated suite | 84/84 executable checks; 1 optional PostgreSQL integration check skipped |
+| Full automated suite | 87/87 executable checks; 1 optional PostgreSQL integration check skipped |
 
 The twelve non-strict results are sensitivity-policy/oracle disagreements on
 otherwise functionally correct outcomes. They remain review items rather than
@@ -127,7 +127,7 @@ failure in the supported Phase 1 envelope.
 | `F1.9` locale | **Not built** | Locale pinning, mismatch detection, variants, and locale-separated lineage remain. |
 | `F2.1–F2.4` local artifacts/logs | **Built** | Rendered HTML, PNGs, reports, model/script records, and JSONL logs persist locally. |
 | `F2.2.11` result confirmation | **Built** | Success requires exact terminal actuation and explicit LLM-authored rendered success markers. Normal forms also require submit/write transport; a client-side completion requires a material state change and reports its distinct basis. Decoy GET navigation fails. |
-| `F2.2.12–F2.3.5` evidence integrity | **Built** | Sensing is separated from populated/branch/transition/submitted proof; all screenshots are clickable and cumulative. |
+| `F2.2.12–F2.3.5` evidence integrity | **Built** | Model-sensing screenshots are transient. Reports retain a compact, labeled proof set around pre-action, selected branch, post-action, terminal result, and final failure boundaries; retained screenshots remain clickable and cumulative across pages. |
 | `F2.5.4–F2.5.11` fingerprinting | **Built** | One versioned canonical DOM-fact implementation is used by production, lineage, harnesses, golden regression, and tests. |
 | `F3` control-plane UI | **Partial** | Runs, contracts, guidance, sections, choices, four-layer exchanges, scripts, diagnostics, result proof, and local evidence are visible. The API console also renders fetched reports as evidence thumbnails and sectioned form/field summaries. Version/certification browsing remains. |
 | `F3.11` headless/headful | **Built** | Both modes use the same production crawler and are selectable per run. |
@@ -135,7 +135,7 @@ failure in the supported Phase 1 envelope.
 | `F3.13` crawl submit boundary | **Built** | The crawl API and API console independently expose `submit: false` traversal and `submit: true` synthetic terminal submission for public and allowed-local targets. Both use only LLM-authored scripts and include result confirmation. |
 | `F3.15` option coverage | **Built for one-level envelope** | Probe outcomes, branch-producing choices, populated variants, and selected-branch restoration are reported. |
 | `F3.16 / F3.18` traversal/four layers | **Built for generated and retained runs** | State cards expose sensing, semantic proposal, stored script/version/path/hash, deterministic execution/readback, flags, and evidence. |
-| `F3.19` API-console report presentation | **Built** | A fetched report shows crawl totals, clickable authenticated state/page/sensing evidence thumbnails, and forms grouped into sections with field type and critical metadata. Raw report JSON remains available. |
+| `F3.19` API-console report presentation | **Built** | A fetched report shows crawl totals, compact key-moment evidence thumbnails, and forms grouped into sections with field type and critical metadata. Raw report JSON and the declared evidence policy remain available. |
 | `F3.19.5` API-console crawl-value prefill | **Built** | Retrieving a schema initializes editable Run API fields from its synthetic crawl-test payload, exposes a reset action, and labels values/files as test data rather than applicant data. |
 | `F3.20` private operations dashboard | **Built** | The unlinked `/ops/audit-log` view summarizes login, API, crawl, approval, and execution outcomes with time/category/severity filters, actor attribution, and expandable safe metadata. Hosted access requires an authenticated UI user; API Bearer tokens and direct local audit-data requests are rejected. |
 | `F4` local-first ownership | **Built** | The complete local UI/API/browser/artifact path remains. An optional authenticated hosted gateway now consolidates UI and API access without removing local operation. |

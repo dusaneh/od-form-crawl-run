@@ -1801,8 +1801,6 @@ function ReportPanel({
 function EvidencePanel({ nodes }: { nodes: FlowNode[] }) {
   const proofKinds = new Set<StateEvidence["kind"]>([
     "branch",
-    "choice_probe",
-    "branch_variant_populated",
     "selected_branch_populated",
     "pre_advance",
     "post_advance",
@@ -1828,7 +1826,7 @@ function EvidencePanel({ nodes }: { nodes: FlowNode[] }) {
           screenshotProvider: state.screenshotProvider,
         },
         label: state.label,
-        detail: `${state.kind.replaceAll("_", " ")} · ${state.values.length} values`,
+        detail: `${(state.evidenceRole || state.kind).replaceAll("_", " ")} · ${state.values.length} values`,
       }))
   );
   const itemsByEvidence = new Map<string, (typeof rawItems)[number]>();
@@ -1853,9 +1851,9 @@ function EvidencePanel({ nodes }: { nodes: FlowNode[] }) {
           <span>{items.length}</span>
         </div>
         <p className="evidence-section-copy">
-          Populated forms, option probes, first-level branch variants, and the
-          resulting state after a successful transition or verified localhost
-          test submission.
+          Compact proof from immediately before and after progression,
+          terminal submission results, and the final boundary when traversal
+          stops.
         </p>
         <div className="evidence-gallery">
           {items.map((item) => (
@@ -1883,8 +1881,8 @@ function EvidencePanel({ nodes }: { nodes: FlowNode[] }) {
           <span>{sensingItems.length}</span>
         </div>
         <p className="evidence-section-copy">
-          Page captures used for extraction and model context. These are not
-          proof that a form was populated or advanced.
+          Observation-only fallback captures. Routine screenshots used as
+          transient model input are not stored as client-facing evidence.
         </p>
         <div className="evidence-gallery">
           {sensingItems.map((node) => (

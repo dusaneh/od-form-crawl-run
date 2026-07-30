@@ -313,6 +313,11 @@ test(
       assert.equal(report.browserMode, "headless");
       assert.equal(report.executionMode, "probe");
       assert.equal(report.renderEngine, "playwright-chromium");
+      assert.equal(report.evidencePolicy.mode, "key_moments");
+      assert.equal(
+        report.evidencePolicy.transientModelScreenshotsPersisted,
+        false,
+      );
       assert.ok(report.pages.every((page) => page.screenshotArtifact));
       assert.ok(report.pages.every((page) => page.htmlArtifact));
       assert.ok(
