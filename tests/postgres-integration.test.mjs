@@ -112,6 +112,22 @@ test(
         `https://example.test/form?test=${suffix}`,
         { normalizedUrl: `https://example.test/form?test=${suffix}` },
       );
+      await database.appendAuditEvent(
+        {
+          occurredAt: now,
+          category: "crawl",
+          severity: "success",
+          eventType: "crawl.integration_test",
+          outcome: "completed",
+          actorType: "api_token",
+          actorId: `token_${suffix}`,
+          scopeType: "run",
+          scopeId: runId,
+          message: "Integration crawl completed.",
+          metadata: { fieldsFound: 3 },
+        },
+        `integration:${suffix}`,
+      );
 
       const bytes = Buffer.from(`formweave-postgres-image-${suffix}`);
       const saved = await database.putObject({
@@ -133,6 +149,15 @@ test(
       assert.equal((await database.listEvents("run", runId)).length, 1);
       assert.equal((await database.getForm(formId)).approval.approvalId, approval.approvalId);
       assert.equal((await database.getExecution(executionId)).status, "completed");
+      const audit = await database.auditDashboard({ hours: 24 * 90 });
+      assert.equal(
+        audit.events.some(
+          (event) =>
+            event.scopeId === runId &&
+            event.eventType === "crawl.integration_test",
+        ),
+        true,
+      );
 
       await assert.rejects(
         database.pool.query(
@@ -140,6 +165,13 @@ test(
            SET source_text = source_text || ' '
            WHERE artifact_id = $1 AND version = 1`,
           [artifactId],
+        ),
+        /append-only/,
+      );
+      await assert.rejects(
+        database.pool.query(
+          "DELETE FROM formweave_audit_events WHERE event_key = $1",
+          [`integration:${suffix}`],
         ),
         /append-only/,
       );

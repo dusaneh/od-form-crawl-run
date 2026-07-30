@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, request as httpRequest } from "node:http";
@@ -129,13 +130,18 @@ gateway = createServer(async (incoming, outgoing) => {
       url.pathname === "/control-plane" ||
       url.pathname.startsWith("/control-plane/") ||
       url.pathname === "/api-console" ||
-      url.pathname.startsWith("/api-console/");
+      url.pathname.startsWith("/api-console/") ||
+      url.pathname === "/ops/audit-log" ||
+      url.pathname.startsWith("/ops/audit-log/");
     const apiProtected = url.pathname.startsWith("/api/");
+    const dashboardApi =
+      url.pathname === "/api/ops/audit" ||
+      url.pathname.startsWith("/api/ops/audit/");
     let identity = null;
 
     if (incoming.method !== "OPTIONS" && (uiProtected || apiProtected)) {
       identity = await authenticateRequest(incoming, {
-        allowBearer: apiProtected,
+        allowBearer: apiProtected && !dashboardApi,
         issueSession: uiProtected,
       });
       if (!identity.ok) {
@@ -266,6 +272,7 @@ async function handleLogin(incoming, outgoing, url) {
 }
 
 function proxyRequest(incoming, outgoing, targetPort, identity) {
+  const startedAt = Date.now();
   const headers = { ...incoming.headers };
   delete headers.authorization;
   headers.host = `127.0.0.1:${targetPort}`;
@@ -301,6 +308,14 @@ function proxyRequest(incoming, outgoing, targetPort, identity) {
       }
       outgoing.writeHead(response.statusCode || 502, responseHeaders);
       response.pipe(outgoing);
+      void auditGatewayRequest({
+        incoming,
+        identity,
+        status: response.statusCode || 502,
+        durationMs: Date.now() - startedAt,
+      }).catch((error) =>
+        console.error("Could not persist gateway audit event:", error),
+      );
     },
   );
   proxied.on("error", (error) => {
@@ -314,6 +329,79 @@ function proxyRequest(incoming, outgoing, targetPort, identity) {
     });
   });
   incoming.pipe(proxied);
+}
+
+async function auditGatewayRequest({
+  incoming,
+  identity,
+  status,
+  durationMs,
+}) {
+  const url = new URL(
+    incoming.url || "/",
+    `http://${incoming.headers.host || `localhost:${publicPort}`}`,
+  );
+  if (
+    !url.pathname.startsWith("/api/") ||
+    url.pathname.startsWith("/api/ops/audit")
+  ) {
+    return;
+  }
+  const method = String(incoming.method || "GET").toUpperCase();
+  const crawlStart = method === "POST" && url.pathname === "/api/runs";
+  const approval = method === "POST" &&
+    /^\/api\/forms\/[^/]+\/approval$/.test(url.pathname);
+  const execution = method === "POST" &&
+    /^\/api\/forms\/[^/]+\/runs$/.test(url.pathname);
+  if (status < 400 && !crawlStart && !approval && !execution) return;
+
+  const formMatch = url.pathname.match(/^\/api\/forms\/([^/]+)/);
+  const actorType =
+    identity?.mechanism === "bearer"
+      ? "api_token"
+      : identity?.ok
+        ? "user"
+        : "unknown";
+  const eventType =
+    status >= 400
+      ? "api.request_failed"
+      : crawlStart
+        ? "api.crawl_start_accepted"
+        : approval
+          ? "api.approval_accepted"
+          : "api.execution_start_accepted";
+  await database.appendAuditEvent(
+    {
+      category: "api",
+      severity: status >= 500 ? "error" : status >= 400 ? "warning" : "success",
+      eventType,
+      outcome: status >= 400 ? "failed" : "accepted",
+      actorType,
+      actorId: identity?.principal || null,
+      scopeType: formMatch ? "form" : crawlStart ? "crawl_request" : "api",
+      scopeId: formMatch
+        ? decodeURIComponent(formMatch[1])
+        : crawlStart
+          ? "pending"
+          : url.pathname,
+      message:
+        status >= 400
+          ? `${method} ${url.pathname} returned HTTP ${status}.`
+          : crawlStart
+            ? "Crawl request accepted by the API."
+            : approval
+              ? "Form approval request accepted by the API."
+              : "Form execution request accepted by the API.",
+      metadata: {
+        method,
+        path: url.pathname,
+        status,
+        durationMs,
+        mechanism: identity?.mechanism || "none",
+      },
+    },
+    `gateway:${randomUUID()}`,
+  );
 }
 
 async function serveBuiltAsset(pathname, outgoing) {

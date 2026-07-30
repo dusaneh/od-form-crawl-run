@@ -58,6 +58,24 @@ test("PostgreSQL migration covers JSON, immutable scripts, and binary objects", 
   assert.match(migration, /formweave_blobs_immutable/i);
 });
 
+test("operational audit migration is append-only and actor-aware", async () => {
+  const migration = await readFile(
+    path.join(
+      projectRoot,
+      "db",
+      "migrations",
+      "005_operational_audit.sql",
+    ),
+    "utf8",
+  );
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS formweave_audit_events/i);
+  assert.match(migration, /actor_type text NOT NULL/i);
+  assert.match(migration, /actor_id text/i);
+  assert.match(migration, /category IN \('authentication', 'api', 'crawl', 'approval', 'execution'\)/i);
+  assert.match(migration, /formweave_audit_events_immutable/i);
+  assert.match(migration, /formweave_reject_immutable_change/i);
+});
+
 test("PostgreSQL pools tolerate slow managed-database connection startup", async () => {
   const database = new FormWeaveDatabase(
     "postgres://formweave:test@localhost/formweave",

@@ -724,6 +724,18 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   can reset edits to that template, and synthetic harmless upload fixtures are
   visibly identified even though browser file inputs cannot display a
   programmatically selected filename.
+- `F3.20` An operations-only audit dashboard summarizes critical login, API,
+  crawl, approval, and execution outcomes from the durable audit stream.
+- `F3.20.1` The dashboard supports time-window, category, and severity filters
+  and shows success/failure totals, crawl/execution health, login outcomes,
+  attributed actors, and an expandable diagnostic timeline.
+- `F3.20.2` The dashboard route is deliberately absent from public and
+  operational navigation. Route obscurity is not an authorization boundary:
+  the page and its data endpoint require an authenticated UI user even when
+  the exact URL is known.
+- `F3.20.3` API Bearer credentials used by integrations cannot retrieve the
+  operations dashboard or its data. Dashboard access requires the hosted UI
+  login/session boundary.
 
 ## F4. Local-first operation and ownership
 
@@ -784,6 +796,9 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   Plaintext credentials, API tokens, `.env` files, and authorization headers
   must never be committed, placed in platform configuration as a bundle, or
   written to application logs.
+- `F4.6.8` Hosted operations pages and their supporting APIs are protected by
+  the individual UI account/session boundary. An API integration token does
+  not confer operator-dashboard access.
 - `F4.7` Local browser binaries are installed and managed through Playwright;
   local crawling does not require a remote browser or screenshot account.
 
@@ -844,6 +859,27 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   tools; no proprietary viewer is required.
 - `F6.6` In-progress work should recover or be marked interrupted after an
   unexpected local process restart.
+- `F6.7` A unified append-only operational audit stream retains the critical
+  successes, review outcomes, and failures from authentication through crawl,
+  approval, and approved execution.
+- `F6.7.1` Every retained workflow event identifies the initiating actor as an
+  authenticated user, API token ID, local-direct operator, system process, or
+  unknown identity. Crawl and execution actor attribution survives their
+  asynchronous lifetime.
+- `F6.7.2` Audit coverage includes login success/failure/lockout; rejected API
+  requests; crawl creation, browser/model/script milestones, quality and
+  safety halts, completion/failure; approval/rejection; execution creation,
+  field/readback failure, submission verification, and terminal outcome.
+- `F6.7.3` Operational audit metadata never contains passwords, authorization
+  headers, secret tokens, API keys, request bodies, applicant-entered values,
+  file bytes, or screenshot payloads. Failed-login principals and client
+  addresses are represented only by bounded hashes.
+- `F6.7.4` Hosted audit records persist in PostgreSQL with update/delete
+  rejection. Local filesystem operation retains the same record shape in a
+  repository-local JSONL stream.
+- `F6.7.5` A secondary audit-write failure is reported to the service log but
+  does not retroactively turn an already persisted approval, login, crawl, or
+  execution result into a false product failure.
 
 ## F7. Guarded Phase 1 execution boundary
 

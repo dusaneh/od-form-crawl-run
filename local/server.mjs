@@ -194,9 +194,12 @@ async function reconScriptResolverForRun(run) {
 }
 const logsRoot = path.join(dataRoot, "logs");
 const aggregateLogPath = path.join(logsRoot, "crawler.jsonl");
+const operationalAuditPath = path.join(logsRoot, "operational-audit.jsonl");
 const settingsPath = path.join(dataRoot, "settings.json");
 const runningTasks = new Map();
 const runningExecutions = new Map();
+const runActors = new Map();
+const executionActors = new Map();
 
 await Promise.all([
   mkdir(runsRoot, { recursive: true }),
@@ -809,6 +812,222 @@ function safeMetadata(metadata) {
   );
 }
 
+function auditMetadata(value, depth = 0) {
+  if (depth > 6) return "[depth-limited]";
+  if (Array.isArray(value)) {
+    return value.slice(0, 100).map((item) => auditMetadata(item, depth + 1));
+  }
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(
+        ([key]) =>
+          !/^(?:password|secret|token|authorization|credential|api.?key|value|values|test.?value|data|input.?data|request.?body|payload|base64|image)$/i.test(
+            key,
+          ),
+      )
+      .map(([key, nested]) => [key, auditMetadata(nested, depth + 1)]),
+  );
+}
+
+function actorFromRequest(request) {
+  const mechanism = String(
+    request.headers.get("x-formweave-auth-mechanism") || "",
+  ).toLowerCase();
+  const principal = String(
+    request.headers.get("x-formweave-auth-principal") || "",
+  ).trim();
+  if (mechanism === "bearer" && principal) {
+    return {
+      actorType: "api_token",
+      actorId: principal,
+      mechanism,
+    };
+  }
+  if (["basic", "session"].includes(mechanism) && principal) {
+    return {
+      actorType: "user",
+      actorId: principal,
+      mechanism,
+    };
+  }
+  return {
+    actorType: hosted ? "unknown" : "local",
+    actorId: hosted ? null : "local-direct",
+    mechanism: hosted ? "missing" : "local",
+  };
+}
+
+async function appendOperationalAudit(event, eventKey = randomUUID()) {
+  const normalized = {
+    occurredAt: event.occurredAt || new Date().toISOString(),
+    category: event.category || "api",
+    severity: event.severity || "info",
+    eventType: event.eventType || "unspecified",
+    outcome: event.outcome || "observed",
+    actorType: event.actorType || "unknown",
+    actorId: event.actorId || null,
+    scopeType: event.scopeType || null,
+    scopeId: event.scopeId || null,
+    parentScopeType: event.parentScopeType || null,
+    parentScopeId: event.parentScopeId || null,
+    message: String(event.message || "").slice(0, 4_000),
+    metadata: auditMetadata(safeMetadata(event.metadata)),
+  };
+  if (database) {
+    return database.appendAuditEvent(normalized, eventKey);
+  }
+  await appendFile(
+    operationalAuditPath,
+    `${JSON.stringify({ eventKey, ...normalized })}\n`,
+    "utf8",
+  );
+  return eventKey;
+}
+
+async function operationalAuditDashboard({
+  hours = 24,
+  limit = 200,
+  category = "",
+  severity = "",
+} = {}) {
+  if (database) {
+    return database.auditDashboard({ hours, limit, category, severity });
+  }
+  const boundedHours = Math.min(24 * 90, Math.max(1, Number(hours) || 24));
+  const boundedLimit = Math.min(500, Math.max(1, Number(limit) || 200));
+  const cutoff = Date.now() - boundedHours * 60 * 60 * 1_000;
+  const source = await readFile(operationalAuditPath, "utf8").catch(() => "");
+  const all = source
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    })
+    .filter(
+      (event) =>
+        Date.parse(event.occurredAt || "") >= cutoff &&
+        (!category || event.category === category) &&
+        (!severity || event.severity === severity),
+    )
+    .sort(
+      (left, right) =>
+        Date.parse(right.occurredAt) - Date.parse(left.occurredAt),
+    );
+  const count = (predicate) => all.filter(predicate).length;
+  const byCategory = Object.entries(
+    all.reduce((output, event) => {
+      output[event.category] = (output[event.category] || 0) + 1;
+      return output;
+    }, {}),
+  ).map(([name, value]) => ({ category: name, count: value }));
+  const actors = new Map();
+  for (const event of all) {
+    if (!event.actorId) continue;
+    const key = `${event.actorType}:${event.actorId}`;
+    const current = actors.get(key) || {
+      actorType: event.actorType,
+      actorId: event.actorId,
+      count: 0,
+      lastSeenAt: event.occurredAt,
+    };
+    current.count += 1;
+    actors.set(key, current);
+  }
+  return {
+    generatedAt: new Date().toISOString(),
+    windowHours: boundedHours,
+    filters: {
+      category: category || null,
+      severity: severity || null,
+      limit: boundedLimit,
+    },
+    summary: {
+      total: all.length,
+      successes: count((event) => event.severity === "success"),
+      warnings: count((event) => event.severity === "warning"),
+      failures: count((event) => event.severity === "error"),
+      loginSuccesses: count(
+        (event) =>
+          event.category === "authentication" &&
+          event.outcome === "succeeded",
+      ),
+      loginFailures: count(
+        (event) =>
+          event.category === "authentication" &&
+          ["failed", "locked"].includes(event.outcome),
+      ),
+      crawlsCompleted: count(
+        (event) =>
+          event.category === "crawl" && event.outcome === "completed",
+      ),
+      crawlsFailed: count(
+        (event) =>
+          event.category === "crawl" && event.severity === "error",
+      ),
+      executionsCompleted: count(
+        (event) =>
+          event.category === "execution" && event.outcome === "completed",
+      ),
+      executionsFailed: count(
+        (event) =>
+          event.category === "execution" && event.severity === "error",
+      ),
+    },
+    byCategory,
+    topActors: [...actors.values()]
+      .sort((left, right) => right.count - left.count)
+      .slice(0, 12),
+    events: all.slice(0, boundedLimit),
+  };
+}
+
+const criticalRunAudit = new Map([
+  ["run_created", ["info", "started"]],
+  ["browser_launched", ["success", "browser_started"]],
+  ["semantic_generation_completed", ["success", "model_completed"]],
+  ["generated_script_published", ["success", "script_published"]],
+  ["crawl_form_ids_assigned", ["success", "forms_registered"]],
+  ["fixture_terminal_submission_completed", ["success", "submitted"]],
+  ["field_entry_failed", ["warning", "field_failed"]],
+  ["semantic_proposal_schema_rejected", ["warning", "repairing"]],
+  ["captcha_handoff_required", ["warning", "blocked"]],
+  ["generated_script_not_published", ["error", "failed"]],
+  ["generated_script_replay_failed", ["error", "failed"]],
+  ["browser_page_failed", ["error", "failed"]],
+  ["fixture_terminal_submission_unverified", ["error", "failed"]],
+  ["crawl_needs_review", ["warning", "needs_review"]],
+  ["crawl_disqualified", ["warning", "disqualified"]],
+  ["crawl_failed", ["error", "failed"]],
+  ["crawl_interrupted", ["error", "failed"]],
+  ["crawl_completed", ["success", "completed"]],
+  ["operator_request_review", ["info", "needs_review"]],
+]);
+
+async function auditCriticalRunEvent(runId, kind, message, metadata) {
+  const disposition = criticalRunAudit.get(kind);
+  if (!disposition) return;
+  const actor = runActors.get(runId) || {
+    actorType: "system",
+    actorId: null,
+  };
+  await appendOperationalAudit({
+    category: "crawl",
+    severity: disposition[0],
+    eventType: `crawl.${kind}`,
+    outcome: disposition[1],
+    ...actor,
+    scopeType: "run",
+    scopeId: runId,
+    message,
+    metadata,
+  });
+}
+
 async function logEvent(runId, kind, message, metadata = {}) {
   const event = {
     timestamp: new Date().toISOString(),
@@ -830,6 +1049,14 @@ async function logEvent(runId, kind, message, metadata = {}) {
   console.log(
     `[${event.timestamp}] ${runId} ${kind}: ${message}`,
     Object.keys(event.metadata).length ? event.metadata : ""
+  );
+  await auditCriticalRunEvent(
+    runId,
+    kind,
+    message,
+    event.metadata,
+  ).catch((error) =>
+    console.error(`Could not persist critical crawl audit for ${runId}:`, error),
   );
 }
 
@@ -892,6 +1119,7 @@ function initialRun(
   discoverRelatedPages,
   fixtureAuthorities,
   traversalSettings,
+  initiatedBy,
   now
 ) {
   const nodes = urls.map((url, index) => ({
@@ -954,6 +1182,7 @@ function initialRun(
     artifacts: artifactsFor(id),
     synthetic: false,
     liveApproved: false,
+    initiatedBy,
     createdAt: now,
     updatedAt: now,
   };
@@ -1653,6 +1882,7 @@ async function executeCrawl(run) {
         );
     }
     runningTasks.delete(run.id);
+    runActors.delete(run.id);
   }
 }
 
@@ -1778,6 +2008,7 @@ async function createRun(request) {
     );
   }
   const traversalSettings = await readTraversalSettings();
+  const initiatedBy = actorFromRequest(request);
   const run = initialRun(
     id,
     urls,
@@ -1788,8 +2019,10 @@ async function createRun(request) {
     discoverRelatedPages,
     fixtureAuthorities,
     traversalSettings,
+    initiatedBy,
     now
   );
+  runActors.set(id, initiatedBy);
   await mkdir(runDirectory(id), { recursive: true });
   await saveRun(run);
   await logEvent(
@@ -1875,7 +2108,7 @@ async function logExecutionEvent(executionId, kind, message, metadata = {}) {
     executionId,
     kind,
     message,
-    metadata,
+    metadata: safeMetadata(metadata),
   };
   if (database) {
     await database.appendEvent("execution", executionId, event);
@@ -1884,6 +2117,59 @@ async function logExecutionEvent(executionId, kind, message, metadata = {}) {
       path.join(executionDirectory(executionId), "events.jsonl"),
       `${JSON.stringify(event)}\n`,
       "utf8",
+    );
+  }
+  const actor = executionActors.get(executionId) || {
+    actorType: "system",
+    actorId: null,
+  };
+  const final = kind === "approved_execution_completed";
+  const failed =
+    kind === "approved_execution_failed" ||
+    kind === "field_entry_failed" ||
+    kind === "approved_write_blocked" ||
+    (final && event.metadata.status === "failed");
+  const important =
+    final ||
+    failed ||
+    [
+      "approved_execution_created",
+      "approved_execution_browser_started",
+      "fixture_terminal_submission_completed",
+      "fixture_terminal_submission_unverified",
+    ].includes(kind);
+  if (important) {
+    await appendOperationalAudit({
+      category: "execution",
+      severity: failed
+        ? final || kind === "approved_execution_failed"
+          ? "error"
+          : "warning"
+        : final || kind.includes("completed")
+          ? "success"
+          : "info",
+      eventType: `execution.${kind}`,
+      outcome: final
+        ? event.metadata.status === "completed"
+          ? "completed"
+          : "failed"
+        : failed
+          ? "failed"
+          : kind === "approved_execution_created"
+            ? "started"
+            : "observed",
+      ...actor,
+      scopeType: "execution",
+      scopeId: executionId,
+      parentScopeType: event.metadata.formId ? "form" : null,
+      parentScopeId: event.metadata.formId || null,
+      message,
+      metadata: event.metadata,
+    }).catch((error) =>
+      console.error(
+        `Could not persist critical execution audit for ${executionId}:`,
+        error,
+      ),
     );
   }
 }
@@ -1921,6 +2207,24 @@ async function executeApprovedRun(record, form, inputData) {
       updatedAt: new Date().toISOString(),
     });
     await writeExecution(record);
+    await logExecutionEvent(
+      record.executionId,
+      "approved_execution_completed",
+      result.status === "completed"
+        ? "Approved execution completed."
+        : "Approved execution reached a failed terminal outcome.",
+      {
+        formId: record.formId,
+        status: result.status,
+        outcome: result.outcome,
+        failureCode: result.failureCode,
+        fieldsAttempted: result.fieldsAttempted,
+        fieldsVerified: result.fieldsVerified,
+        fieldsFailed: result.fieldsFailed,
+        submitted: result.submitted,
+        submissionVerified: result.submissionResult?.verified === true,
+      },
+    );
   } catch (error) {
     Object.assign(record, {
       status: "failed",
@@ -1939,6 +2243,7 @@ async function executeApprovedRun(record, form, inputData) {
     );
   } finally {
     runningExecutions.delete(record.executionId);
+    executionActors.delete(record.executionId);
   }
 }
 
@@ -2003,6 +2308,7 @@ async function createApprovedRun(request, formId) {
   }
   const executionId = `exec_${randomUUID().replaceAll("-", "")}`;
   const now = new Date().toISOString();
+  const initiatedBy = actorFromRequest(request);
   const record = {
     schemaVersion: 1,
     executionId,
@@ -2029,12 +2335,14 @@ async function createApprovedRun(request, formId) {
     issues: [],
     failureCode: null,
     detail: "Approved execution queued.",
+    initiatedBy,
     createdAt: now,
     updatedAt: now,
   };
   if (!database) {
     await mkdir(executionDirectory(executionId), { recursive: false });
   }
+  executionActors.set(executionId, initiatedBy);
   await writeExecution(record);
   await logExecutionEvent(
     executionId,
@@ -2094,6 +2402,16 @@ async function route(request) {
       activeExecutions: runningExecutions.size,
     });
   }
+  if (url.pathname === "/api/ops/audit" && request.method === "GET") {
+    return jsonResponse(request, {
+      audit: await operationalAuditDashboard({
+        hours: url.searchParams.get("hours"),
+        limit: url.searchParams.get("limit"),
+        category: url.searchParams.get("category") || "",
+        severity: url.searchParams.get("severity") || "",
+      }),
+    });
+  }
   if (url.pathname === "/api/settings" && request.method === "GET") {
     return jsonResponse(request, {
       settings: await readTraversalSettings(),
@@ -2144,18 +2462,59 @@ async function route(request) {
     /^\/api\/forms\/([^/]+)\/approval$/,
   );
   if (approvalMatch && request.method === "POST") {
+    const formId = decodeURIComponent(approvalMatch[1]);
+    const requestActor = actorFromRequest(request);
     try {
       const payload = await bodyJson(request);
       const form = await decideFormApproval({
         formsRoot,
-        formId: decodeURIComponent(approvalMatch[1]),
+        formId,
         decision: payload.decision,
-        actor: payload.actor,
+        actor:
+          requestActor.actorType === "local" && payload.actor
+            ? payload.actor
+            : requestActor.actorId || payload.actor,
         notes: payload.notes,
         database,
       });
+      await appendOperationalAudit({
+        category: "approval",
+        severity:
+          form.approval.decision === "approved" ? "success" : "warning",
+        eventType: `approval.${form.approval.decision}`,
+        outcome: form.approval.decision,
+        ...requestActor,
+        scopeType: "form",
+        scopeId: formId,
+        parentScopeType: form.sourceRunId ? "run" : null,
+        parentScopeId: form.sourceRunId || null,
+        message:
+          form.approval.decision === "approved"
+            ? "Crawl-scoped form was approved for execution."
+            : "Crawl-scoped form was rejected.",
+        metadata: {
+          approvalId: form.approval.approvalId,
+          artifactId: form.approval.pinnedScript.artifactId,
+          scriptVersion: form.approval.pinnedScript.scriptVersion,
+        },
+      }).catch((error) =>
+        console.error(`Could not persist approval audit for ${formId}:`, error),
+      );
       return jsonResponse(request, { form, approval: form.approval });
     } catch (error) {
+      await appendOperationalAudit({
+        category: "approval",
+        severity: "warning",
+        eventType: "approval.failed",
+        outcome: "failed",
+        ...requestActor,
+        scopeType: "form",
+        scopeId: formId,
+        message: "Form approval request failed.",
+        metadata: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      }).catch(() => {});
       return jsonResponse(
         request,
         { error: error instanceof Error ? error.message : String(error) },
@@ -2297,7 +2656,9 @@ async function route(request) {
         status: "awaiting_review",
         stage: "Human review requested",
       });
+      runActors.set(runId, actorFromRequest(request));
       await logEvent(runId, "operator_request_review", "Run sent to human review.");
+      runActors.delete(runId);
       return jsonResponse(request, { run });
     } catch {
       return jsonResponse(request, { error: "Run not found." }, 404);
@@ -2339,6 +2700,10 @@ async function reconcileInterruptedRuns() {
   const runs = await listRuns();
   const interrupted = runs.filter((run) => run.status === "running");
   for (const run of interrupted) {
+    runActors.set(run.id, run.initiatedBy || {
+      actorType: "system",
+      actorId: null,
+    });
     const finding = {
       id: `${run.id}_interrupted`,
       tone: "danger",
@@ -2360,6 +2725,7 @@ async function reconcileInterruptedRuns() {
       "crawl_interrupted",
       "Marked an unfinished crawl as interrupted during local API startup."
     );
+    runActors.delete(run.id);
   }
   return interrupted.length;
 }

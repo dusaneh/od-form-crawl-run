@@ -19,9 +19,10 @@ HTML, and JSONL logs all run or persist on this machine under `data/`.
 
 An optional hosted staging path is now implemented. One Node gateway owns the
 public port, serves the public API landing page, protects `/control-plane` and
-`/api-console`, and proxies authenticated `/api/*` traffic to the internal
-crawler API. PostgreSQL is authoritative in hosted mode. OpenAI remains the
-only external semantic-compute dependency.
+`/api-console`, and the unlinked operations dashboard, and proxies
+authenticated `/api/*` traffic to the internal crawler API. PostgreSQL is
+authoritative in hosted mode. OpenAI remains the only external
+semantic-compute dependency.
 
 The active production path now follows the required decision boundary:
 
@@ -93,7 +94,7 @@ cohort with those post-fix repetitions gives the current measured position:
 | Branch execution misses | 0 |
 | Verified submissions | 25/25 attempted |
 | Unsafe conditional submissions | 0 |
-| Full automated suite | 74/74 |
+| Full automated suite | 84/84 executable checks; 1 optional PostgreSQL integration check skipped |
 
 The twelve non-strict results are sensitivity-policy/oracle disagreements on
 otherwise functionally correct outcomes. They remain review items rather than
@@ -136,11 +137,14 @@ failure in the supported Phase 1 envelope.
 | `F3.16 / F3.18` traversal/four layers | **Built for generated and retained runs** | State cards expose sensing, semantic proposal, stored script/version/path/hash, deterministic execution/readback, flags, and evidence. |
 | `F3.19` API-console report presentation | **Built** | A fetched report shows crawl totals, clickable authenticated state/page/sensing evidence thumbnails, and forms grouped into sections with field type and critical metadata. Raw report JSON remains available. |
 | `F3.19.5` API-console crawl-value prefill | **Built** | Retrieving a schema initializes editable Run API fields from its synthetic crawl-test payload, exposes a reset action, and labels values/files as test data rather than applicant data. |
+| `F3.20` private operations dashboard | **Built** | The unlinked `/ops/audit-log` view summarizes login, API, crawl, approval, and execution outcomes with time/category/severity filters, actor attribution, and expandable safe metadata. Hosted access requires an authenticated UI user; API Bearer tokens are rejected. |
 | `F4` local-first ownership | **Built** | The complete local UI/API/browser/artifact path remains. An optional authenticated hosted gateway now consolidates UI and API access without removing local operation. |
 | `F4.1.3` localhost opt-in | **Built** | Loopback targets require explicit per-run opt-in. Terminal submission is a separate origin-neutral crawl choice. |
 | `F4.6.1` hosted gateway | **Built locally; Heroku release pending** | One public process routes `/api/*`, protects the two operational UIs, serves compiled assets, and starts the API and UI on loopback-only internal ports. |
 | `F4.6.2–F4.6.4` authentication | **Built for staging** | Seven individual UI accounts use salted scrypt password hashes and database-backed HttpOnly sessions. Five failures cause a 15-minute principal lock. API clients use a high-entropy Bearer token whose digest, scopes, status, and audit events are stored in PostgreSQL. Tenant-level authorization and production identity-provider integration remain. |
 | `F4.6.5–F4.6.7` hosted boundaries/secrets | **Built for staging** | Hosted mode is headless-only, rejects private/loopback targets, treats `/tmp` as cache, and seeds credentials from a Git-ignored local file. Durable object storage for evidence remains. |
+| `F4.6.8` operator-only dashboard authorization | **Built** | The dashboard page and data API accept the individual UI login/session boundary and explicitly deny integration Bearer tokens. The route is not linked, but authentication—not URL secrecy—is the access control. |
+| `F6.7` unified operational audit | **Built** | Critical login, API, crawl, approval, and execution events are actor-aware and append-only in PostgreSQL, with a matching local JSONL fallback. Passwords, secrets, request bodies, entered values, file bytes, and screenshots are excluded. |
 | `F5` model context | **Built for production generation** | Each novel state receives DOM, accessibility, screenshot, sections, guidance, options, history, and failure context with provenance. |
 | `F6` observability | **Built** | Health, lifecycle, events, errors, paths, and interrupted-run reconciliation are inspectable. |
 | `F7` safety | **Partial** | `submit: false` keeps terminal submission browser-blocked; `submit: true` opens a bounded final-action write window only for the LLM-authored terminal control. CAPTCHA solving, credential entry, and payment remain prohibited and CAPTCHA/login disqualify. Fresh public terminal-submit proof remains. |

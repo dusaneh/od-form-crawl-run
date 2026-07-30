@@ -383,6 +383,84 @@ test(
       await page.route("**/api/**", async (route) => {
         const request = route.request();
         const url = new URL(request.url());
+        if (url.pathname === "/api/ops/audit") {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              audit: {
+                generatedAt: now,
+                windowHours: 24,
+                filters: { category: null, severity: null, limit: 250 },
+                summary: {
+                  total: 3,
+                  successes: 2,
+                  warnings: 0,
+                  failures: 1,
+                  loginSuccesses: 1,
+                  loginFailures: 1,
+                  crawlsCompleted: 1,
+                  crawlsFailed: 0,
+                  executionsCompleted: 0,
+                  executionsFailed: 0,
+                },
+                byCategory: [
+                  { category: "authentication", count: 2 },
+                  { category: "crawl", count: 1 },
+                ],
+                topActors: [
+                  {
+                    actorType: "user",
+                    actorId: "operator@example.test",
+                    count: 2,
+                    lastSeenAt: now,
+                  },
+                ],
+                events: [
+                  {
+                    id: "3",
+                    occurredAt: now,
+                    category: "crawl",
+                    severity: "success",
+                    eventType: "crawl.crawl_completed",
+                    outcome: "completed",
+                    actorType: "user",
+                    actorId: "operator@example.test",
+                    scopeType: "run",
+                    scopeId: run.id,
+                    message: "Crawl completed.",
+                    metadata: { formsFound: 1 },
+                  },
+                  {
+                    id: "2",
+                    occurredAt: now,
+                    category: "authentication",
+                    severity: "success",
+                    eventType: "authentication.basic_success",
+                    outcome: "succeeded",
+                    actorType: "user",
+                    actorId: "operator@example.test",
+                    message: "User authentication succeeded.",
+                    metadata: { mechanism: "basic" },
+                  },
+                  {
+                    id: "1",
+                    occurredAt: now,
+                    category: "authentication",
+                    severity: "error",
+                    eventType: "authentication.basic_failure",
+                    outcome: "failed",
+                    actorType: "unknown",
+                    actorId: "hash:123456789abc",
+                    message: "User authentication failed.",
+                    metadata: { mechanism: "basic" },
+                  },
+                ],
+              },
+            }),
+          });
+          return;
+        }
         if (url.pathname === "/api/health") {
           await route.fulfill({
             status: 200,
@@ -686,6 +764,15 @@ test(
         field.testValue,
       );
       await page.getByText("Test value", { exact: true }).waitFor();
+
+      await page.goto(`${appUrl}/ops/audit-log`, { waitUntil: "networkidle" });
+      await page
+        .getByRole("heading", { name: "Audit and reliability dashboard" })
+        .waitFor();
+      await page.getByText("Crawl completed.", { exact: true }).waitFor();
+      await page.getByText("operator@example.test", { exact: true }).first().waitFor();
+      await page.getByRole("heading", { name: "Login activity" }).waitFor();
+      await page.getByText("Applicant values and request bodies are intentionally excluded.").waitFor();
     } finally {
       await browser?.close();
       child.kill();

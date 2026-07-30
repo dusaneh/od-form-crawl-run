@@ -73,6 +73,8 @@ export class AuthStore {
     await this.#clearFailure(principalKey);
     await this.#event("basic_success", principalKey, clientKey, {
       mechanism: "basic",
+      actorId: user.email,
+      displayName: user.display_name,
     });
     return {
       ok: true,
@@ -263,6 +265,18 @@ export class AuthStore {
   }
 
   async #event(eventType, principalHash, clientHash, metadata) {
+    const success = eventType.endsWith("_success");
+    const locked = eventType === "principal_locked";
+    const actorType =
+      success && metadata.mechanism === "basic"
+        ? "user"
+        : success && metadata.mechanism === "bearer"
+          ? "api_token"
+          : "unknown";
+    const actorId =
+      metadata.actorId ||
+      metadata.tokenId ||
+      `hash:${String(principalHash || "").slice(0, 12)}`;
     await this.database.pool.query(
       `INSERT INTO formweave_auth_events(
          event_type, principal_hash, client_hash, metadata
@@ -270,6 +284,33 @@ export class AuthStore {
        VALUES ($1, $2, $3, $4)`,
       [eventType, principalHash, clientHash, metadata],
     );
+    await this.database
+      .appendAuditEvent({
+        category: "authentication",
+        severity: success ? "success" : locked ? "warning" : "error",
+        eventType: `authentication.${eventType}`,
+        outcome: success ? "succeeded" : locked ? "locked" : "failed",
+        actorType,
+        actorId,
+        message: success
+          ? `${metadata.mechanism === "bearer" ? "API token" : "User"} authentication succeeded.`
+          : locked
+            ? "Authentication principal was locked after repeated failures."
+            : `${metadata.mechanism === "bearer" ? "API token" : "User"} authentication failed.`,
+        metadata: {
+          mechanism: metadata.mechanism,
+          clientHash: String(clientHash || "").slice(0, 16),
+          ...(metadata.displayName
+            ? { displayName: metadata.displayName }
+            : {}),
+          ...(metadata.tokenPrefix
+            ? { tokenPrefix: metadata.tokenPrefix }
+            : {}),
+        },
+      })
+      .catch((error) =>
+        console.error("Could not persist unified authentication audit:", error),
+      );
   }
 }
 

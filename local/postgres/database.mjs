@@ -373,6 +373,182 @@ export class FormWeaveDatabase {
     return result.rows.map((row) => row.payload);
   }
 
+  async appendAuditEvent(event, eventKey = randomUUID()) {
+    const occurredAt = timestamp(event.occurredAt || event.timestamp);
+    const result = await this.pool.query(
+      `INSERT INTO formweave_audit_events(
+         event_key, occurred_at, category, severity, event_type, outcome,
+         actor_type, actor_id, scope_type, scope_id,
+         parent_scope_type, parent_scope_id, message, metadata
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+       )
+       ON CONFLICT (event_key) DO NOTHING
+       RETURNING id`,
+      [
+        String(eventKey),
+        occurredAt,
+        String(event.category || "api"),
+        String(event.severity || "info"),
+        String(event.eventType || "unspecified"),
+        String(event.outcome || "observed"),
+        String(event.actorType || "unknown"),
+        event.actorId ? String(event.actorId).slice(0, 320) : null,
+        event.scopeType ? String(event.scopeType) : null,
+        event.scopeId ? String(event.scopeId).slice(0, 320) : null,
+        event.parentScopeType ? String(event.parentScopeType) : null,
+        event.parentScopeId
+          ? String(event.parentScopeId).slice(0, 320)
+          : null,
+        String(event.message || "").slice(0, 4_000),
+        event.metadata && typeof event.metadata === "object"
+          ? event.metadata
+          : {},
+      ],
+    );
+    return result.rows[0]?.id || null;
+  }
+
+  async auditDashboard({
+    hours = 24,
+    limit = 200,
+    category = "",
+    severity = "",
+  } = {}) {
+    const boundedHours = Math.min(24 * 90, Math.max(1, Number(hours) || 24));
+    const boundedLimit = Math.min(500, Math.max(1, Number(limit) || 200));
+    const allowedCategory = [
+      "authentication",
+      "api",
+      "crawl",
+      "approval",
+      "execution",
+    ].includes(category)
+      ? category
+      : "";
+    const allowedSeverity = [
+      "info",
+      "success",
+      "warning",
+      "error",
+    ].includes(severity)
+      ? severity
+      : "";
+    const values = [boundedHours, allowedCategory || null, allowedSeverity || null];
+    const where = `occurred_at >= now() - ($1 * interval '1 hour')
+      AND ($2::text IS NULL OR category = $2)
+      AND ($3::text IS NULL OR severity = $3)`;
+    const [summaryResult, categoryResult, actorResult, eventsResult] =
+      await Promise.all([
+        this.pool.query(
+          `SELECT
+             count(*)::integer AS total,
+             count(*) FILTER (WHERE severity = 'success')::integer AS successes,
+             count(*) FILTER (WHERE severity = 'warning')::integer AS warnings,
+             count(*) FILTER (WHERE severity = 'error')::integer AS failures,
+             count(*) FILTER (
+               WHERE category = 'authentication' AND outcome = 'succeeded'
+             )::integer AS login_successes,
+             count(*) FILTER (
+               WHERE category = 'authentication'
+                 AND outcome IN ('failed', 'locked')
+             )::integer AS login_failures,
+             count(*) FILTER (
+               WHERE category = 'crawl' AND outcome = 'completed'
+             )::integer AS crawls_completed,
+             count(*) FILTER (
+               WHERE category = 'crawl' AND severity = 'error'
+             )::integer AS crawls_failed,
+             count(*) FILTER (
+               WHERE category = 'execution' AND outcome = 'completed'
+             )::integer AS executions_completed,
+             count(*) FILTER (
+               WHERE category = 'execution' AND severity = 'error'
+             )::integer AS executions_failed
+           FROM formweave_audit_events
+           WHERE ${where}`,
+          values,
+        ),
+        this.pool.query(
+          `SELECT category, count(*)::integer AS count
+           FROM formweave_audit_events
+           WHERE ${where}
+           GROUP BY category
+           ORDER BY count DESC, category`,
+          values,
+        ),
+        this.pool.query(
+          `SELECT actor_type, actor_id, count(*)::integer AS count,
+                  max(occurred_at) AS last_seen_at
+           FROM formweave_audit_events
+           WHERE ${where} AND actor_id IS NOT NULL
+           GROUP BY actor_type, actor_id
+           ORDER BY count DESC, last_seen_at DESC
+           LIMIT 12`,
+          values,
+        ),
+        this.pool.query(
+          `SELECT id, occurred_at, category, severity, event_type, outcome,
+                  actor_type, actor_id, scope_type, scope_id,
+                  parent_scope_type, parent_scope_id, message, metadata
+           FROM formweave_audit_events
+           WHERE ${where}
+           ORDER BY occurred_at DESC, id DESC
+           LIMIT $4`,
+          [...values, boundedLimit],
+        ),
+      ]);
+    const summary = summaryResult.rows[0] || {};
+    return {
+      generatedAt: new Date().toISOString(),
+      windowHours: boundedHours,
+      filters: {
+        category: allowedCategory || null,
+        severity: allowedSeverity || null,
+        limit: boundedLimit,
+      },
+      summary: {
+        total: Number(summary.total || 0),
+        successes: Number(summary.successes || 0),
+        warnings: Number(summary.warnings || 0),
+        failures: Number(summary.failures || 0),
+        loginSuccesses: Number(summary.login_successes || 0),
+        loginFailures: Number(summary.login_failures || 0),
+        crawlsCompleted: Number(summary.crawls_completed || 0),
+        crawlsFailed: Number(summary.crawls_failed || 0),
+        executionsCompleted: Number(summary.executions_completed || 0),
+        executionsFailed: Number(summary.executions_failed || 0),
+      },
+      byCategory: categoryResult.rows.map((row) => ({
+        category: row.category,
+        count: Number(row.count),
+      })),
+      topActors: actorResult.rows.map((row) => ({
+        actorType: row.actor_type,
+        actorId: row.actor_id,
+        count: Number(row.count),
+        lastSeenAt:
+          row.last_seen_at?.toISOString?.() || row.last_seen_at,
+      })),
+      events: eventsResult.rows.map((row) => ({
+        id: String(row.id),
+        occurredAt: row.occurred_at?.toISOString?.() || row.occurred_at,
+        category: row.category,
+        severity: row.severity,
+        eventType: row.event_type,
+        outcome: row.outcome,
+        actorType: row.actor_type,
+        actorId: row.actor_id,
+        scopeType: row.scope_type,
+        scopeId: row.scope_id,
+        parentScopeType: row.parent_scope_type,
+        parentScopeId: row.parent_scope_id,
+        message: row.message,
+        metadata: row.metadata,
+      })),
+    };
+  }
+
   async putForm(payload) {
     const now = new Date().toISOString();
     await this.pool.query(
@@ -895,6 +1071,7 @@ export class FormWeaveDatabase {
       "formweave_runs",
       "formweave_reports",
       "formweave_events",
+      "formweave_audit_events",
       "formweave_forms",
       "formweave_form_approvals",
       "formweave_executions",

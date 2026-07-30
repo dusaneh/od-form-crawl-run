@@ -59,6 +59,27 @@ await check("Bearer rejected for UI", "/control-plane", {
   expected: 302,
   headers: { authorization: bearer },
 });
+await check("anonymous audit dashboard redirects", "/ops/audit-log", {
+  expected: 302,
+});
+await check("Bearer rejected for audit dashboard", "/ops/audit-log", {
+  expected: 302,
+  headers: { authorization: bearer },
+});
+await check("session audit dashboard", "/ops/audit-log", {
+  expected: 200,
+  headers: { cookie: sessionCookie },
+  includes: "Audit and reliability dashboard",
+});
+await check("Bearer rejected for audit data", "/api/ops/audit", {
+  expected: 401,
+  headers: { authorization: bearer },
+});
+await check("session audit data", "/api/ops/audit?hours=24", {
+  expected: 200,
+  headers: { cookie: sessionCookie },
+  includes: '"audit"',
+});
 await check("hosted headful rejected", "/api/runs", {
   expected: 400,
   method: "POST",
