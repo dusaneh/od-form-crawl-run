@@ -2330,7 +2330,7 @@ server.listen(port, host, () => {
   console.log(`Local artifacts: ${dataRoot}`);
   console.log(
     `Browser renderer: local Playwright Chromium · ${
-      hostedMode ? "headless only (hosted mode)" : "headless + headful"
+      hosted ? "headless only (hosted mode)" : "headless + headful"
     }`,
   );
   console.log(

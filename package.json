@@ -43,26 +43,26 @@
     "live:harness:headed": "node test-sites/live-harness.mjs --headed"
   },
   "dependencies": {
+    "@vitejs/plugin-react": "^6.0.2",
+    "@vitejs/plugin-rsc": "^0.5.26",
     "next": "^16.2.12",
     "pg": "^8.22.0",
     "playwright": "^1.61.1",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "react-server-dom-webpack": "^19.2.8",
+    "vinext": "^0.0.50",
+    "vite": "^8.1.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.2",
-    "@vitejs/plugin-rsc": "0.5.26",
     "eslint": "9.39.4",
     "eslint-config-next": "^16.2.12",
-    "react-server-dom-webpack": "^19.2.8",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
-    "vinext": "0.0.50",
-    "vite": "^8.1.5",
     "yaml": "^2.9.0"
   },
   "overrides": {
