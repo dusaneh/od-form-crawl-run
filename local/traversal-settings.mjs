@@ -3,6 +3,8 @@ export const TRAVERSAL_SETTINGS_VERSION = 4;
 export const DEFAULT_AGENT_INSTRUCTIONS = [
   "Traverse as much of the public form as possible with synthetic test data.",
   "Classify controls as deterministic, conditional, or human-review actions.",
+  "Open every visible collapsed details, accordion, expando, or disclosure exactly once and re-examine the resulting state before unrelated progression.",
+  "Treat cookie banners as session infrastructure: prefer rejecting non-essential cookies and otherwise use the minimum acceptance needed to expose the public form.",
   "Enter ordinary fields in DOM order and exercise safe select, radio, and checkbox branches.",
   "Use Next, Continue, Review, and equivalent controls to reveal later states.",
   "In Phase 1 Probe mode, never activate the terminal submit control.",
@@ -73,6 +75,10 @@ export function normalizeTraversalSettings(input = {}) {
   }
   // CAPTCHA solving and bot-detection evasion are deliberately unsupported.
   normalized.captchaPolicy = "detect_and_disqualify";
+  // Full safe disclosure discovery and legitimate rendering priming are
+  // required sensing behavior, not optional semantic decision policies.
+  normalized.expandSafeDisclosures = true;
+  normalized.pointerAndScrollPriming = true;
   normalized.stableWindowMs = boundedInteger(
     input.stableWindowMs,
     DEFAULT_TRAVERSAL_SETTINGS.stableWindowMs,

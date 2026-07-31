@@ -21,6 +21,8 @@ test("traversal settings normalize bounded values and lock the CAPTCHA policy", 
   const normalized = normalizeTraversalSettings({
     cookieConsent: "accept_all",
     closeWelcomeBanners: false,
+    expandSafeDisclosures: false,
+    pointerAndScrollPriming: false,
     captchaPolicy: "click_and_bypass",
     stableWindowMs: 1,
     maxStateWaitMs: 99_000,
@@ -35,6 +37,8 @@ test("traversal settings normalize bounded values and lock the CAPTCHA policy", 
   assert.equal(normalized.cookieConsent, "accept_all");
   assert.equal(normalized.closeWelcomeBanners, false);
   assert.equal(normalized.captchaPolicy, "detect_and_disqualify");
+  assert.equal(normalized.expandSafeDisclosures, true);
+  assert.equal(normalized.pointerAndScrollPriming, true);
   assert.equal(normalized.stableWindowMs, 300);
   assert.equal(normalized.maxStateWaitMs, 30_000);
   assert.equal(normalized.maxActionsPerPage, 1);

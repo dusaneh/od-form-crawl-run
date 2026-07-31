@@ -1,3 +1,5 @@
+import { primeInteractiveSurface } from "./executor/interaction-priming.mjs";
+
 const CAPTCHA_TEXT =
   /verify (?:that )?you are human|prove (?:that )?you are human|i am human|captcha|security check|checking your browser|cloudflare turnstile/i;
 const READ_LIKE_POST_PATH =
@@ -44,38 +46,6 @@ async function waitForMutationQuiet(page, quietMs, maxWaitMs) {
     .catch(() => ({ quiet: false, mutations: 0 }));
 }
 
-async function primeInteractiveSurface(page) {
-  const viewport = page.viewportSize() || { width: 1440, height: 1000 };
-  const points = [
-    [0.12, 0.18],
-    [0.52, 0.24],
-    [0.82, 0.48],
-    [0.42, 0.72],
-    [0.18, 0.86],
-  ];
-  for (const [x, y] of points) {
-    await page.mouse
-      .move(Math.round(viewport.width * x), Math.round(viewport.height * y), {
-        steps: 3,
-      })
-      .catch(() => {});
-  }
-  await page
-    .evaluate(async () => {
-      const start = window.scrollY;
-      const maximum = Math.max(
-        0,
-        Math.min(document.documentElement.scrollHeight - window.innerHeight, 2_400)
-      );
-      if (maximum > 0) {
-        window.scrollTo({ top: maximum, behavior: "instant" });
-        await new Promise((resolve) => requestAnimationFrame(() => resolve()));
-        window.scrollTo({ top: start, behavior: "instant" });
-      }
-    })
-    .catch(() => {});
-}
-
 export async function waitForStableState(
   page,
   settings,
@@ -106,9 +76,9 @@ export async function waitForStableState(
       Math.min(settings.maxStateWaitMs, 4_000)
     )
     .catch(() => {});
-  if (settings.pointerAndScrollPriming) {
-    await primeInteractiveSurface(page);
-  }
+  const priming = settings.pointerAndScrollPriming
+    ? await primeInteractiveSurface(page)
+    : null;
   const mutationResult = await waitForMutationQuiet(
     page,
     settings.stableWindowMs,
@@ -124,6 +94,7 @@ export async function waitForStableState(
       mutationQuiet: mutationResult.quiet,
       mutationsObserved: mutationResult.mutations,
       pointerAndScrollPrimed: settings.pointerAndScrollPriming,
+      ...(priming || {}),
     }
   );
   return mutationResult;

@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { primeInteractiveSurface } from "./interaction-priming.mjs";
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -224,51 +225,14 @@ export class PhysicsToolbox {
 
   async prepare() {
     await this.settle();
-    const primeDocument = async (frame) =>
-      frame
-        .evaluate(() => {
-          const result = {
-            scrollSurfacesPrimed: 0,
-          };
-          for (const element of document.querySelectorAll("*")) {
-            const style = getComputedStyle(element);
-            if (
-              element.scrollHeight > element.clientHeight + 8 &&
-              ["auto", "scroll"].includes(style.overflowY)
-            ) {
-              element.scrollTop = element.scrollHeight;
-              element.dispatchEvent(new Event("scroll", { bubbles: true }));
-              result.scrollSurfacesPrimed += 1;
-            }
-          }
-          window.scrollTo(0, document.documentElement.scrollHeight);
-          window.dispatchEvent(new Event("scroll"));
-          return result;
-        })
-        .catch(() => ({ scrollSurfacesPrimed: 0 }));
-    const preparation = {
+    const priming = await primeInteractiveSurface(this.page);
+    return {
       detailsOpened: 0,
-      scrollSurfacesPrimed: 0,
       disclosureButtonsOpened: 0,
-      inaccessibleFrames: 0,
+      ...priming,
+      consentAction: null,
+      overlayAction: null,
     };
-    for (const frame of this.page.frames()) {
-      try {
-        if (
-          frame !== this.page.mainFrame() &&
-          new URL(frame.url()).origin !== new URL(this.page.url()).origin
-        ) {
-          preparation.inaccessibleFrames += 1;
-          continue;
-        }
-        const result = await primeDocument(frame);
-        preparation.scrollSurfacesPrimed += result.scrollSurfacesPrimed;
-      } catch {
-        preparation.inaccessibleFrames += 1;
-      }
-    }
-    await this.page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
-    return { ...preparation, consentAction: null, overlayAction: null };
   }
 
   async installRequestGuard() {

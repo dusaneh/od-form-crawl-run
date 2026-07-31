@@ -1,7 +1,7 @@
 import { CONTROL_TYPES, GUIDANCE_KINDS, PROGRESSION_KINDS } from "../contracts/codes.mjs";
 
 export const SEMANTIC_PROPOSAL_SCHEMA_VERSION = 1;
-export const SEMANTIC_PROMPT_VERSION = "gate2-semantic-state-v2";
+export const SEMANTIC_PROMPT_VERSION = "gate2-semantic-state-v3";
 
 export const ACTION_KINDS = Object.freeze([
   "field_actuation",

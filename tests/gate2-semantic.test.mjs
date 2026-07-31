@@ -767,6 +767,7 @@ test("pending disclosures block both nonterminal and terminal progression", () =
         factId: "action_disclosure",
         visible: true,
         disclosureControl: true,
+        disclosureExpanded: false,
         blockedControlFactIds: ["field_hidden"],
         rawText: "Additional information",
         selectorCandidates: ["#details > summary"],
@@ -811,6 +812,39 @@ test("pending disclosures block both nonterminal and terminal progression", () =
   assert.deepEqual(disclosureAdvance, []);
 });
 
+test("collapsed informational disclosures are explored before unrelated progression", () => {
+  const issues = pendingDisclosureIssues(
+    {
+      state: {
+        progression: {
+          key: "submit_application",
+          kind: "terminal_submit",
+        },
+      },
+      mechanics: {
+        progressionTarget: {
+          sourceFactId: "action_submit",
+        },
+      },
+    },
+    {
+      actions: [
+        {
+          factId: "action_terms",
+          visible: true,
+          disclosureControl: true,
+          disclosureExpanded: false,
+          blockedControlFactIds: [],
+          rawText: "Read eligibility and submission terms",
+          selectorCandidates: ["#terms"],
+        },
+      ],
+    },
+  );
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].type, "pending_disclosure");
+});
+
 test("an exhausted disclosure cannot be reused as a progression action", () => {
   const issues = exhaustedDisclosureProgressionIssues(
     {
@@ -832,6 +866,7 @@ test("an exhausted disclosure cannot be reused as a progression action", () => {
           factId: "action_show_more",
           visible: true,
           disclosureControl: true,
+          disclosureExpanded: true,
           blockedControlFactIds: [],
           rawText: "Show more options",
           selectorCandidates: ["#show-more"],
@@ -1453,6 +1488,10 @@ test("semantic model input contains live sensing context and records provenance"
   assert.match(inputText, /99999/);
   assert.match(inputText, /Format constraints|format and constraints/i);
   assert.match(inputText, /expose conditional behavior rather than avoid it/i);
+  assert.match(inputText, /every visible collapsed details, accordion, expando/i);
+  assert.match(inputText, /Cookie and consent-management banners are session traversal infrastructure/i);
+  assert.match(inputText, /fixed pointer sweep and bounded scrolling/i);
+  assert.match(inputText, /never describe this priming as CAPTCHA/i);
   assert.doesNotMatch(inputText, /ground_truth|answer_key/i);
   assert.equal(
     userContent.find((item) => item.type === "input_image").detail,

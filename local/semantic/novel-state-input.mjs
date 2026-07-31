@@ -250,10 +250,17 @@ export async function captureNovelStateInput({
       ),
     ].map((element, index) => {
       const disclosureRoots = [];
+      let disclosureExpanded = null;
       if (element instanceof HTMLElement && element.tagName === "SUMMARY") {
         const details = element.closest("details");
-        if (details && !details.open) disclosureRoots.push(details);
+        if (details) {
+          disclosureExpanded = details.open;
+          if (!details.open) disclosureRoots.push(details);
+        }
       }
+      const ariaExpanded = element.getAttribute("aria-expanded");
+      if (ariaExpanded === "true") disclosureExpanded = true;
+      if (ariaExpanded === "false") disclosureExpanded = false;
       const controlledIds = clean(element.getAttribute("aria-controls"))
         .split(/\s+/)
         .filter(Boolean);
@@ -296,7 +303,8 @@ export async function captureNovelStateInput({
         formAction: element.form?.action || null,
         disclosureControl:
           element.tagName === "SUMMARY" ||
-          element.getAttribute("aria-expanded") === "false",
+          ariaExpanded !== null,
+        disclosureExpanded,
         blockedControlFactIds,
       };
     });

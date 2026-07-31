@@ -14,6 +14,7 @@ import {
   PhysicsToolbox,
   generatedUploadPayload,
 } from "../local/executor/physics-toolbox.mjs";
+import { primeInteractiveSurface } from "../local/executor/interaction-priming.mjs";
 import {
   matchDeclaredState,
   observedIdentityKey,
@@ -496,13 +497,13 @@ test(
         false,
       );
       assert.equal(
-        before.observation.actions.some(
+        before.observation.actions.find(
           (action) =>
             action.tag === "summary" &&
             action.rawText === "Eligibility questions" &&
             action.visible,
-        ),
-        true,
+        )?.disclosureExpanded,
+        false,
       );
       const result = await toolbox.writeControl(
         { selectors: ["#qual-income"] },
@@ -515,6 +516,14 @@ test(
       assert.equal(
         after.observation.controls.find((field) => field.id === "prog-snap")
           ?.visible,
+        true,
+      );
+      await page.locator("summary").click();
+      const expanded = await captureNovelStateInput({ page, toolbox });
+      assert.equal(
+        expanded.observation.actions.find(
+          (action) => action.tag === "summary",
+        )?.disclosureExpanded,
         true,
       );
     } finally {
@@ -700,10 +709,51 @@ test("script-declared inactive branch cleanup clears hidden native controls", as
   }
 });
 
+test("interaction priming sweeps the pointer and scrolls documents, frames, and nested surfaces", async () => {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage({ viewport: { width: 800, height: 500 } });
+  try {
+    await page.setContent(`<!doctype html>
+      <style>
+        body { margin: 0; }
+        .tall { height: 1800px; }
+        #scrollbox { height: 100px; overflow-y: auto; }
+        #scrollbox > div { height: 600px; }
+      </style>
+      <script>
+        window.pointerMoves = 0;
+        window.documentScrolls = 0;
+        addEventListener("mousemove", () => window.pointerMoves += 1);
+        addEventListener("scroll", () => window.documentScrolls += 1);
+      </script>
+      <div class="tall">
+        <div id="scrollbox" onscroll="window.containerScrolls = (window.containerScrolls || 0) + 1">
+          <div>nested</div>
+        </div>
+      </div>
+      <iframe srcdoc="<style>body{height:1400px}</style><script>window.frameScrolls=0;addEventListener('scroll',()=>window.frameScrolls+=1)<\/script>frame"></iframe>
+    `);
+    await page.waitForTimeout(50);
+    const result = await primeInteractiveSurface(page);
+    assert.equal(result.pointerMoves, 5);
+    assert.ok(result.framesPrimed >= 2);
+    assert.ok(result.documentScrollSteps > 0);
+    assert.ok(result.scrollSurfacesPrimed > 0);
+    assert.ok((await page.evaluate(() => window.pointerMoves)) >= 5);
+    assert.ok((await page.evaluate(() => window.documentScrolls)) > 0);
+    assert.ok((await page.evaluate(() => window.containerScrolls || 0)) > 0);
+    const childFrame = page.frames().find((frame) => frame !== page.mainFrame());
+    assert.ok(await childFrame.evaluate(() => window.frameScrolls > 0));
+  } finally {
+    await browser.close();
+  }
+});
+
 test("Gate 1 executor boundary contains no site-specific or semantic-label API", async () => {
   const files = [
     "local/executor/executor.mjs",
     "local/executor/physics-toolbox.mjs",
+    "local/executor/interaction-priming.mjs",
     "local/executor/state-identity.mjs",
   ];
   const source = (

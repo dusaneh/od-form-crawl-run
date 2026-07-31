@@ -490,7 +490,7 @@ test(
                       outcome: "timed_out",
                       durationMs: 360000,
                       model: "gpt-5.4-mini",
-                      promptVersion: "gate2-semantic-state-v2",
+                      promptVersion: "gate2-semantic-state-v3",
                       scopeId: run.id,
                     },
                   ],

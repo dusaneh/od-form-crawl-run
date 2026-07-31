@@ -293,19 +293,20 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
 - `F1.6.4` Safe disclosures and explicit non-submit intro controls outside a
   form may be advanced within a bounded action budget only when the action was
   selected by the model during generation and retained in D1.
-- `F1.6.4.1` Reconnaissance examines every safely classifiable disclosure,
-  including non-mutating informational disclosures inside forms and
-  disclosures in same-origin frames. If an action or state bound prevents
-  exhaustive expansion, the artifact records the unexamined controls rather
-  than implying complete coverage.
-- `F1.6.4.2` While any observed disclosure still contains hidden applicant
-  controls, no unrelated advance or terminal action is eligible. The LLM may
-  author one `advance` targeting the exact pending disclosure fact; the page
+- `F1.6.4.1` Reconnaissance opens every safely classifiable visible collapsed
+  details, accordion, expando, or disclosure exactly once, including
+  non-mutating informational disclosures inside forms. Known hidden controls
+  are not required: the opened content may reveal fields, guidance,
+  eligibility language, consent terms, or submission criteria. If an action
+  or state bound prevents exhaustive expansion, the artifact records the
+  unexamined controls rather than implying complete coverage.
+- `F1.6.4.2` While any observed safe disclosure remains collapsed and
+  unexplored, no unrelated advance or terminal action is eligible. The LLM
+  authors one `advance` targeting the exact pending disclosure fact; the page
   is then re-sensed before any further progression decision.
-- `F1.6.4.3` A disclosure-like control with no hidden applicant controls is
-  exhausted or non-substantive and cannot be reused as progression. The
-  validator returns that contradiction to the LLM; shared code never chooses
-  an alternate control.
+- `F1.6.4.3` An already-expanded disclosure is exhausted and cannot be reused
+  as progression. The validator returns that contradiction to the LLM; shared
+  code never chooses an alternate control.
 - `F1.6.5` State examination waits for DOM content, a bounded network-idle
   attempt, fonts, and a configurable DOM-mutation quiet window.
 - `F1.6.5.1` After a predictable gate action, the crawler performs a bounded
@@ -314,8 +315,9 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
 - `F1.6.6` A fixed pointer sweep and reversible scroll may prime legitimate
   hover and lazy-load behavior before examination; it must not be represented
   or used as CAPTCHA or bot-detection evasion.
-- `F1.6.6.1` Reconnaissance incrementally scrolls the full main document,
-  same-origin frames, and relevant nested scroll containers to trigger
+- `F1.6.6.1` Before each novel-state examination, reconnaissance performs a
+  fixed pointer sweep and incrementally scrolls the full main document, every
+  reachable child frame, and relevant nested scroll containers to trigger
   legitimate lazy rendering, intersection observers, and scroll-bound
   instructions. Scrolls are bounded, reversible where practical, audited, and
   followed by a stable-state examination; inaccessible cross-origin frames are

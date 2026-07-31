@@ -5,7 +5,7 @@
 | FormWeave software version | `0.1.0` |
 | Document contract version | `1.0` |
 | Source revision reviewed | `0821dbf83cad45c898613e18efbee8d2c5553966` |
-| Semantic prompt version | `gate2-semantic-state-v2` |
+| Semantic prompt version | `gate2-semantic-state-v3` |
 | D1 compiler version | `gate3-d1-compiler-v1` |
 | Generated-script interface | `1` |
 | Result-envelope schema | `1` |
@@ -194,6 +194,10 @@ The current prompt requires the model to:
 - provide format-valid, conspicuously synthetic test values;
 - classify sensitive and administrative fields narrowly;
 - classify every proposed operation with a closed action kind;
+- open every visible collapsed details, accordion, expando, or disclosure once
+  through an exact observed action, then re-sense the resulting state;
+- treat cookie controls as session infrastructure, preferring rejection of
+  non-essential cookies and never adding them to applicant/API fields;
 - generate probes for every safe option of each select, radio group, checkbox,
   and switch so conditional fields can be discovered;
 - select exactly one observed progression action for the state;
@@ -213,6 +217,10 @@ Important prompt constraints include:
   avoid it;
 - CAPTCHA, credential, login, and payment actions are classified but remain
   subject to deterministic disqualification/safety rules.
+- shared browser physics performs a fixed pointer sweep and bounded reversible
+  scrolling of the document, reachable frames, and nested scroll containers
+  before novel-state sensing; these are not model-created form actions and are
+  never used or described as CAPTCHA evasion.
 
 The exact current prompt is implemented in
 `local/semantic/semantic-generator.mjs` in `promptText()`. The strict output

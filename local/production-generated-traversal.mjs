@@ -486,7 +486,7 @@ export function pendingDisclosureIssues(proposal, observation) {
     (action) =>
       action.visible &&
       action.disclosureControl === true &&
-      (action.blockedControlFactIds || []).length > 0,
+      action.disclosureExpanded !== true,
   );
   if (pending.length === 0) return [];
   const selectedFactId =
@@ -502,7 +502,7 @@ export function pendingDisclosureIssues(proposal, observation) {
       type: "pending_disclosure",
       targetKey: proposal.state.progression.key,
       problem:
-        "Progression was proposed while an observed disclosure control still contains hidden applicant controls.",
+        "Progression was proposed while an observed disclosure control remains collapsed and unexplored.",
       pendingDisclosures: pending.map((action) => ({
         factId: action.factId,
         rawText: action.rawText,
@@ -510,7 +510,7 @@ export function pendingDisclosureIssues(proposal, observation) {
         selectorCandidates: action.selectorCandidates,
       })),
       instruction:
-        "Replace the current progression with one LLM-authored advance targeting a pending disclosure's unique structural selector. The next state will be re-sensed before any other progression or terminal decision.",
+        "Replace the current progression with one LLM-authored advance targeting a pending collapsed disclosure's unique structural selector. Every visible collapsed disclosure must be opened once even when no applicant control is known to be inside it, because it may reveal guidance or submission criteria. The next state will be re-sensed before any other progression or terminal decision.",
     },
   ];
 }
@@ -525,7 +525,7 @@ export function exhaustedDisclosureProgressionIssues(proposal, observation) {
   if (
     !selected ||
     selected.disclosureControl !== true ||
-    (selected.blockedControlFactIds || []).length > 0
+    selected.disclosureExpanded !== true
   ) {
     return [];
   }
@@ -534,14 +534,14 @@ export function exhaustedDisclosureProgressionIssues(proposal, observation) {
       type: "exhausted_disclosure_progression",
       targetKey: proposal.state.progression.key,
       problem:
-        "The proposed advance targets a disclosure-like control that contains no hidden applicant controls, so it cannot establish a new form state.",
+        "The proposed advance targets a disclosure control that is already expanded, so repeating it cannot establish a new form state.",
       selectedAction: {
         factId: selected.factId,
         rawText: selected.rawText,
         selectorCandidates: selected.selectorCandidates,
       },
       instruction:
-        "Choose another observed progression fact and return a complete replacement proposal. Do not target an exhausted or non-substantive disclosure. If all applicant controls are visible and the actual terminal control is the next action, declare it as terminal_submit rather than advance.",
+        "Choose another observed progression fact and return a complete replacement proposal. Do not target an already-expanded disclosure. If every disclosure has been explored and the actual terminal control is next, declare it as terminal_submit rather than advance.",
     },
   ];
 }

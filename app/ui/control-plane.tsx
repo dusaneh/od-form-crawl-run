@@ -51,7 +51,7 @@ const defaultTraversalSettings: TraversalSettings = {
   maxFormStates: 24,
   maxBranchOptionsPerControl: 3,
   agentInstructions:
-    "Use the selected form-specific generated script to traverse as much of the public form as possible with format-plausible synthetic test data. Exercise declared choice branches from a re-baselined state and use only script-declared intermediate advances. Phase 1 never activates the terminal submit control. Never solve CAPTCHA, provide real credentials, or make a payment. Model upload, consent, authorization, terms, review-confirmation, and signature fields with conspicuously synthetic values when needed to expose or verify the form.",
+    "Use the selected form-specific generated script to traverse as much of the public form as possible with format-plausible synthetic test data. Open every visible collapsed details, accordion, expando, or disclosure exactly once and re-examine the resulting state. Treat cookie banners as session infrastructure and prefer rejecting non-essential cookies. Exercise declared choice branches from a re-baselined state and use only script-declared intermediate advances. Phase 1 never activates the terminal submit control. Never solve CAPTCHA, provide real credentials, or make a payment. Model upload, consent, authorization, terms, review-confirmation, and signature fields with conspicuously synthetic values when needed to expose or verify the form.",
 };
 
 type RuntimeStatus = {
@@ -2251,11 +2251,13 @@ function SettingsToggle({
   checked,
   label,
   detail,
+  locked = false,
   onChange,
 }: {
   checked: boolean;
   label: string;
   detail: string;
+  locked?: boolean;
   onChange: (checked: boolean) => void;
 }) {
   return (
@@ -2267,6 +2269,7 @@ function SettingsToggle({
       <input
         type="checkbox"
         checked={checked}
+        disabled={locked}
         onChange={(event) => onChange(event.target.checked)}
       />
       <i aria-hidden="true" />
@@ -2507,8 +2510,9 @@ function TraversalSettingsPanel({
           </div>
           <SettingsToggle
             checked={draft.expandSafeDisclosures}
-            label="Expand safe disclosures"
-            detail="Open collapsed help and detail regions that do not submit, consent, authenticate, or mutate form data."
+            label="Explore every safe disclosure"
+            detail="Required: the LLM-authored script opens each visible collapsed details, accordion, or expando once, then re-examines fields, guidance, eligibility language, and submission criteria."
+            locked
             onChange={(value) => setBoolean("expandSafeDisclosures", value)}
           />
           <SettingsToggle
@@ -2520,7 +2524,8 @@ function TraversalSettingsPanel({
           <SettingsToggle
             checked={draft.pointerAndScrollPriming}
             label="Prime hover and lazy-load state"
-            detail="Use a fixed pointer sweep and reversible scroll before examination to trigger legitimate hover and viewport loading."
+            detail="Required: use a fixed pointer sweep and bounded reversible scrolling across the page, child frames, and nested scroll containers before examination."
+            locked
             onChange={(value) => setBoolean("pointerAndScrollPriming", value)}
           />
         </article>
