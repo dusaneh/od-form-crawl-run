@@ -13,6 +13,24 @@ const stamp = new Date().toISOString().replaceAll(":", "-").replace(/\.\d{3}Z$/,
 const outputRoot = path.join(projectRoot, "data", "harness", stamp);
 const runId = `run_harness_${Date.now().toString(36)}`;
 const fixture = await startFixtureServer();
+const fixturePaths = [
+  "/fixtures/start",
+  "/fixtures/semantic-application",
+  "/fixtures/messy-intake?campaign=summer",
+  "/fixtures/spa-enrollment",
+  "/fixtures/iframe-request",
+  "/fixtures/shadow-form",
+  "/fixtures/conditional-wizard",
+  "/fixtures/automation-gates",
+  "/fixtures/captcha-gate",
+  "/fixtures/styled-label-interception",
+  "/fixtures/probe-defeating-widget",
+  "/fixtures/interaction-gated-delay",
+  "/fixtures/decoy-before-real",
+];
+const fixtureTargets = fixturePaths.map(
+  (fixturePath) => `${fixture.origin}${fixturePath}`,
+);
 
 try {
   console.log(`Fixture site: ${fixture.origin}/fixtures/start`);
@@ -20,7 +38,7 @@ try {
   console.log(`Harness output: ${outputRoot}`);
   const events = [];
   const output = await crawlTargetsWithPlaywright(
-    [`${fixture.origin}/fixtures/start`],
+    fixtureTargets,
     runId,
     {
       browserMode,
@@ -99,7 +117,7 @@ try {
   const report = {
     id: runId,
     generatedAt: new Date().toISOString(),
-    targets: [`${fixture.origin}/fixtures/start`],
+    targets: fixtureTargets,
     browserMode,
     executionMode: "probe",
     renderEngine: "playwright-chromium",

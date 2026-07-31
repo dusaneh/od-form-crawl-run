@@ -39,7 +39,6 @@ try {
         browserMode: "headless",
         executionMode: "probe",
         allowLoopback: true,
-        discoverLinks: false,
         reconScriptResolver: (url, options) =>
           script.matches(url, options) ? script : null,
         traversalSettings: {

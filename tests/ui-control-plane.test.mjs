@@ -490,7 +490,7 @@ test(
                       outcome: "timed_out",
                       durationMs: 360000,
                       model: "gpt-5.4-mini",
-                      promptVersion: "gate2-semantic-state-v3",
+                      promptVersion: "gate2-semantic-state-v4",
                       scopeId: run.id,
                     },
                   ],
@@ -770,7 +770,7 @@ test(
       await headful.click();
       assert.equal(await headful.getAttribute("aria-pressed"), "true");
       await page
-        .getByLabel("Form URLs")
+        .getByLabel("Starting URL")
         .fill("https://forms.example.test/another-application");
       await page.getByRole("button", { name: /Launch probe/ }).click();
       await page.getByText(/Visible Phase 1 probe launched/).waitFor();
@@ -779,7 +779,6 @@ test(
         mode: "probe",
         browserMode: "headful",
         allowLocalTargets: false,
-        discoverRelatedPages: true,
         fixtureAuthorities: {
           acknowledgement: true,
           consent: true,

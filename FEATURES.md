@@ -102,16 +102,34 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   inspection.
 - `F1.2.4` Local crawls use Playwright Chromium to execute client-side
   JavaScript before form structure and evidence are captured.
-- `F1.3` The crawler discovers relevant same-origin form, intake, application,
-  registration, and step links within a bounded crawl.
-- `F1.3.1` Discovery depth and page-count limits are explicit.
-- `F1.3.1.1` New Crawl exposes whether related same-origin pages will be
-  discovered and discloses the active depth, per-page link cap, same-origin
-  restriction, and URL/text terms used by the discovery classifier.
-- `F1.3.1.2` Related-page discovery performs bounded GET observation only. It
-  may return multiple independently executable forms and does not select a
-  single "best" form or authorize clicks on the discovered pages.
-- `F1.3.2` A discovered page is represented in the run graph and final report.
+- `F1.3` Each crawl accepts exactly one starting URL and selects exactly one
+  public form journey that most directly helps a person obtain an essential
+  service or coordinate a referral through OneDegree.
+- `F1.3.1` Heuristic related-page discovery is disabled. The crawler does not
+  GET-open keyword-matched same-site pages, collect alternate forms, or expose
+  a related-page discovery configuration in the UI or supported API contract.
+- `F1.3.1.1` A request containing more than one starting URL fails with
+  `single_target_required`.
+- `F1.3.1.2` A request that attempts to enable the retired
+  `discoverRelatedPages` behavior fails with
+  `related_page_discovery_disabled`; `false` may be tolerated only for client
+  compatibility and has no effect.
+- `F1.3.2` Links and other controls rendered on the current page are sensing
+  facts only. The LLM may select one exact observed action at a time to reach
+  the chosen form; deterministic code never chooses a link or alternate form.
+- `F1.3.2.1` Selection priority is intake, application, enrollment,
+  service-request, referral, eligibility, or public registration that directly
+  grants access to housing, food, healthcare, financial assistance,
+  employment, education, legal aid, childcare, transportation, or another
+  essential support service.
+- `F1.3.2.2` When no direct service-access form is available, the crawler may
+  select one contact or request-information form that can accelerate access to
+  the resource.
+- `F1.3.2.3` Provider, partner, administrator, donation, volunteer,
+  newsletter, survey, marketing, general-feedback, and unrelated information
+  journeys are out of scope.
+- `F1.3.2.4` Once the LLM selects a candidate form journey, alternate forms
+  and unrelated same-site actions remain outside the crawl and report.
 - `F1.3.3` Same-origin iframe documents and open shadow roots are included in
   rendered-DOM extraction with their origin recorded.
 - `F1.3.4` The crawler performs bounded conditional and multi-step form
@@ -528,8 +546,9 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
 - `F2.3.3` Report totals are computed from the union of all retained journey
   states, not only the browser page present when traversal returns.
 - `F2.3.4` A report records whether the target began at canonical entry or
-  mid-flow, the selected execution boundary, related-page discovery setting,
-  coverage denominator, and exact halt reason.
+  mid-flow, the selected execution boundary, the single selected form journey,
+  coverage denominator, and exact halt reason. Related-page discovery is
+  always disabled and is not presented as an operator-selected policy.
 - `F2.3.5` A later-state `could_not_test` report lists both completed prior
   coverage and remaining untested states; it never visually resembles a
   one-page complete crawl.

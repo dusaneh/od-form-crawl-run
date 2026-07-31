@@ -1,7 +1,9 @@
 export const TRAVERSAL_SETTINGS_VERSION = 4;
 
 export const DEFAULT_AGENT_INSTRUCTIONS = [
-  "Traverse as much of the public form as possible with synthetic test data.",
+  "Select and traverse exactly one public form journey that most directly helps a person obtain an essential service or coordinate a referral through OneDegree.",
+  "Prioritize intake, application, enrollment, service-request, referral, eligibility, or direct-access registration forms; use a contact or request-information form only when no direct service-access form is available.",
+  "Do not explore alternate forms, unrelated information pages, provider or administrator portals, donation, volunteer, newsletter, survey, marketing, or general-feedback forms.",
   "Classify controls as deterministic, conditional, or human-review actions.",
   "Open every visible collapsed details, accordion, expando, or disclosure exactly once and re-examine the resulting state before unrelated progression.",
   "Treat cookie banners as session infrastructure: prefer rejecting non-essential cookies and otherwise use the minimum acceptance needed to expose the public form.",

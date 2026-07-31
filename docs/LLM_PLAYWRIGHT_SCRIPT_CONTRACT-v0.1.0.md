@@ -5,9 +5,9 @@
 | FormWeave software version | `0.1.0` |
 | Document contract version | `1.0` |
 | Source revision reviewed | `0821dbf83cad45c898613e18efbee8d2c5553966` |
-| Semantic prompt version | `gate2-semantic-state-v3` |
+| Semantic prompt version | `gate2-semantic-state-v4` |
 | D1 compiler version | `gate3-d1-compiler-v1` |
-| Generated-script interface | `12` |
+| Generated-script interface | `13` |
 | Result-envelope schema | `1` |
 | Last verified | 2026-07-30 |
 
@@ -185,6 +185,13 @@ The generator must not receive:
 
 The current prompt requires the model to:
 
+- select exactly one journey serving OneDegree's essential-resource access
+  mission, prioritizing intake, application, enrollment, service request,
+  referral, eligibility, or direct-access registration and using a contact or
+  request-information form only as fallback;
+- exclude alternate forms and unrelated information, provider,
+  administrator, donation, volunteer, newsletter, survey, marketing, or
+  general-feedback journeys;
 - use only supplied DOM facts, accessibility data, screenshot, prior states,
   existing contract, and runtime feedback;
 - return additions only and preserve globally unique stable keys;

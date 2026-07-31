@@ -825,7 +825,6 @@ export function ApiConsole() {
   );
   const [crawlMode, setCrawlMode] = useState<CrawlMode>("probe");
   const [allowLocalTargets, setAllowLocalTargets] = useState(false);
-  const [discoverRelatedPages, setDiscoverRelatedPages] = useState(false);
   const [fixtureAuthorities, setFixtureAuthorities] = useState<FixtureAuthorities>({
     acknowledgement: true,
     consent: true,
@@ -1081,7 +1080,6 @@ export function ApiConsole() {
         submit: crawlMode === "submit",
         browserMode: hostedApi ? "headless" : browserMode,
         allowLocalTargets: hostedApi ? false : allowLocalTargets,
-        discoverRelatedPages,
         componentAuthorities: fixtureAuthorities,
       });
       const run =
@@ -1312,24 +1310,17 @@ export function ApiConsole() {
                 />
               </label>
             </div>
+            <div className="api-console-callout">
+              <strong>Single resource-access form per crawl.</strong>
+              <span>
+                The LLM may select one observed action to reach an intake,
+                application, enrollment, service-request, referral,
+                eligibility, direct-access registration, or fallback contact
+                form. It does not crawl alternate forms or unrelated same-site
+                pages.
+              </span>
+            </div>
             <div className="api-console-switches">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={discoverRelatedPages}
-                  onChange={(event) =>
-                    setDiscoverRelatedPages(event.target.checked)
-                  }
-                />
-                <span>
-                  <strong>Discover related same-site pages</strong>
-                  <small>
-                    GET-open up to 12 likely form-related same-origin links,
-                    one level deep. This may return multiple forms; it does not
-                    choose one “best” form or actuate those links.
-                  </small>
-                </span>
-              </label>
               <label>
                 <input
                   type="checkbox"
@@ -1397,7 +1388,7 @@ export function ApiConsole() {
                 <b>Terminal submit</b>{" "}
                 {crawlMode === "submit" ? "requested" : "blocked"}
               </span>
-              <span><b>Discovery</b> {discoverRelatedPages ? "on" : "off"}</span>
+              <span><b>Scope</b> one LLM-selected form journey</span>
               <span><b>Local target</b> {allowLocalTargets ? "allowed" : "blocked"}</span>
             </div>
           </article>

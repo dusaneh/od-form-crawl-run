@@ -27,10 +27,6 @@ import { generateAndReplayForm } from "./production-generated-traversal.mjs";
 
 const MAX_HTML_BYTES = 5_000_000;
 const MAX_PAGES = 16;
-const MAX_DISCOVERY_DEPTH = 1;
-const MAX_DISCOVERED_LINKS_PER_PAGE = 12;
-const FORMISH_PATH =
-  /(apply|application|form|intake|register|signup|enroll|eligib|benefit|service|request|step|page|start|fixture)/i;
 const SENSITIVE_FIELD =
   /(birth|dob|ssn|social.?security|income|salary|earnings|password|passcode|medical|health|disabil|immigration|citizenship|gender|race|ethnic|bank|routing|card|cvv|cvc)/i;
 
@@ -780,18 +776,6 @@ async function extractRenderedPage(page, requestedUrl, response, browserMode) {
   };
 }
 
-function shouldDiscoverLink(link, source) {
-  try {
-    const candidate = new URL(link.url);
-    const sourceUrl = new URL(source.finalUrl);
-    if (candidate.origin !== sourceUrl.origin) return false;
-    if (candidate.pathname === sourceUrl.pathname) return false;
-    return FORMISH_PATH.test(`${candidate.pathname} ${link.text}`);
-  } catch {
-    return false;
-  }
-}
-
 function failedPage(requestedUrl, error, durationMs) {
   return {
     requestedUrl,
@@ -1248,7 +1232,6 @@ export async function crawlTargetsWithPlaywright(
     executionMode = "probe",
     fixtureAuthorities = {},
     allowLoopback = false,
-    discoverLinks = true,
     traversalSettings = {},
     onProgress,
     onBrowserEvent,
@@ -1269,7 +1252,6 @@ export async function crawlTargetsWithPlaywright(
   const normalizedSettings = normalizeTraversalSettings(traversalSettings);
   const queue = urls.map((url) => ({
     url: validatePlaywrightTarget(url, { allowLoopback }),
-    depth: 0,
   }));
   const seen = new Set();
   const journeySeen = new Set();
@@ -1322,23 +1304,6 @@ export async function crawlTargetsWithPlaywright(
       pages.push(page);
       for (const journeyUrl of page.journeyUrls || []) {
         journeySeen.add(journeyUrlKey(journeyUrl));
-      }
-      if (
-        discoverLinks &&
-        !page.error &&
-        candidate.depth < MAX_DISCOVERY_DEPTH
-      ) {
-        page.links
-          .filter((link) => shouldDiscoverLink(link, page))
-          .slice(0, MAX_DISCOVERED_LINKS_PER_PAGE)
-          .forEach((link) => {
-            if (
-              !seen.has(link.url) &&
-              !journeySeen.has(journeyUrlKey(link.url))
-            ) {
-              queue.push({ url: link.url, depth: candidate.depth + 1 });
-            }
-          });
       }
       await onProgress?.({ pages: pages.length, queued: queue.length });
     }

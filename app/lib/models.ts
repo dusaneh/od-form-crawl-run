@@ -666,7 +666,6 @@ export type CrawlReport = {
   browserMode?: BrowserMode;
   executionMode?: ExecutionMode;
   fixtureAuthorities?: FixtureAuthorities;
-  discoverRelatedPages?: boolean;
   renderEngine?: string;
   traversalSettings?: TraversalSettings;
   evidencePolicy?: {
@@ -722,7 +721,6 @@ export type FormRun = {
   mode: ExecutionMode | "crawl";
   browserMode?: BrowserMode;
   allowLocalTargets?: boolean;
-  discoverRelatedPages?: boolean;
   fixtureAuthorities?: FixtureAuthorities;
   traversalSettings?: TraversalSettings;
   nodes: FlowNode[];

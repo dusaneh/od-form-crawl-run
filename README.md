@@ -96,8 +96,9 @@ stored mechanics. Retained replay intentionally has no semantic model call.
   locator uniqueness and readback, re-baselines branch probes, captures state
   evidence, and enforces the terminal boundary.
 - `local/playwright-crawler.mjs` owns fresh browser contexts, target/network
-  policy, predictable gates, page discovery, rendered extraction, and event
-  collection.
+  policy, rendered extraction, and event collection. It does not perform
+  keyword-based related-page discovery; one LLM-authored journey may navigate
+  from the supplied page to one selected resource-access form.
 - `local/server.mjs` owns the localhost API, quality gate, persistence,
   lineages, optional OpenAI enrichment, approval, execution, and artifact
   routes.

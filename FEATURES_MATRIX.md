@@ -14,6 +14,7 @@ evidence and qualifications.
 | --- | --- | --- | --- |
 | Phase 1 scope | `F0` | **Partial** | Local LLM generation, immutable retained scripts, deterministic replay, loopback submission, and evidence work. Canonical D1/D3, D5, locale, drift, and certification remain. |
 | Crawl execution | `F1` | **Partial** | Production Playwright uses per-state LLM proposals and LLM-authored script replay; current verification found 244/244 expected fields across 37 fixtures with zero failed runs. Canonical D1/D3 routing and public D5 remain. |
+| Single-form entry selection | `F1.3–F1.3.2.4` | **Built; broad public proof pending** | The API accepts one starting URL, related-page keyword discovery is disabled, and only the LLM may choose exact observed actions toward one essential-service intake/application/access form, with contact as fallback. Alternate and unrelated forms remain out of scope. |
 | Canonical journey | `F1.1.3 / F1.3.5` | **Partial** | Multi-page journeys accumulate states, fields, actions, and evidence through terminal result. Explicit mid-flow warnings and missing-predecessor coverage remain. |
 | Synthetic values and readback | `F1.3.4.1 / F1.3.4.4` | **Built** | Format-plausible synthetic values are entered through exact generated mechanics and verified by browser readback. |
 | Question/section model | `F1.4` | **Partial** | First-class guidance, section trees, group legends, option labels, raw controls, and critical flags are retained. Some canonical mappings and policy semantics remain. |

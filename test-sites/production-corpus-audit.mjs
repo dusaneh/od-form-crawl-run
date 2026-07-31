@@ -99,7 +99,6 @@ async function launch(siteId) {
       mode: "fixture_submit",
       browserMode: "headless",
       allowLocalTargets: true,
-      discoverRelatedPages: false,
       fixtureAuthorities: {
         acknowledgement: true,
         consent: true,

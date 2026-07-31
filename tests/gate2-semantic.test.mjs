@@ -1492,6 +1492,14 @@ test("semantic model input contains live sensing context and records provenance"
   assert.match(inputText, /Cookie and consent-management banners are session traversal infrastructure/i);
   assert.match(inputText, /fixed pointer sweep and bounded scrolling/i);
   assert.match(inputText, /never describe this priming as CAPTCHA/i);
+  assert.match(inputText, /serves OneDegree's resource-access mission/i);
+  assert.match(
+    inputText,
+    /intake\/application\/enrollment\/service-request\/referral\/eligibility/i,
+  );
+  assert.match(inputText, /contact or request-information form/i);
+  assert.match(inputText, /do not explore alternate forms/i);
+  assert.match(inputText, /not permission for heuristic page discovery/i);
   assert.doesNotMatch(inputText, /ground_truth|answer_key/i);
   assert.equal(
     userContent.find((item) => item.type === "input_image").detail,

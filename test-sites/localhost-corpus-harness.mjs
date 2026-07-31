@@ -90,7 +90,6 @@ for (const groundTruth of cases) {
       browserMode,
       executionMode: "fixture_submit",
       allowLoopback: true,
-      discoverLinks: false,
       reconScriptResolver: (url, options) =>
         script.matches(url, options) ? script : null,
       traversalSettings: {

@@ -1214,7 +1214,6 @@ function initialRun(
   mode,
   browserMode,
   allowLocalTargets,
-  discoverRelatedPages,
   fixtureAuthorities,
   traversalSettings,
   initiatedBy,
@@ -1250,7 +1249,7 @@ function initialRun(
     submit: mode === "fixture_submit",
     browserMode,
     allowLocalTargets,
-    discoverRelatedPages,
+    discoverRelatedPages: false,
     componentAuthorities: fixtureAuthorities,
     fixtureAuthorities,
     traversalSettings,
@@ -1487,7 +1486,6 @@ async function executeCrawl(run) {
       executionMode: run.mode || "probe",
       fixtureAuthorities: run.fixtureAuthorities || {},
       allowLoopback: Boolean(run.allowLocalTargets),
-      discoverLinks: run.discoverRelatedPages !== false,
       enableGeneratedTraversal: Boolean(
         (process.env.OPENAI_KEY || process.env.OPENAI_API_KEY) &&
           process.env.FORMWEAVE_DISABLE_OPENAI !== "1"
@@ -1873,7 +1871,7 @@ async function executeCrawl(run) {
       renderEngine: "playwright-chromium",
       executionMode: run.mode,
       fixtureAuthorities: run.fixtureAuthorities || {},
-      discoverRelatedPages: run.discoverRelatedPages !== false,
+      discoverRelatedPages: false,
       traversalSettings: run.traversalSettings,
       evidencePolicy: {
         version: 2,
@@ -2028,12 +2026,41 @@ async function executeCrawl(run) {
 
 async function createRun(request) {
   const payload = await bodyJson(request);
-  const rawUrls = (payload.urls || [])
+  const suppliedUrls = Array.isArray(payload.urls) ? payload.urls : [];
+  const rawUrls = suppliedUrls
     .map((url) => String(url).trim())
-    .filter(Boolean)
-    .slice(0, 12);
+    .filter(Boolean);
   if (!rawUrls.length) {
-    return jsonResponse(request, { error: "At least one public URL is required." }, 400);
+    return jsonResponse(
+      request,
+      {
+        error: "Exactly one public starting URL is required.",
+        code: "single_target_required",
+      },
+      400,
+    );
+  }
+  if (rawUrls.length !== 1) {
+    return jsonResponse(
+      request,
+      {
+        error:
+          "A crawl accepts exactly one starting URL and produces one selected form journey.",
+        code: "single_target_required",
+      },
+      400,
+    );
+  }
+  if (payload.discoverRelatedPages === true) {
+    return jsonResponse(
+      request,
+      {
+        error:
+          "Related-page discovery is disabled. The LLM may select one observed action from the starting page to reach one resource-access form.",
+        code: "related_page_discovery_disabled",
+      },
+      400,
+    );
   }
   let urls;
   const allowLocalTargets =
@@ -2075,7 +2102,6 @@ async function createRun(request) {
       400,
     );
   }
-  const discoverRelatedPages = payload.discoverRelatedPages !== false;
   if (
     payload.mode &&
     !["probe", "dry_run", "fixture_submit"].includes(payload.mode)
@@ -2156,7 +2182,6 @@ async function createRun(request) {
     executionMode,
     browserMode,
     allowLocalTargets,
-    discoverRelatedPages,
     fixtureAuthorities,
     traversalSettings,
     initiatedBy,
@@ -2177,7 +2202,7 @@ async function createRun(request) {
     executionMode,
     liveApproved: false,
     allowLocalTargets,
-    discoverRelatedPages,
+    discoverRelatedPages: false,
     fixtureAuthorities,
     traversalSettingsVersion: traversalSettings.version,
     },

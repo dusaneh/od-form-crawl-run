@@ -34,7 +34,6 @@ test(
           browserMode: "headless",
           executionMode: "probe",
           allowLoopback: true,
-          discoverLinks: false,
           traversalSettings: {
             stableWindowMs: 200,
             maxStateWaitMs: 2_000,
@@ -65,6 +64,25 @@ test(
           ].includes(event.kind)
         )
       );
+
+      const singlePageScope = await crawlTargetsWithPlaywright(
+        [`${fixture.origin}/fixtures/start`],
+        "run_single_page_scope",
+        {
+          browserMode: "headless",
+          executionMode: "probe",
+          allowLoopback: true,
+          traversalSettings: {
+            stableWindowMs: 200,
+            maxStateWaitMs: 2_000,
+          },
+        },
+      );
+      assert.equal(singlePageScope.pages.length, 1);
+      assert.equal(
+        new URL(singlePageScope.pages[0].finalUrl).pathname,
+        "/fixtures/start",
+      );
     } finally {
       await fixture.close();
     }
@@ -80,8 +98,23 @@ test(
     const fixture = await startFixtureServer();
     try {
       const events = [];
+      const fixturePaths = [
+        "/fixtures/start",
+        "/fixtures/semantic-application",
+        "/fixtures/messy-intake?campaign=summer",
+        "/fixtures/spa-enrollment",
+        "/fixtures/iframe-request",
+        "/fixtures/shadow-form",
+        "/fixtures/conditional-wizard",
+        "/fixtures/automation-gates",
+        "/fixtures/captcha-gate",
+        "/fixtures/styled-label-interception",
+        "/fixtures/probe-defeating-widget",
+        "/fixtures/interaction-gated-delay",
+        "/fixtures/decoy-before-real",
+      ];
       const output = await crawlTargetsWithPlaywright(
-        [`${fixture.origin}/fixtures/start`],
+        fixturePaths.map((fixturePath) => `${fixture.origin}${fixturePath}`),
         "run_fixture_test",
         {
           browserMode: "headless",
@@ -254,7 +287,6 @@ test(
           executionMode: "probe",
           allowLoopback: true,
           reconScriptResolver: reconScriptFor,
-          discoverLinks: false,
           traversalSettings: {
             stableWindowMs: 300,
             maxStateWaitMs: 3_000,
@@ -365,7 +397,6 @@ test(
               browserMode: "headless",
               executionMode: "live",
               allowLoopback: true,
-              discoverLinks: false,
             }
           ),
         /must be probe or explicit synthetic submission/
@@ -386,7 +417,6 @@ test(
           executionMode: "fixture_submit",
           allowLoopback: true,
           reconScriptResolver: reconScriptFor,
-          discoverLinks: false,
           traversalSettings: {
             stableWindowMs: 300,
             maxStateWaitMs: 3_000,

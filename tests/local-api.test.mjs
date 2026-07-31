@@ -143,6 +143,11 @@ test(
       assert.equal(settingsPayload.settings.advanceFormSteps, true);
       assert.equal(settingsPayload.settings.maxFormStates, 24);
       assert.match(settingsPayload.settings.agentInstructions, /synthetic/i);
+      assert.match(settingsPayload.settings.agentInstructions, /OneDegree/i);
+      assert.match(
+        settingsPayload.settings.agentInstructions,
+        /exactly one public form journey/i,
+      );
       assert.equal(
         settingsPayload.settingsPath,
         path.join(dataRoot, "settings.json")
@@ -226,6 +231,38 @@ test(
       });
       assert.equal(unapprovedLiveResponse.status, 400);
 
+      const multipleTargetsResponse = await fetch(`${baseUrl}/api/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          urls: [
+            "https://example.com/application",
+            "https://example.org/intake",
+          ],
+          mode: "probe",
+        }),
+      });
+      assert.equal(multipleTargetsResponse.status, 400);
+      assert.equal(
+        (await multipleTargetsResponse.json()).code,
+        "single_target_required",
+      );
+
+      const retiredDiscoveryResponse = await fetch(`${baseUrl}/api/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          urls: ["https://example.com/application"],
+          mode: "probe",
+          discoverRelatedPages: true,
+        }),
+      });
+      assert.equal(retiredDiscoveryResponse.status, 400);
+      assert.equal(
+        (await retiredDiscoveryResponse.json()).code,
+        "related_page_discovery_disabled",
+      );
+
       const blockedLocalResponse = await fetch(`${baseUrl}/api/runs`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -245,7 +282,7 @@ test(
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          urls: [`${fixture.origin}/fixtures/start`],
+          urls: [`${fixture.origin}/fixtures/semantic-application`],
           mode: "probe",
           browserMode: "headless",
           allowLocalTargets: true,
@@ -290,9 +327,9 @@ test(
           )
       );
       const finished = list.runs.find((run) => run.id === runId);
-      assert.equal(finished.status, "disqualified", output.join(""));
+      assert.equal(finished.status, "awaiting_review", output.join(""));
       assert.equal(finished.reportAvailable, true);
-      assert.ok(finished.stats.pagesFetched >= 9);
+      assert.equal(finished.stats.pagesFetched, 1);
       assert.ok(
         finished.stats.screenshotsCaptured >= finished.stats.pagesFetched
       );
@@ -302,9 +339,9 @@ test(
       assert.equal(finished.stats.fieldsEntered, 0);
       assert.equal(finished.stats.branchStates, 0);
       assert.equal(finished.stats.submissionsAttempted, 0);
-      assert.ok(finished.stats.allowedReadLikeRequests >= 1);
-      assert.ok(finished.stats.blockedWriteRequests >= 1);
-      assert.equal(finished.stats.captchaPages, 1);
+      assert.equal(finished.stats.allowedReadLikeRequests, 0);
+      assert.equal(finished.stats.blockedWriteRequests, 0);
+      assert.equal(finished.stats.captchaPages, 0);
 
       const runDirectory = path.join(dataRoot, "runs", runId);
       const report = JSON.parse(
@@ -321,26 +358,16 @@ test(
       assert.ok(report.pages.every((page) => page.screenshotArtifact));
       assert.ok(report.pages.every((page) => page.htmlArtifact));
       assert.ok(
-        report.contract.some((field) => field.label === "Participant email")
+        report.contract.some((field) => field.label === "Legal name")
       );
       assert.ok(
-        report.contract.some((field) => field.label === "Member number")
-      );
-      assert.ok(report.contract.some((field) => field.label === "Case ID"));
-      assert.ok(
-        !report.contract.some(
-          (field) => field.label === "Application reference"
-        )
+        report.contract.some((field) => field.label === "Email address")
       );
       assert.equal(report.traversalSettings.stableWindowMs, 300);
-      assert.ok(report.pages.some((page) => page.captchaDetected));
-      const wizardPage = report.pages.find(
-        (page) =>
-          new URL(page.finalUrl).pathname === "/fixtures/conditional-wizard"
-      );
-      assert.notEqual(wizardPage.finalSubmission, "submitted");
-      assert.equal(wizardPage.stateEvidence.length, 0);
-      assert.equal(wizardPage.certificationStatus, "script_missing");
+      assert.ok(report.pages.every((page) => !page.captchaDetected));
+      assert.equal(report.pages[0].finalSubmission, "not_requested");
+      assert.equal(report.pages[0].stateEvidence.length, 0);
+      assert.equal(report.pages[0].certificationStatus, "script_missing");
 
       const generatedEvidenceBytes = Buffer.from([
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -384,31 +411,17 @@ test(
       );
       assert.match(events, /"kind":"browser_launched"/);
       assert.match(events, /"kind":"evidence_captured"/);
-      assert.match(events, /"kind":"read_like_post_allowed"/);
-      assert.match(events, /"kind":"captcha_handoff_required"/);
       assert.match(events, /"kind":"recon_script_missing"/);
       assert.doesNotMatch(events, /"kind":"automation_action_completed"/);
       assert.doesNotMatch(events, /"kind":"field_entry_completed"/);
       assert.doesNotMatch(events, /"kind":"state_evidence_captured"/);
       assert.doesNotMatch(events, /"kind":"final_submission_blocked"/);
-      assert.match(events, /"kind":"crawl_disqualified"/);
+      assert.match(events, /"kind":"crawl_needs_review"/);
 
       const nonReadRequests = fixture.requests.filter(
         (request) => !["GET", "HEAD", "OPTIONS"].includes(request.method)
       );
-      assert.ok(
-        nonReadRequests.some(
-          (request) =>
-            request.method === "POST" && request.path === "/fixtures/aura"
-        )
-      );
-      assert.ok(
-        nonReadRequests.every(
-          (request) =>
-            request.path === "/fixtures/aura"
-        ),
-        JSON.stringify(nonReadRequests, null, 2)
-      );
+      assert.deepEqual(nonReadRequests, []);
 
       const publicSubmitWithoutModel = await fetch(`${baseUrl}/api/runs`, {
         method: "POST",

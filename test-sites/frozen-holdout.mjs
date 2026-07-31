@@ -52,7 +52,6 @@ try {
       browserMode: "headless",
       executionMode: "probe",
       allowLoopback: true,
-      discoverLinks: false,
       reconScriptResolver: (url, options) =>
         holdoutFcrbHousingScript.matches(url, options)
           ? holdoutFcrbHousingScript

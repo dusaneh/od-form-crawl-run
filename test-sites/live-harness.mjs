@@ -40,7 +40,6 @@ for (const [targetName, targetUrl] of selectedTargets) {
   const output = await crawlTargetsWithPlaywright([targetUrl], runId, {
     browserMode,
     executionMode: "probe",
-    discoverLinks: false,
     traversalSettings: {
       stableWindowMs: 900,
       maxStateWaitMs: 15_000,
@@ -178,4 +177,3 @@ for (const [targetName, targetUrl] of selectedTargets) {
 }
 
 if (failed) process.exitCode = 1;
-

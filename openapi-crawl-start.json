@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FormWeave — Kick Off Crawl",
-    "version": "1.1.0",
-    "description": "Starts one asynchronous crawl and returns the run ID needed by the crawl-status API. The caller explicitly chooses whether the synthetic crawl stops at the terminal boundary or submits the form."
+    "version": "1.2.0",
+    "description": "Starts one asynchronous, single-form crawl and returns the run ID needed by the crawl-status API. The LLM may navigate from the supplied page to one resource-access form; heuristic related-page discovery and alternate-form crawling are disabled. The caller explicitly chooses whether the synthetic crawl stops at the terminal boundary or submits the form."
   },
   "servers": [
     {
@@ -36,7 +36,6 @@
                 "submit": false,
                 "browserMode": "headless",
                 "allowLocalTargets": false,
-                "discoverRelatedPages": false,
                 "componentAuthorities": {
                   "consent": false,
                   "signature": false,
@@ -83,12 +82,12 @@
           "urls": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 12,
+            "maxItems": 1,
             "items": {
               "type": "string",
               "format": "uri"
             },
-            "description": "Starting HTTP or HTTPS URLs."
+            "description": "Exactly one starting HTTP or HTTPS URL. From that rendered page, the LLM may select one observed action to reach one OneDegree-relevant resource-access form. Alternate forms and unrelated pages are outside the crawl."
           },
           "name": {
             "type": "string",
@@ -122,11 +121,6 @@
             "type": "boolean",
             "default": false,
             "description": "Allows loopback targets only when FormWeave is itself running locally. Hosted deployments reject this flag because localhost would refer to the remote worker. Other private-network targets remain blocked."
-          },
-          "discoverRelatedPages": {
-            "type": "boolean",
-            "default": false,
-            "description": "GET-observes up to 12 likely form-related same-origin links one level deep, subject to the total page cap. It may return multiple forms; it does not choose one best form or authorize link clicks."
           },
           "componentAuthorities": {
             "type": "object",

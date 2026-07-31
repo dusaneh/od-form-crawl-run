@@ -173,9 +173,6 @@ type Attrs = Record<string, string>;
 
 const MAX_HTML_BYTES = 1_500_000;
 const MAX_PAGES = 12;
-const MAX_DISCOVERY_DEPTH = 1;
-const FORMISH_PATH =
-  /(apply|application|form|intake|register|signup|enroll|eligib|benefit|service|request|step|page|start)/i;
 const SENSITIVE_FIELD =
   /(name|email|phone|mobile|address|birth|dob|ssn|social.?security|income|salary|password|medical|health|veteran|gender|race|ethnic)/i;
 
@@ -612,18 +609,6 @@ export async function crawlPage(url: string): Promise<CrawlPage> {
       hasScripts: false,
       error: error instanceof Error ? error.message : "The target could not be fetched.",
     };
-  }
-}
-
-function shouldDiscoverLink(link: ParsedLink, source: CrawlPage) {
-  try {
-    const candidate = new URL(link.url);
-    const origin = new URL(source.finalUrl).origin;
-    if (candidate.origin !== origin) return false;
-    if (candidate.pathname === new URL(source.finalUrl).pathname) return false;
-    return FORMISH_PATH.test(`${candidate.pathname} ${link.text}`);
-  } catch {
-    return false;
   }
 }
 
@@ -1191,32 +1176,22 @@ export async function crawlTargets(
   runId: string,
   onProgress?: (state: { pages: number; queued: number }) => Promise<void> | void
 ) {
-  const queue = urls.map((url) => ({ url: validateTargetUrl(url), depth: 0 }));
+  const queue = urls.map((url) => validateTargetUrl(url));
   const seen = new Set<string>();
   const pages: CrawlPage[] = [];
 
   while (queue.length && pages.length < MAX_PAGES) {
-    const batch: { url: string; depth: number }[] = [];
+    const batch: string[] = [];
     while (queue.length && batch.length < 3 && pages.length + batch.length < MAX_PAGES) {
       const candidate = queue.shift()!;
-      if (seen.has(candidate.url)) continue;
-      seen.add(candidate.url);
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
       batch.push(candidate);
     }
     if (!batch.length) continue;
 
-    const crawled = await Promise.all(batch.map((item) => crawlPage(item.url)));
+    const crawled = await Promise.all(batch.map((url) => crawlPage(url)));
     pages.push(...crawled);
-    crawled.forEach((page, index) => {
-      const depth = batch[index].depth;
-      if (page.error || depth >= MAX_DISCOVERY_DEPTH) return;
-      page.links
-        .filter((link) => shouldDiscoverLink(link, page))
-        .slice(0, 3)
-        .forEach((link) => {
-          if (!seen.has(link.url)) queue.push({ url: link.url, depth: depth + 1 });
-        });
-    });
     await onProgress?.({ pages: pages.length, queued: queue.length });
   }
 
