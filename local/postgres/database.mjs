@@ -9,6 +9,7 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { summarizeLlmTelemetry } from "../audit/llm-telemetry.mjs";
 
 const { Pool } = pg;
 const localDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -423,6 +424,7 @@ export class FormWeaveDatabase {
       "crawl",
       "approval",
       "execution",
+      "llm",
     ].includes(category)
       ? category
       : "";
@@ -438,7 +440,7 @@ export class FormWeaveDatabase {
     const where = `occurred_at >= now() - ($1 * interval '1 hour')
       AND ($2::text IS NULL OR category = $2)
       AND ($3::text IS NULL OR severity = $3)`;
-    const [summaryResult, categoryResult, actorResult, eventsResult] =
+    const [summaryResult, categoryResult, actorResult, eventsResult, llmResult] =
       await Promise.all([
         this.pool.query(
           `SELECT
@@ -497,6 +499,15 @@ export class FormWeaveDatabase {
            LIMIT $4`,
           [...values, boundedLimit],
         ),
+        this.pool.query(
+          `SELECT occurred_at, outcome, scope_id, metadata
+           FROM formweave_audit_events
+           WHERE occurred_at >= now() - ($1 * interval '1 hour')
+             AND category = 'llm'
+           ORDER BY occurred_at DESC, id DESC
+           LIMIT 5000`,
+          [boundedHours],
+        ),
       ]);
     const summary = summaryResult.rows[0] || {};
     return {
@@ -530,6 +541,15 @@ export class FormWeaveDatabase {
         lastSeenAt:
           row.last_seen_at?.toISOString?.() || row.last_seen_at,
       })),
+      llmTelemetry: summarizeLlmTelemetry(
+        llmResult.rows.map((row) => ({
+          occurredAt:
+            row.occurred_at?.toISOString?.() || row.occurred_at,
+          outcome: row.outcome,
+          scopeId: row.scope_id,
+          metadata: row.metadata,
+        })),
+      ),
       events: eventsResult.rows.map((row) => ({
         id: String(row.id),
         occurredAt: row.occurred_at?.toISOString?.() || row.occurred_at,

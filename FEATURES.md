@@ -536,6 +536,13 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   analysis, completion, and failure.
 - `F2.4.2` Logs never contain API keys, authorization headers, or screenshot
   base64 payloads.
+- `F2.4.3` Every completed, failed, or timed-out LLM call emits normalized
+  operational telemetry containing call type, duration, outcome, model,
+  prompt version, and owning run ID. Prompt text, screenshots, applicant
+  values, request bodies, credentials, and API keys are excluded.
+- `F2.4.4` The private operations dashboard summarizes LLM call volume,
+  completion/failure/timeout counts, average, p50, p95, and maximum latency by
+  call type and shows a recent-call timeline.
 - `F2.5` Structural fingerprints hash only normalized URL, field name or ID,
   raw DOM input type, the literal `required` attribute, option values for
   enumerations with at least two options, section DOM text, state count, and

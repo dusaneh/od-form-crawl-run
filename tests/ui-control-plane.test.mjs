@@ -461,6 +461,40 @@ test(
                     lastSeenAt: now,
                   },
                 ],
+                llmTelemetry: {
+                  count: 2,
+                  completed: 1,
+                  failed: 0,
+                  timedOut: 1,
+                  averageDurationMs: 182000,
+                  p50DurationMs: 4000,
+                  p95DurationMs: 360000,
+                  maxDurationMs: 360000,
+                  byType: [
+                    {
+                      callType: "semantic_state_generation",
+                      count: 2,
+                      completed: 1,
+                      failed: 0,
+                      timedOut: 1,
+                      averageDurationMs: 182000,
+                      p50DurationMs: 4000,
+                      p95DurationMs: 360000,
+                      maxDurationMs: 360000,
+                    },
+                  ],
+                  recent: [
+                    {
+                      occurredAt: now,
+                      callType: "semantic_state_generation",
+                      outcome: "timed_out",
+                      durationMs: 360000,
+                      model: "gpt-5.4-mini",
+                      promptVersion: "gate2-semantic-state-v2",
+                      scopeId: run.id,
+                    },
+                  ],
+                },
                 events: [
                   {
                     id: "3",
@@ -861,6 +895,9 @@ test(
       await page.getByText("Crawl completed.", { exact: true }).waitFor();
       await page.getByText("operator@example.test", { exact: true }).first().waitFor();
       await page.getByRole("heading", { name: "Login activity" }).waitFor();
+      await page.getByRole("heading", { name: "LLM calls by type" }).waitFor();
+      await page.getByText("Semantic State Generation", { exact: true }).first().waitFor();
+      await page.getByText("360 s", { exact: true }).first().waitFor();
       await page.getByText("Applicant values and request bodies are intentionally excluded.").waitFor();
     } finally {
       await browser?.close();

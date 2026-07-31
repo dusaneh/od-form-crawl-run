@@ -25,6 +25,7 @@ import { loadEnvFile } from "./env.mjs";
 import { createFormWeaveDatabase } from "./postgres/database.mjs";
 import { selectRetainedEvidence } from "./evidence-retention.mjs";
 import { buildRunnerJourney } from "./report-runner-journey.mjs";
+import { summarizeLlmTelemetry } from "./audit/llm-telemetry.mjs";
 
 const localDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(localDirectory, "..");
@@ -923,7 +924,7 @@ async function operationalAuditDashboard({
   const boundedLimit = Math.min(500, Math.max(1, Number(limit) || 200));
   const cutoff = Date.now() - boundedHours * 60 * 60 * 1_000;
   const source = await readFile(operationalAuditPath, "utf8").catch(() => "");
-  const all = source
+  const windowEvents = source
     .split(/\r?\n/)
     .filter(Boolean)
     .flatMap((line) => {
@@ -933,16 +934,16 @@ async function operationalAuditDashboard({
         return [];
       }
     })
-    .filter(
-      (event) =>
-        Date.parse(event.occurredAt || "") >= cutoff &&
-        (!category || event.category === category) &&
-        (!severity || event.severity === severity),
-    )
+    .filter((event) => Date.parse(event.occurredAt || "") >= cutoff)
     .sort(
       (left, right) =>
         Date.parse(right.occurredAt) - Date.parse(left.occurredAt),
     );
+  const all = windowEvents.filter(
+    (event) =>
+      (!category || event.category === category) &&
+      (!severity || event.severity === severity),
+  );
   const count = (predicate) => all.filter(predicate).length;
   const byCategory = Object.entries(
     all.reduce((output, event) => {
@@ -963,6 +964,9 @@ async function operationalAuditDashboard({
     current.count += 1;
     actors.set(key, current);
   }
+  const llmTelemetry = summarizeLlmTelemetry(
+    windowEvents.filter((event) => event.category === "llm"),
+  );
   return {
     generatedAt: new Date().toISOString(),
     windowHours: boundedHours,
@@ -1007,6 +1011,7 @@ async function operationalAuditDashboard({
     topActors: [...actors.values()]
       .sort((left, right) => right.count - left.count)
       .slice(0, 12),
+    llmTelemetry,
     events: all.slice(0, boundedLimit),
   };
 }
@@ -1032,6 +1037,71 @@ const criticalRunAudit = new Map([
   ["crawl_completed", ["success", "completed"]],
   ["operator_request_review", ["info", "needs_review"]],
 ]);
+
+const llmRunAudit = new Map([
+  [
+    "semantic_generation_completed",
+    ["semantic_state_generation", "completed", "success"],
+  ],
+  [
+    "semantic_generation_failed",
+    ["semantic_state_generation", "failed", "error"],
+  ],
+  [
+    "dynamics_assessment_completed",
+    ["dynamics_classification", "completed", "success"],
+  ],
+  [
+    "dynamics_assessment_failed",
+    ["dynamics_classification", "failed", "error"],
+  ],
+  [
+    "submission_result_assessment_completed",
+    ["submission_result_assessment", "completed", "success"],
+  ],
+  [
+    "submission_result_assessment_failed",
+    ["submission_result_assessment", "failed", "error"],
+  ],
+  ["openai_analysis_completed", ["crawl_analysis", "completed", "success"]],
+  ["openai_analysis_failed", ["crawl_analysis", "failed", "error"]],
+]);
+
+async function auditLlmRunEvent(runId, kind, message, metadata) {
+  const disposition = llmRunAudit.get(kind);
+  if (!disposition) return;
+  const actor = runActors.get(runId) || {
+    actorType: "system",
+    actorId: null,
+  };
+  const timedOut =
+    disposition[1] === "failed" &&
+    /(?:abort|timed?\s*out|timeout)/i.test(
+      String(metadata?.error || message || ""),
+    );
+  const outcome = timedOut ? "timed_out" : disposition[1];
+  await appendOperationalAudit({
+    category: "llm",
+    severity: timedOut ? "error" : disposition[2],
+    eventType: `llm.${disposition[0]}.${outcome}`,
+    outcome,
+    ...actor,
+    scopeType: "run",
+    scopeId: runId,
+    message: timedOut
+      ? `${disposition[0].replaceAll("_", " ")} timed out.`
+      : message,
+    metadata: {
+      callType: disposition[0],
+      durationMs: Number(metadata?.durationMs) || null,
+      model: metadata?.model || null,
+      promptVersion: metadata?.promptVersion || null,
+      attempts: metadata?.attempts || null,
+      sequence: metadata?.sequence || null,
+      transitionKind: metadata?.transitionKind || null,
+    },
+  });
+}
 
 async function auditCriticalRunEvent(runId, kind, message, metadata) {
   const disposition = criticalRunAudit.get(kind);
@@ -1082,6 +1152,9 @@ async function logEvent(runId, kind, message, metadata = {}) {
     event.metadata,
   ).catch((error) =>
     console.error(`Could not persist critical crawl audit for ${runId}:`, error),
+  );
+  await auditLlmRunEvent(runId, kind, message, event.metadata).catch((error) =>
+    console.error(`Could not persist LLM telemetry for ${runId}:`, error),
   );
 }
 

@@ -281,6 +281,8 @@ export async function generateSubmissionResultAssessment(
       durationMs: Date.now() - startedAt,
     };
     await log("submission_result_assessment_completed", {
+      model: configuration.model,
+      promptVersion: configuration.promptVersion,
       outcome: assessment.outcome,
       confidence: assessment.confidence,
       assessmentId: assessment.assessmentId,
@@ -289,6 +291,8 @@ export async function generateSubmissionResultAssessment(
     return { assessment, provenance };
   } catch (error) {
     await log("submission_result_assessment_failed", {
+      model: configuration.model,
+      promptVersion: configuration.promptVersion,
       error: error instanceof Error ? error.message : String(error),
       durationMs: Date.now() - startedAt,
     });

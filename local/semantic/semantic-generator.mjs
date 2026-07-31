@@ -581,6 +581,7 @@ export async function generateSemanticProposal(
       await log("semantic_generation_completed", {
         proposalId: proposal.proposalId,
         model: configuration.model,
+        promptVersion: configuration.promptVersion,
         durationMs: provenance.durationMs,
         attempts: attempt,
         fields: proposal.fields.length,
@@ -592,6 +593,7 @@ export async function generateSemanticProposal(
   } catch (error) {
     await log("semantic_generation_failed", {
       model: configuration.model,
+      promptVersion: configuration.promptVersion,
       durationMs: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
     });

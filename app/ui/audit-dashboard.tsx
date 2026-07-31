@@ -41,6 +41,36 @@ type AuditPayload = {
     count: number;
     lastSeenAt: string;
   }[];
+  llmTelemetry: {
+    count: number;
+    completed: number;
+    failed: number;
+    timedOut: number;
+    averageDurationMs: number | null;
+    p50DurationMs: number | null;
+    p95DurationMs: number | null;
+    maxDurationMs: number | null;
+    byType: {
+      callType: string;
+      count: number;
+      completed: number;
+      failed: number;
+      timedOut: number;
+      averageDurationMs: number | null;
+      p50DurationMs: number | null;
+      p95DurationMs: number | null;
+      maxDurationMs: number | null;
+    }[];
+    recent: {
+      occurredAt: string;
+      callType: string;
+      outcome: string;
+      durationMs: number | null;
+      model: string | null;
+      promptVersion: string | null;
+      scopeId: string | null;
+    }[];
+  };
   events: AuditEvent[];
 };
 
@@ -67,6 +97,19 @@ function compactTime(value: string) {
 
 function displayActor(event: AuditEvent) {
   return event.actorId || (event.actorType === "system" ? "System" : "Unknown");
+}
+
+function duration(value: number | null | undefined) {
+  if (value === null || value === undefined) return "—";
+  if (value < 1_000) return `${Math.round(value)} ms`;
+  return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)} s`;
+}
+
+function callTypeLabel(value: string) {
+  return value
+    .split("_")
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
 
 export function AuditDashboard() {
@@ -160,6 +203,7 @@ export function AuditDashboard() {
             <option value="crawl">Crawl</option>
             <option value="approval">Approval</option>
             <option value="execution">Execution</option>
+            <option value="llm">LLM calls</option>
           </select>
         </label>
         <label>
@@ -301,6 +345,69 @@ export function AuditDashboard() {
             {!data?.topActors.length && <p>No attributed activity yet.</p>}
           </div>
         </article>
+      </section>
+
+      <section className="audit-dashboard-panel audit-llm-panel">
+        <header>
+          <div>
+            <span>MODEL LATENCY</span>
+            <h2>LLM calls by type</h2>
+            <p>
+              Timing and outcomes only. Prompts, screenshots, form values, and
+              credentials are not retained in this telemetry.
+            </p>
+          </div>
+          <small>{data?.llmTelemetry.count || 0} calls in this window</small>
+        </header>
+        <div className="audit-llm-summary">
+          <div>
+            <span>Average</span>
+            <strong>{duration(data?.llmTelemetry.averageDurationMs)}</strong>
+          </div>
+          <div>
+            <span>Median (p50)</span>
+            <strong>{duration(data?.llmTelemetry.p50DurationMs)}</strong>
+          </div>
+          <div>
+            <span>Slow end (p95)</span>
+            <strong>{duration(data?.llmTelemetry.p95DurationMs)}</strong>
+          </div>
+          <div>
+            <span>Timed out</span>
+            <strong>{data?.llmTelemetry.timedOut ?? "—"}</strong>
+          </div>
+        </div>
+        <div className="audit-llm-types">
+          {(data?.llmTelemetry.byType || []).map((item) => (
+            <div key={item.callType}>
+              <strong>{callTypeLabel(item.callType)}</strong>
+              <span>{item.count} calls</span>
+              <span>avg {duration(item.averageDurationMs)}</span>
+              <span>p95 {duration(item.p95DurationMs)}</span>
+              <span>{item.timedOut} timed out</span>
+              <span>{item.failed} failed</span>
+            </div>
+          ))}
+          {!data?.llmTelemetry.byType.length && (
+            <p>No completed or failed LLM calls have been recorded in this window.</p>
+          )}
+        </div>
+        {!!data?.llmTelemetry.recent.length && (
+          <div className="audit-llm-recent">
+            <h3>Recent calls</h3>
+            {data.llmTelemetry.recent.map((call, index) => (
+              <div
+                key={`${call.occurredAt}-${call.callType}-${call.scopeId || index}`}
+              >
+                <time>{compactTime(call.occurredAt)}</time>
+                <strong>{callTypeLabel(call.callType)}</strong>
+                <span className={call.outcome}>{call.outcome.replaceAll("_", " ")}</span>
+                <span>{duration(call.durationMs)}</span>
+                <code>{call.scopeId || "—"}</code>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="audit-dashboard-panel audit-event-panel">

@@ -271,6 +271,8 @@ export async function generateDynamicsAssessment(
       durationMs: Date.now() - startedAt,
     };
     await log("dynamics_assessment_completed", {
+      model: configuration.model,
+      promptVersion: configuration.promptVersion,
       transitionKind: assessment.transitionKind,
       outcome: assessment.outcome,
       confidence: assessment.confidence,
@@ -280,6 +282,8 @@ export async function generateDynamicsAssessment(
     return { assessment, provenance };
   } catch (error) {
     await log("dynamics_assessment_failed", {
+      model: configuration.model,
+      promptVersion: configuration.promptVersion,
       transitionKind: input.transitionKind,
       error: error instanceof Error ? error.message : String(error),
       durationMs: Date.now() - startedAt,
