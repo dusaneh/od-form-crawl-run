@@ -461,6 +461,39 @@ test(
                     lastSeenAt: now,
                   },
                 ],
+                availableUsers: [
+                  {
+                    actorId: "operator@example.test",
+                    displayName: "Test Operator",
+                  },
+                ],
+                loginSummary: { successes: 1, failures: 1 },
+                loginHistory: [
+                  {
+                    id: "2",
+                    occurredAt: now,
+                    category: "authentication",
+                    severity: "success",
+                    eventType: "authentication.basic_success",
+                    outcome: "succeeded",
+                    actorType: "user",
+                    actorId: "operator@example.test",
+                    message: "User authentication succeeded.",
+                    metadata: { mechanism: "basic" },
+                  },
+                  {
+                    id: "1",
+                    occurredAt: now,
+                    category: "authentication",
+                    severity: "error",
+                    eventType: "authentication.basic_failure",
+                    outcome: "failed",
+                    actorType: "unknown",
+                    actorId: "hash:123456789abc",
+                    message: "User authentication failed.",
+                    metadata: { mechanism: "basic" },
+                  },
+                ],
                 llmTelemetry: {
                   count: 2,
                   completed: 1,
@@ -894,6 +927,12 @@ test(
       await page.getByText("Crawl completed.", { exact: true }).waitFor();
       await page.getByText("operator@example.test", { exact: true }).first().waitFor();
       await page.getByRole("heading", { name: "Login activity" }).waitFor();
+      await page.getByLabel("User").selectOption("operator@example.test");
+      assert.equal(
+        await page.getByLabel("User").inputValue(),
+        "operator@example.test",
+      );
+      await page.getByText("2 most recent shown", { exact: true }).waitFor();
       await page.getByRole("heading", { name: "LLM calls by type" }).waitFor();
       await page.getByText("Semantic State Generation", { exact: true }).first().waitFor();
       await page.getByText("360 s", { exact: true }).first().waitFor();

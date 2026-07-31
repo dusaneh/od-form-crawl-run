@@ -782,20 +782,23 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   approved execution and never invents actions from screenshot text.
 - `F3.20` An operations-only audit dashboard summarizes critical login, API,
   crawl, approval, and execution outcomes from the durable audit stream.
-- `F3.20.1` The dashboard supports time-window, category, and severity filters
-  and shows success/failure totals, crawl/execution health, login outcomes,
-  attributed actors, and an expandable diagnostic timeline.
-- `F3.20.2` The dashboard route is deliberately absent from public and
-  operational navigation. Route obscurity is not an authorization boundary:
-  the page and its data endpoint require an authenticated UI user even when
-  the exact URL is known.
+- `F3.20.1` The dashboard supports operational time-window, category,
+  severity, and authenticated-user filters and shows success/failure totals,
+  crawl/execution health, login outcomes, attributed actors, and an expandable
+  diagnostic timeline.
+- `F3.20.1.1` Login history has an independent selectable window of up to five
+  years and returns up to 100 recent authentication events by default, so a
+  short operational window does not hide older access history.
+- `F3.20.2` The dashboard link is visible on the hosted home and login pages
+  only for an authenticated administrator. The route and its data API enforce
+  the same role server-side; hiding the link is not the authorization boundary.
 - `F3.20.3` API Bearer credentials used by integrations cannot retrieve the
   operations dashboard or its data. Dashboard access requires the hosted UI
   login/session boundary.
-- `F3.20.4` The audit-data API independently verifies a trusted hosted
-  UI-user identity. Direct local API requests and caller-supplied identity
-  headers are insufficient; local operators use the authenticated hosted
-  dashboard for shared PostgreSQL audit data.
+- `F3.20.4` The audit-data API independently verifies a trusted hosted admin
+  identity. Direct local API requests, non-admin sessions, and caller-supplied
+  identity headers are insufficient; administrators use the authenticated
+  hosted dashboard for shared PostgreSQL audit data.
 
 ## F4. Local-first operation and ownership
 
@@ -857,7 +860,9 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   must never be committed, placed in platform configuration as a bundle, or
   written to application logs.
 - `F4.6.8` Hosted operations pages and their supporting APIs are protected by
-  the individual UI account/session boundary. An API integration token does
+  the individual UI account/session boundary and an explicit persisted role.
+  `dbosmail@gmail.com` is the administrator; every other seeded UI account is
+  an operator. An API integration token does
   not confer operator-dashboard access.
 - `F4.7` Local browser binaries are installed and managed through Playwright;
   local crawling does not require a remote browser or screenshot account.

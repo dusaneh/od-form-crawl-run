@@ -1,4 +1,8 @@
-export default function Home() {
+import { headers } from "next/headers";
+
+export default async function Home() {
+  const requestHeaders = await headers();
+  const isAdmin = requestHeaders.get("x-formweave-auth-role") === "admin";
   return (
     <main
       style={{
@@ -50,6 +54,11 @@ export default function Home() {
           <a href="/api-console" style={linkStyle}>
             Open API console
           </a>
+          {isAdmin && (
+            <a href="/ops/audit-log" style={linkStyle}>
+              Open audit dashboard
+            </a>
+          )}
           <a href="/healthz" style={secondaryLinkStyle}>
             Service health
           </a>

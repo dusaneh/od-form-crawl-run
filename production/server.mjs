@@ -107,8 +107,13 @@ gateway = createServer(async (incoming, outgoing) => {
     }
     if (url.pathname === "/login") {
       if (incoming.method === "GET") {
+        const existingIdentity = await authenticateRequest(incoming, {
+          allowBearer: false,
+          issueSession: false,
+        });
         return sendLoginPage(outgoing, {
           returnTo: safeReturnTo(url.searchParams.get("return_to")),
+          identity: existingIdentity.ok ? existingIdentity : null,
         });
       }
       if (incoming.method === "POST") {
@@ -137,14 +142,21 @@ gateway = createServer(async (incoming, outgoing) => {
     const dashboardApi =
       url.pathname === "/api/ops/audit" ||
       url.pathname.startsWith("/api/ops/audit/");
+    const adminProtected = dashboardApi ||
+      url.pathname === "/ops/audit-log" ||
+      url.pathname.startsWith("/ops/audit-log/");
+    const optionalIdentity = url.pathname === "/";
     let identity = null;
 
-    if (incoming.method !== "OPTIONS" && (uiProtected || apiProtected)) {
+    if (
+      incoming.method !== "OPTIONS" &&
+      (uiProtected || apiProtected || optionalIdentity)
+    ) {
       identity = await authenticateRequest(incoming, {
         allowBearer: apiProtected && !dashboardApi,
         issueSession: uiProtected,
       });
-      if (!identity.ok) {
+      if (!identity.ok && (uiProtected || apiProtected)) {
         if (uiProtected && !identity.lockedUntil) {
           outgoing.writeHead(302, {
             location: `/login?return_to=${encodeURIComponent(
@@ -160,6 +172,11 @@ gateway = createServer(async (incoming, outgoing) => {
           lockedUntil: identity.lockedUntil,
         });
       }
+      if (!identity.ok) identity = null;
+    }
+
+    if (adminProtected && identity?.role !== "admin") {
+      return forbidden(outgoing, { api: dashboardApi });
     }
 
     const targetPort = apiProtected ? apiPort : uiPort;
@@ -275,6 +292,10 @@ function proxyRequest(incoming, outgoing, targetPort, identity) {
   const startedAt = Date.now();
   const headers = { ...incoming.headers };
   delete headers.authorization;
+  delete headers["x-formweave-auth-mechanism"];
+  delete headers["x-formweave-auth-principal"];
+  delete headers["x-formweave-auth-scopes"];
+  delete headers["x-formweave-auth-role"];
   headers.host = `127.0.0.1:${targetPort}`;
   headers["x-forwarded-host"] =
     incoming.headers["x-forwarded-host"] || incoming.headers.host || "";
@@ -284,6 +305,7 @@ function proxyRequest(incoming, outgoing, targetPort, identity) {
     headers["x-formweave-auth-mechanism"] = identity.mechanism;
     headers["x-formweave-auth-principal"] = identity.principal;
     headers["x-formweave-auth-scopes"] = identity.scopes.join(",");
+    headers["x-formweave-auth-role"] = identity.role || "operator";
   }
 
   const proxied = httpRequest(
@@ -457,6 +479,23 @@ function unauthorized(outgoing, { api, lockedUntil }) {
   });
 }
 
+function forbidden(outgoing, { api }) {
+  if (api) {
+    return sendJson(outgoing, 403, {
+      error: "Administrator access is required.",
+      code: "admin_required",
+    });
+  }
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Access denied · FormWeave</title></head><body style="font-family:system-ui,sans-serif;padding:3rem;color:#153d32"><main><h1>Administrator access required</h1><p>This dashboard is available only to the FormWeave administrator.</p><a href="/">Return home</a></main></body></html>`;
+  outgoing.writeHead(403, {
+    "content-type": "text/html; charset=utf-8",
+    "content-length": Buffer.byteLength(body),
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+  });
+  outgoing.end(body);
+}
+
 function sendJson(outgoing, status, value) {
   if (outgoing.writableEnded) return;
   const body = `${JSON.stringify(value, null, 2)}\n`;
@@ -471,7 +510,7 @@ function sendJson(outgoing, status, value) {
 
 function sendLoginPage(
   outgoing,
-  { returnTo = "/control-plane", status = 200, error = "" } = {},
+  { returnTo = "/control-plane", status = 200, error = "", identity = null } = {},
 ) {
   const body = `<!doctype html>
 <html lang="en">
@@ -498,6 +537,8 @@ function sendLoginPage(
       .error { margin: 0 0 18px; padding: 11px 12px; border: 1px solid #efaaa1; border-radius: 10px;
         color: #8d3025; background: #fff1ef; font-size: 14px; line-height: 1.45; }
       .note { margin: 18px 0 0; color: #71857d; font-size: 12px; line-height: 1.5; }
+      .admin-link { display: block; margin: 0 0 18px; padding: 12px 14px; border-radius: 10px;
+        color: white; background: #124737; font-weight: 800; text-align: center; text-decoration: none; }
     </style>
   </head>
   <body>
@@ -505,6 +546,7 @@ function sendLoginPage(
       <p class="eyebrow">FormWeave protected access</p>
       <h1>Sign in</h1>
       <p class="intro">Use the individual staging credentials assigned to you.</p>
+      ${identity?.role === "admin" ? '<a class="admin-link" href="/ops/audit-log">Open audit dashboard</a>' : ""}
       ${error ? `<p class="error" role="alert">${escapeHtml(error)}</p>` : ""}
       <form method="post" action="/login?return_to=${encodeURIComponent(returnTo)}">
         <label>Email

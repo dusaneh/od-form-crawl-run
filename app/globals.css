@@ -1225,6 +1225,12 @@ textarea:focus-visible {
   padding: 6px 15px 15px;
 }
 
+.audit-login-list {
+  max-height: 34rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .audit-login-list > div {
   display: grid;
   grid-template-columns: auto 1fr auto;

@@ -46,7 +46,7 @@ export class AuthStore {
 
     const result = await this.database.pool.query(
       `SELECT email, display_name, password_salt, password_hash,
-              password_parameters, active
+              password_parameters, active, role
        FROM formweave_users
        WHERE email = $1`,
       [normalizedEmail],
@@ -65,7 +65,10 @@ export class AuthStore {
         lockedUntil ? "principal_locked" : "basic_failure",
         principalKey,
         clientKey,
-        { mechanism: "basic" },
+        {
+          mechanism: "basic",
+          ...(user?.email ? { actorId: user.email } : {}),
+        },
       );
       return { ok: false, lockedUntil };
     }
@@ -81,7 +84,9 @@ export class AuthStore {
       mechanism: "basic",
       principal: user.email,
       displayName: user.display_name,
-      scopes: ["ui", "api"],
+      role: user.role === "admin" ? "admin" : "operator",
+      scopes:
+        user.role === "admin" ? ["ui", "api", "admin"] : ["ui", "api"],
     };
   }
 
@@ -194,7 +199,8 @@ export class AuthStore {
          AND session.user_email = app_user.email
          AND session.expires_at > now()
          AND app_user.active = true
-       RETURNING app_user.email, app_user.display_name, session.expires_at`,
+       RETURNING app_user.email, app_user.display_name, app_user.role,
+                 session.expires_at`,
       [sessionHash],
     );
     const session = result.rows[0];
@@ -204,7 +210,11 @@ export class AuthStore {
       mechanism: "session",
       principal: session.email,
       displayName: session.display_name,
-      scopes: ["ui", "api"],
+      role: session.role === "admin" ? "admin" : "operator",
+      scopes:
+        session.role === "admin"
+          ? ["ui", "api", "admin"]
+          : ["ui", "api"],
       expiresAt:
         session.expires_at?.toISOString?.() || session.expires_at,
     };
@@ -268,7 +278,7 @@ export class AuthStore {
     const success = eventType.endsWith("_success");
     const locked = eventType === "principal_locked";
     const actorType =
-      success && metadata.mechanism === "basic"
+      metadata.actorId
         ? "user"
         : success && metadata.mechanism === "bearer"
           ? "api_token"

@@ -863,11 +863,15 @@ function actorFromRequest(request) {
   const principal = String(
     request.headers.get("x-formweave-auth-principal") || "",
   ).trim();
+  const role = String(
+    request.headers.get("x-formweave-auth-role") || "",
+  ).toLowerCase();
   if (hosted && mechanism === "bearer" && principal) {
     return {
       actorType: "api_token",
       actorId: principal,
       mechanism,
+      role,
     };
   }
   if (hosted && ["basic", "session"].includes(mechanism) && principal) {
@@ -875,12 +879,14 @@ function actorFromRequest(request) {
       actorType: "user",
       actorId: principal,
       mechanism,
+      role,
     };
   }
   return {
     actorType: hosted ? "unknown" : "local",
     actorId: hosted ? null : "local-direct",
     mechanism: hosted ? "missing" : "local",
+    role: hosted ? "" : "local",
   };
 }
 
@@ -916,15 +922,38 @@ async function operationalAuditDashboard({
   limit = 200,
   category = "",
   severity = "",
+  actorId = "",
+  loginHours = 24 * 90,
+  loginLimit = 100,
 } = {}) {
   if (database) {
-    return database.auditDashboard({ hours, limit, category, severity });
+    return database.auditDashboard({
+      hours,
+      limit,
+      category,
+      severity,
+      actorId,
+      loginHours,
+      loginLimit,
+    });
   }
-  const boundedHours = Math.min(24 * 90, Math.max(1, Number(hours) || 24));
+  const boundedHours = Math.min(
+    24 * 365 * 5,
+    Math.max(1, Number(hours) || 24),
+  );
   const boundedLimit = Math.min(500, Math.max(1, Number(limit) || 200));
+  const boundedLoginHours = Math.min(
+    24 * 365 * 5,
+    Math.max(1, Number(loginHours) || 24 * 90),
+  );
+  const boundedLoginLimit = Math.min(
+    500,
+    Math.max(1, Number(loginLimit) || 100),
+  );
+  const allowedActorId = String(actorId || "").trim().slice(0, 320);
   const cutoff = Date.now() - boundedHours * 60 * 60 * 1_000;
   const source = await readFile(operationalAuditPath, "utf8").catch(() => "");
-  const windowEvents = source
+  const retainedEvents = source
     .split(/\r?\n/)
     .filter(Boolean)
     .flatMap((line) => {
@@ -934,15 +963,18 @@ async function operationalAuditDashboard({
         return [];
       }
     })
-    .filter((event) => Date.parse(event.occurredAt || "") >= cutoff)
     .sort(
       (left, right) =>
         Date.parse(right.occurredAt) - Date.parse(left.occurredAt),
     );
+  const windowEvents = retainedEvents.filter(
+    (event) => Date.parse(event.occurredAt || "") >= cutoff,
+  );
   const all = windowEvents.filter(
     (event) =>
       (!category || event.category === category) &&
-      (!severity || event.severity === severity),
+      (!severity || event.severity === severity) &&
+      (!allowedActorId || event.actorId === allowedActorId),
   );
   const count = (predicate) => all.filter(predicate).length;
   const byCategory = Object.entries(
@@ -965,15 +997,43 @@ async function operationalAuditDashboard({
     actors.set(key, current);
   }
   const llmTelemetry = summarizeLlmTelemetry(
-    windowEvents.filter((event) => event.category === "llm"),
+    windowEvents.filter(
+      (event) =>
+        event.category === "llm" &&
+        (!allowedActorId || event.actorId === allowedActorId),
+    ),
   );
+  const loginCutoff = Date.now() - boundedLoginHours * 60 * 60 * 1_000;
+  const loginHistory = retainedEvents
+    .filter(
+      (event) =>
+        Date.parse(event.occurredAt || "") >= loginCutoff &&
+        event.category === "authentication" &&
+        (!allowedActorId || event.actorId === allowedActorId),
+    )
+    .slice(0, boundedLoginLimit);
+  const availableUsers = [
+    ...new Set(
+      retainedEvents
+        .filter((event) => event.actorType === "user" && event.actorId)
+        .map((event) => event.actorId),
+    ),
+  ]
+    .sort()
+    .map((userActorId) => ({
+      actorId: userActorId,
+      displayName: userActorId,
+    }));
   return {
     generatedAt: new Date().toISOString(),
     windowHours: boundedHours,
     filters: {
       category: category || null,
       severity: severity || null,
+      actorId: allowedActorId || null,
       limit: boundedLimit,
+      loginHours: boundedLoginHours,
+      loginLimit: boundedLoginLimit,
     },
     summary: {
       total: all.length,
@@ -1011,6 +1071,16 @@ async function operationalAuditDashboard({
     topActors: [...actors.values()]
       .sort((left, right) => right.count - left.count)
       .slice(0, 12),
+    availableUsers,
+    loginSummary: {
+      successes: loginHistory.filter(
+        (event) => event.outcome === "succeeded",
+      ).length,
+      failures: loginHistory.filter((event) =>
+        ["failed", "locked"].includes(event.outcome),
+      ).length,
+    },
+    loginHistory,
     llmTelemetry,
     events: all.slice(0, boundedLimit),
   };
@@ -2569,13 +2639,12 @@ async function route(request) {
   }
   if (url.pathname === "/api/ops/audit" && request.method === "GET") {
     const actor = actorFromRequest(request);
-    if (actor.actorType !== "user") {
+    if (actor.actorType !== "user" || actor.role !== "admin") {
       return jsonResponse(
         request,
         {
-          error:
-            "An authenticated operator UI session is required to view audit data.",
-          code: "operator_login_required",
+          error: "Administrator access is required to view audit data.",
+          code: "admin_required",
         },
         403,
       );
@@ -2586,6 +2655,9 @@ async function route(request) {
         limit: url.searchParams.get("limit"),
         category: url.searchParams.get("category") || "",
         severity: url.searchParams.get("severity") || "",
+        actorId: url.searchParams.get("actorId") || "",
+        loginHours: url.searchParams.get("loginHours"),
+        loginLimit: url.searchParams.get("loginLimit"),
       }),
     });
   }

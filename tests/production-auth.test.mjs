@@ -44,6 +44,7 @@ test("successful site login is attributed in the unified audit stream", async ()
                 password_hash: credential.hash,
                 password_parameters: credential.parameters,
                 active: true,
+                role: "admin",
               },
             ],
           };
@@ -62,6 +63,8 @@ test("successful site login is attributed in the unified audit stream", async ()
     "192.0.2.10",
   );
   assert.equal(result.ok, true);
+  assert.equal(result.role, "admin");
+  assert.deepEqual(result.scopes, ["ui", "api", "admin"]);
   assert.equal(auditEvents.length, 1);
   assert.equal(auditEvents[0].category, "authentication");
   assert.equal(auditEvents[0].outcome, "succeeded");
@@ -75,4 +78,14 @@ test("successful site login is attributed in the unified audit stream", async ()
     JSON.stringify(auditEvents[0]).includes("192.0.2.10"),
     false,
   );
+
+  const failed = await auth.authenticateBasic(
+    "operator@example.test",
+    "incorrect password",
+    "192.0.2.10",
+  );
+  assert.equal(failed.ok, false);
+  assert.equal(auditEvents[1].outcome, "failed");
+  assert.equal(auditEvents[1].actorType, "user");
+  assert.equal(auditEvents[1].actorId, "operator@example.test");
 });

@@ -13,14 +13,26 @@ const seed = JSON.parse(
     /FORMWEAVE_AUTH_SEED_START\s*-->\s*```json\s*([\s\S]*?)```/,
   )?.[1] || "{}",
 );
-const user = seed.users?.[1];
+const adminUser = seed.users?.find(
+  (candidate) =>
+    String(candidate.email || "").toLowerCase() === "dbosmail@gmail.com",
+);
+const user = seed.users?.find(
+  (candidate) =>
+    String(candidate.email || "").toLowerCase() !== "dbosmail@gmail.com",
+);
 const token = seed.apiTokens?.[0]?.token;
-if (!user || !token) throw new Error("Smoke-test credentials are unavailable.");
+if (!adminUser || !user || !token) {
+  throw new Error("Smoke-test credentials are unavailable.");
+}
 
 const basic = `Basic ${Buffer.from(
   `${user.email}:${user.password}`,
 ).toString("base64")}`;
 const bearer = `Bearer ${token}`;
+const adminBasic = `Basic ${Buffer.from(
+  `${adminUser.email}:${adminUser.password}`,
+).toString("base64")}`;
 const checks = [];
 
 await check("public landing", "/", { expected: 200, includes: "API-first" });
@@ -66,19 +78,45 @@ await check("Bearer rejected for audit dashboard", "/ops/audit-log", {
   expected: 302,
   headers: { authorization: bearer },
 });
-await check("session audit dashboard", "/ops/audit-log", {
-  expected: 200,
+await check("operator audit dashboard forbidden", "/ops/audit-log", {
+  expected: 403,
   headers: { cookie: sessionCookie },
+  includes: "Administrator access required",
+});
+const adminUi = await check("admin audit dashboard", "/ops/audit-log", {
+  expected: 200,
+  headers: { authorization: adminBasic },
   includes: "Audit and reliability dashboard",
 });
+const adminSessionCookie = adminUi.response.headers
+  .get("set-cookie")
+  ?.split(";")[0];
+if (!adminSessionCookie) {
+  throw new Error("Admin login did not issue a session cookie.");
+}
 await check("Bearer rejected for audit data", "/api/ops/audit", {
   expected: 401,
   headers: { authorization: bearer },
 });
-await check("session audit data", "/api/ops/audit?hours=24", {
+await check("operator audit data forbidden", "/api/ops/audit?hours=24", {
+  expected: 403,
+  headers: { cookie: sessionCookie },
+  includes: "admin_required",
+});
+await check("admin session audit data", "/api/ops/audit?hours=24", {
+  expected: 200,
+  headers: { cookie: adminSessionCookie },
+  includes: '"audit"',
+});
+await check("admin home dashboard link", "/", {
+  expected: 200,
+  headers: { cookie: adminSessionCookie },
+  includes: "Open audit dashboard",
+});
+await check("operator home hides dashboard link", "/", {
   expected: 200,
   headers: { cookie: sessionCookie },
-  includes: '"audit"',
+  excludes: "Open audit dashboard",
 });
 await check("hosted headful rejected", "/api/runs", {
   expected: 400,
@@ -117,7 +155,7 @@ console.log(JSON.stringify({ passed: true, base, checks }, null, 2));
 async function check(
   label,
   route,
-  { expected, headers = {}, method = "GET", body, includes } = {},
+  { expected, headers = {}, method = "GET", body, includes, excludes } = {},
 ) {
   const response = await fetch(`${base}${route}`, {
     method,
@@ -131,7 +169,9 @@ async function check(
   });
   const text = await response.text();
   const passed =
-    response.status === expected && (!includes || text.includes(includes));
+    response.status === expected &&
+    (!includes || text.includes(includes)) &&
+    (!excludes || !text.includes(excludes));
   const result = {
     label,
     status: response.status,

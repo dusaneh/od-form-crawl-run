@@ -76,6 +76,17 @@ test("operational audit migration is append-only and actor-aware", async () => {
   assert.match(migration, /formweave_reject_immutable_change/i);
 });
 
+test("user-role migration assigns the requested sole administrator", async () => {
+  const migration = await readFile(
+    path.join(projectRoot, "db", "migrations", "006_user_roles.sql"),
+    "utf8",
+  );
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS role text/i);
+  assert.match(migration, /role IN \('operator', 'admin'\)/i);
+  assert.match(migration, /email = 'dbosmail@gmail\.com'/i);
+  assert.match(migration, /ELSE 'operator'/i);
+});
+
 test("PostgreSQL pools tolerate slow managed-database connection startup", async () => {
   const database = new FormWeaveDatabase(
     "postgres://formweave:test@localhost/formweave",

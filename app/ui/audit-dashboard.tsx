@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type AuditEvent = {
   id?: string;
@@ -41,6 +41,15 @@ type AuditPayload = {
     count: number;
     lastSeenAt: string;
   }[];
+  availableUsers: {
+    actorId: string;
+    displayName: string;
+  }[];
+  loginSummary: {
+    successes: number;
+    failures: number;
+  };
+  loginHistory: AuditEvent[];
   llmTelemetry: {
     count: number;
     completed: number;
@@ -116,6 +125,8 @@ export function AuditDashboard() {
   const [hours, setHours] = useState("24");
   const [category, setCategory] = useState("");
   const [severity, setSeverity] = useState("");
+  const [actorId, setActorId] = useState("");
+  const [loginHours, setLoginHours] = useState(String(24 * 90));
   const [data, setData] = useState<AuditPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -123,9 +134,15 @@ export function AuditDashboard() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    const query = new URLSearchParams({ hours, limit: "250" });
+    const query = new URLSearchParams({
+      hours,
+      limit: "250",
+      loginHours,
+      loginLimit: "100",
+    });
     if (category) query.set("category", category);
     if (severity) query.set("severity", severity);
+    if (actorId) query.set("actorId", actorId);
     try {
       const response = await fetch(
         `${apiBase()}/api/ops/audit?${query.toString()}`,
@@ -141,16 +158,12 @@ export function AuditDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [category, hours, severity]);
+  }, [actorId, category, hours, loginHours, severity]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const authEvents = useMemo(
-    () => data?.events.filter((event) => event.category === "authentication") || [],
-    [data],
-  );
   const failureRate = data?.summary.total
     ? Math.round((data.summary.failures / data.summary.total) * 100)
     : 0;
@@ -189,6 +202,9 @@ export function AuditDashboard() {
             <option value="168">Last 7 days</option>
             <option value="720">Last 30 days</option>
             <option value="2160">Last 90 days</option>
+            <option value="4320">Last 180 days</option>
+            <option value="8760">Last year</option>
+            <option value="43800">All retained (up to 5 years)</option>
           </select>
         </label>
         <label>
@@ -217,6 +233,32 @@ export function AuditDashboard() {
             <option value="warning">Warning</option>
             <option value="error">Failure</option>
             <option value="info">Information</option>
+          </select>
+        </label>
+        <label>
+          User
+          <select value={actorId} onChange={(event) => setActorId(event.target.value)}>
+            <option value="">All users</option>
+            {(data?.availableUsers || []).map((user) => (
+              <option key={user.actorId} value={user.actorId}>
+                {user.displayName === user.actorId
+                  ? user.actorId
+                  : `${user.displayName} · ${user.actorId}`}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Login history
+          <select
+            value={loginHours}
+            onChange={(event) => setLoginHours(event.target.value)}
+          >
+            <option value="168">Last 7 days</option>
+            <option value="720">Last 30 days</option>
+            <option value="2160">Last 90 days</option>
+            <option value="8760">Last year</option>
+            <option value="43800">All retained (up to 5 years)</option>
           </select>
         </label>
         <button type="button" onClick={() => void load()} disabled={loading}>
@@ -301,19 +343,20 @@ export function AuditDashboard() {
               <span>ACCESS</span>
               <h2>Login activity</h2>
             </div>
+            <small>{data?.loginHistory.length || 0} most recent shown</small>
           </header>
           <div className="audit-login-totals">
             <div>
-              <strong>{data?.summary.loginSuccesses ?? "—"}</strong>
+              <strong>{data?.loginSummary.successes ?? "—"}</strong>
               <span>Successful</span>
             </div>
             <div>
-              <strong>{data?.summary.loginFailures ?? "—"}</strong>
+              <strong>{data?.loginSummary.failures ?? "—"}</strong>
               <span>Failed or locked</span>
             </div>
           </div>
           <div className="audit-login-list">
-            {authEvents.slice(0, 6).map((event) => (
+            {(data?.loginHistory || []).map((event) => (
               <div key={event.id || `${event.occurredAt}-${event.eventType}`}>
                 <i className={event.severity} />
                 <span>
@@ -323,7 +366,9 @@ export function AuditDashboard() {
                 <time>{compactTime(event.occurredAt)}</time>
               </div>
             ))}
-            {!authEvents.length && <p>No login activity in this window.</p>}
+            {!data?.loginHistory.length && (
+              <p>No login activity in the selected login-history window.</p>
+            )}
           </div>
         </article>
 

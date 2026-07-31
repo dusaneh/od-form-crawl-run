@@ -42,6 +42,25 @@ function timestamp(value, fallback = new Date().toISOString()) {
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : fallback;
 }
 
+function auditRow(row) {
+  return {
+    id: String(row.id),
+    occurredAt: row.occurred_at?.toISOString?.() || row.occurred_at,
+    category: row.category,
+    severity: row.severity,
+    eventType: row.event_type,
+    outcome: row.outcome,
+    actorType: row.actor_type,
+    actorId: row.actor_id,
+    scopeType: row.scope_type,
+    scopeId: row.scope_id,
+    parentScopeType: row.parent_scope_type,
+    parentScopeId: row.parent_scope_id,
+    message: row.message,
+    metadata: row.metadata,
+  };
+}
+
 function sslConfiguration(connectionString) {
   const configured = String(process.env.POSTGRES_SSL || "").toLowerCase();
   if (configured === "disable") return false;
@@ -415,9 +434,20 @@ export class FormWeaveDatabase {
     limit = 200,
     category = "",
     severity = "",
+    actorId = "",
+    loginHours = 24 * 90,
+    loginLimit = 100,
   } = {}) {
-    const boundedHours = Math.min(24 * 90, Math.max(1, Number(hours) || 24));
+    const boundedHours = Math.min(24 * 365 * 5, Math.max(1, Number(hours) || 24));
     const boundedLimit = Math.min(500, Math.max(1, Number(limit) || 200));
+    const boundedLoginHours = Math.min(
+      24 * 365 * 5,
+      Math.max(1, Number(loginHours) || 24 * 90),
+    );
+    const boundedLoginLimit = Math.min(
+      500,
+      Math.max(1, Number(loginLimit) || 100),
+    );
     const allowedCategory = [
       "authentication",
       "api",
@@ -436,11 +466,26 @@ export class FormWeaveDatabase {
     ].includes(severity)
       ? severity
       : "";
-    const values = [boundedHours, allowedCategory || null, allowedSeverity || null];
+    const allowedActorId = String(actorId || "").trim().slice(0, 320);
+    const values = [
+      boundedHours,
+      allowedCategory || null,
+      allowedSeverity || null,
+      allowedActorId || null,
+    ];
     const where = `occurred_at >= now() - ($1 * interval '1 hour')
       AND ($2::text IS NULL OR category = $2)
-      AND ($3::text IS NULL OR severity = $3)`;
-    const [summaryResult, categoryResult, actorResult, eventsResult, llmResult] =
+      AND ($3::text IS NULL OR severity = $3)
+      AND ($4::text IS NULL OR actor_id = $4)`;
+    const [
+      summaryResult,
+      categoryResult,
+      actorResult,
+      eventsResult,
+      llmResult,
+      usersResult,
+      loginResult,
+    ] =
       await Promise.all([
         this.pool.query(
           `SELECT
@@ -496,7 +541,7 @@ export class FormWeaveDatabase {
            FROM formweave_audit_events
            WHERE ${where}
            ORDER BY occurred_at DESC, id DESC
-           LIMIT $4`,
+           LIMIT $5`,
           [...values, boundedLimit],
         ),
         this.pool.query(
@@ -504,9 +549,28 @@ export class FormWeaveDatabase {
            FROM formweave_audit_events
            WHERE occurred_at >= now() - ($1 * interval '1 hour')
              AND category = 'llm'
+             AND ($2::text IS NULL OR actor_id = $2)
            ORDER BY occurred_at DESC, id DESC
            LIMIT 5000`,
-          [boundedHours],
+          [boundedHours, allowedActorId || null],
+        ),
+        this.pool.query(
+          `SELECT email, display_name
+           FROM formweave_users
+           WHERE active = true
+           ORDER BY display_name, email`,
+        ),
+        this.pool.query(
+          `SELECT id, occurred_at, category, severity, event_type, outcome,
+                  actor_type, actor_id, scope_type, scope_id,
+                  parent_scope_type, parent_scope_id, message, metadata
+           FROM formweave_audit_events
+           WHERE occurred_at >= now() - ($1 * interval '1 hour')
+             AND category = 'authentication'
+             AND ($2::text IS NULL OR actor_id = $2)
+           ORDER BY occurred_at DESC, id DESC
+           LIMIT $3`,
+          [boundedLoginHours, allowedActorId || null, boundedLoginLimit],
         ),
       ]);
     const summary = summaryResult.rows[0] || {};
@@ -516,7 +580,10 @@ export class FormWeaveDatabase {
       filters: {
         category: allowedCategory || null,
         severity: allowedSeverity || null,
+        actorId: allowedActorId || null,
         limit: boundedLimit,
+        loginHours: boundedLoginHours,
+        loginLimit: boundedLoginLimit,
       },
       summary: {
         total: Number(summary.total || 0),
@@ -541,6 +608,19 @@ export class FormWeaveDatabase {
         lastSeenAt:
           row.last_seen_at?.toISOString?.() || row.last_seen_at,
       })),
+      availableUsers: usersResult.rows.map((row) => ({
+        actorId: row.email,
+        displayName: row.display_name,
+      })),
+      loginSummary: {
+        successes: loginResult.rows.filter(
+          (row) => row.outcome === "succeeded",
+        ).length,
+        failures: loginResult.rows.filter((row) =>
+          ["failed", "locked"].includes(row.outcome),
+        ).length,
+      },
+      loginHistory: loginResult.rows.map(auditRow),
       llmTelemetry: summarizeLlmTelemetry(
         llmResult.rows.map((row) => ({
           occurredAt:
@@ -550,22 +630,7 @@ export class FormWeaveDatabase {
           metadata: row.metadata,
         })),
       ),
-      events: eventsResult.rows.map((row) => ({
-        id: String(row.id),
-        occurredAt: row.occurred_at?.toISOString?.() || row.occurred_at,
-        category: row.category,
-        severity: row.severity,
-        eventType: row.event_type,
-        outcome: row.outcome,
-        actorType: row.actor_type,
-        actorId: row.actor_id,
-        scopeType: row.scope_type,
-        scopeId: row.scope_id,
-        parentScopeType: row.parent_scope_type,
-        parentScopeId: row.parent_scope_id,
-        message: row.message,
-        metadata: row.metadata,
-      })),
+      events: eventsResult.rows.map(auditRow),
     };
   }
 

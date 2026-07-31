@@ -118,7 +118,7 @@ test(
       assert.equal(localAuditResponse.status, 403);
       assert.equal(
         (await localAuditResponse.json()).code,
-        "operator_login_required",
+        "admin_required",
       );
       const corsResponse = await fetch(`${baseUrl}/api/health`, {
         headers: { origin: "http://127.0.0.1:3000" },

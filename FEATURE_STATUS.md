@@ -3,7 +3,7 @@
 Status snapshot for `FEATURES.md` under the binding architecture in
 `FEATURES_CONTRACT_V2.md`.
 
-- Snapshot: 2026-07-30, America/Los_Angeles
+- Snapshot: 2026-07-31, America/Los_Angeles
 - **Built** means implemented and verified through the active production path.
 - **Partial** means useful implementation exists but the complete requirement
   or acceptance gate has not passed.
@@ -19,7 +19,7 @@ HTML, and JSONL logs all run or persist on this machine under `data/`.
 
 An optional hosted staging path is now implemented. One Node gateway owns the
 public port, serves the public API landing page, protects `/control-plane` and
-`/api-console`, and the unlinked operations dashboard, and proxies
+`/api-console`, exposes the operations-dashboard link only to the admin, and proxies
 authenticated `/api/*` traffic to the internal crawler API. PostgreSQL is
 authoritative in hosted mode. OpenAI remains the only external
 semantic-compute dependency.
@@ -137,18 +137,18 @@ failure in the supported Phase 1 envelope.
 | `F3.16 / F3.18` traversal/four layers | **Built for generated and retained runs** | State cards expose sensing, semantic proposal, stored script/version/path/hash, deterministic execution/readback, flags, and evidence. |
 | `F3.19` API-console report presentation | **Built** | A fetched report shows crawl totals, an ordered human-readable journey derived from the retained LLM-authored script, compact key-moment evidence thumbnails, and forms grouped into sections with field type and critical metadata. Raw report JSON and the declared evidence policy remain available. |
 | `F3.19.5` API-console crawl-value prefill | **Built** | Retrieving a schema initializes editable Run API fields from its synthetic crawl-test payload, exposes a reset action, and labels values/files as test data rather than applicant data. |
-| `F3.20` private operations dashboard | **Built** | The unlinked `/ops/audit-log` view summarizes login, API, crawl, approval, execution, and normalized LLM latency/outcome telemetry with time/category/severity filters, actor attribution, per-call-type average/p50/p95/max timing, and expandable safe metadata. Hosted access requires an authenticated UI user; API Bearer tokens and direct local audit-data requests are rejected. |
+| `F3.20` private operations dashboard | **Built** | `/ops/audit-log` summarizes login, API, crawl, approval, execution, and normalized LLM telemetry with time/category/severity/user filters, actor attribution, an independent login-history window through five years, up to 100 recent login records, per-call-type timing, and expandable safe metadata. The link appears only to the admin on hosted home/login pages. |
 | `F4` local-first ownership | **Built** | The complete local UI/API/browser/artifact path remains. An optional authenticated hosted gateway now consolidates UI and API access without removing local operation. |
 | `F4.1.3` localhost opt-in | **Built** | Loopback targets require explicit per-run opt-in. Terminal submission is a separate origin-neutral crawl choice. |
-| `F4.6.1` hosted gateway | **Built locally; Heroku release pending** | One public process routes `/api/*`, protects the two operational UIs, serves compiled assets, and starts the API and UI on loopback-only internal ports. |
+| `F4.6.1` hosted gateway | **Built and deployed** | One public process routes `/api/*`, protects the operational UIs, serves compiled assets, and starts the API and UI on loopback-only internal ports. |
 | `F4.6.2–F4.6.4` authentication | **Built for staging** | Seven individual UI accounts use salted scrypt password hashes and database-backed HttpOnly sessions. Five failures cause a 15-minute principal lock. API clients use a high-entropy Bearer token whose digest, scopes, status, and audit events are stored in PostgreSQL. Tenant-level authorization and production identity-provider integration remain. |
 | `F4.6.5–F4.6.7` hosted boundaries/secrets | **Built for staging** | Hosted mode is headless-only, rejects private/loopback targets, treats `/tmp` as cache, and seeds credentials from a Git-ignored local file. Durable object storage for evidence remains. |
-| `F4.6.8` operator-only dashboard authorization | **Built** | The dashboard page and data API accept the individual UI login/session boundary and explicitly deny integration Bearer tokens. The route is not linked, but authentication—not URL secrecy—is the access control. |
+| `F4.6.8` admin-only dashboard authorization | **Built** | `dbosmail@gmail.com` has the persisted admin role; every other seeded account is an operator. The gateway and audit API both deny non-admin sessions, integration Bearer tokens, direct local requests, and spoofed identity headers. |
 | `F6.7` unified operational audit | **Built** | Critical login, API, crawl, approval, execution, and normalized LLM call timing/outcome events are actor-aware and append-only in PostgreSQL, with a matching local JSONL fallback. Passwords, prompts, secrets, request bodies, entered values, file bytes, and screenshots are excluded. |
 | `F5` model context | **Built for production generation** | Each novel state receives DOM, accessibility, screenshot, sections, guidance, options, history, and failure context with provenance. |
 | `F6` observability | **Built** | Health, lifecycle, events, errors, paths, and interrupted-run reconciliation are inspectable. |
 | `F7` safety | **Partial** | `submit: false` keeps terminal submission browser-blocked; `submit: true` opens a bounded final-action write window only for the LLM-authored terminal control. CAPTCHA solving, credential entry, and payment remain prohibited and CAPTCHA/login disqualify. Fresh public terminal-submit proof remains. |
-| `F8` verification | **Partial** | Production build passes; 80 automated checks pass and one optional PostgreSQL integration check is skipped when its dedicated test URI is absent. The authenticated production smoke suite and blind 37-site local corpus are green. Public D5 remains. |
+| `F8` verification | **Partial** | Production build passes; 94 automated checks pass and one optional PostgreSQL integration check is skipped when its dedicated test URI is absent. The authenticated production smoke suite and blind 37-site local corpus are green. Public D5 remains. |
 | `F8.9` execution conformance | **Built — conformance only** | Ground-truth-derived planners test physics, never discovery or flexibility. |
 | `F8.9.9–F8.9.9.2` universal test submission capture | **Built** | The console proxy supports all registered public or local testforms sites, dispatcher routing cookies, latest/list/clear semantics, native-name comparison, arrays, filenames, and multi-step aggregation. Arbitrary hosts remain blocked. |
 | `F8.9.8 / F8.10.3` oracle isolation | **Built** | Production audit freezes all artifacts before offline answer-key reads and regenerates per-form learning reports afterward. |

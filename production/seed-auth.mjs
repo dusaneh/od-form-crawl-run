@@ -27,19 +27,25 @@ try {
   for (const user of credentials.users || []) {
     const email = String(user.email || "").trim().toLowerCase();
     const displayName = String(user.displayName || email).trim();
+    const role =
+      String(user.role || "").toLowerCase() === "admin" ||
+      email === "dbosmail@gmail.com"
+        ? "admin"
+        : "operator";
     const credential = await hashPassword(String(user.password || ""));
     await client.query(
       `INSERT INTO formweave_users(
          email, display_name, password_salt, password_hash,
-         password_parameters, active, updated_at
+         password_parameters, active, role, updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, true, now())
+       VALUES ($1, $2, $3, $4, $5, true, $6, now())
        ON CONFLICT (email) DO UPDATE
        SET display_name = EXCLUDED.display_name,
            password_salt = EXCLUDED.password_salt,
            password_hash = EXCLUDED.password_hash,
            password_parameters = EXCLUDED.password_parameters,
            active = true,
+           role = EXCLUDED.role,
            updated_at = now()`,
       [
         email,
@@ -47,6 +53,7 @@ try {
         credential.salt,
         credential.hash,
         credential.parameters,
+        role,
       ],
     );
   }
