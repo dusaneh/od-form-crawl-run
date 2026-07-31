@@ -208,10 +208,10 @@ export async function generateDynamicsAssessment(
       1_000,
       Math.min(
         Number.parseInt(
-          process.env.FORMWEAVE_SEMANTIC_TIMEOUT_MS || "180000",
+          process.env.FORMWEAVE_SEMANTIC_TIMEOUT_MS || "360000",
           10,
         ),
-        300_000,
+        360_000,
       ),
     ),
   );

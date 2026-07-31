@@ -56,7 +56,7 @@ Configuration:
 | Screenshot detail | `high` |
 | Structured output | Strict JSON Schema |
 | Maximum output | 12,000 tokens |
-| Timeout | `FORMWEAVE_SEMANTIC_TIMEOUT_MS`, default 180 seconds, capped at 300 seconds |
+| Timeout | `FORMWEAVE_SEMANTIC_TIMEOUT_MS`, default 360 seconds, capped at 360 seconds |
 | Schema repair attempts | Up to 4 |
 
 The system message is:
@@ -621,4 +621,3 @@ then satisfy the stored rendered-result success criteria.
 | Restricted generated runtime | `local/executor/generated-d1-runtime.mjs` |
 | Playwright execution and result production | `local/executor/executor.mjs` |
 | Runtime input/output validation | `local/contracts/runtime-schemas.mjs` |
-
