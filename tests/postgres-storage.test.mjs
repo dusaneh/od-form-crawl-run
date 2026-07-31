@@ -87,6 +87,20 @@ test("user-role migration assigns the requested sole administrator", async () =>
   assert.match(migration, /ELSE 'operator'/i);
 });
 
+test("audit-category migration accepts retained LLM telemetry", async () => {
+  const migration = await readFile(
+    path.join(
+      projectRoot,
+      "db",
+      "migrations",
+      "007_audit_llm_category.sql",
+    ),
+    "utf8",
+  );
+  assert.match(migration, /DROP CONSTRAINT IF EXISTS formweave_audit_events_category_check/i);
+  assert.match(migration, /'execution',[\s\S]*'llm'/i);
+});
+
 test("PostgreSQL pools tolerate slow managed-database connection startup", async () => {
   const database = new FormWeaveDatabase(
     "postgres://formweave:test@localhost/formweave",
