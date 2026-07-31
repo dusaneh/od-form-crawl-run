@@ -7,7 +7,7 @@
 | Source revision reviewed | `0821dbf83cad45c898613e18efbee8d2c5553966` |
 | Semantic prompt version | `gate2-semantic-state-v3` |
 | D1 compiler version | `gate3-d1-compiler-v1` |
-| Generated-script interface | `1` |
+| Generated-script interface | `12` |
 | Result-envelope schema | `1` |
 | Last verified | 2026-07-30 |
 

@@ -23,7 +23,7 @@ import {
 import { shouldCaptureStateScreenshot } from "./evidence-retention.mjs";
 import { detectCaptcha } from "./traversal-automation.mjs";
 
-const GENERATED_FORM_SCRIPT_VERSION = 11;
+const GENERATED_FORM_SCRIPT_VERSION = 12;
 const MAX_GENERATED_STATES = 12;
 const MAX_SAME_PAGE_BRANCH_DEPTH = 1;
 const CANONICAL_PROFILE_KEYS = new Set([
