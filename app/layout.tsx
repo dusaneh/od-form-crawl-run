@@ -12,7 +12,7 @@ export async function generateMetadata(): Promise<Metadata> {
     requestHeaders.get("x-forwarded-proto") ??
     (host.startsWith("localhost") ? "http" : "https");
   const origin = `${protocol}://${host}`;
-  const title = "FormWeave — Public Form Crawler";
+  const title = "IntakeCR — Public Form Crawler";
   const description =
     "Recon public forms with synthetic test values, capture every state locally, and stop at the terminal submission boundary.";
 
@@ -24,13 +24,15 @@ export async function generateMetadata(): Promise<Metadata> {
       type: "website",
       title,
       description,
-      images: [{ url: "/og.png", width: 1728, height: 911, alt: title }],
+      images: [
+        { url: "/og-intakecr.png", width: 1732, height: 908, alt: title },
+      ],
     },
     twitter: {
       card: "summary_large_image",
       title,
       description,
-      images: ["/og.png"],
+      images: ["/og-intakecr.png"],
     },
   };
 }

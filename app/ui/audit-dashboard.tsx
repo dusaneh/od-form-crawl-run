@@ -172,7 +172,7 @@ export function AuditDashboard() {
     <main className="audit-dashboard-shell">
       <header className="audit-dashboard-header">
         <div>
-          <span>FORMWEAVE OPERATIONS</span>
+          <span>INTAKECR OPERATIONS</span>
           <h1>Audit and reliability dashboard</h1>
           <p>
             Critical authentication, crawl, approval, and execution outcomes.

@@ -517,7 +517,7 @@ export async function generateSemanticProposal(
               schema: SEMANTIC_PROPOSAL_JSON_SCHEMA,
             },
           },
-          max_output_tokens: 12_000,
+          max_output_tokens: 60_000,
         }),
         signal: controller.signal,
       });

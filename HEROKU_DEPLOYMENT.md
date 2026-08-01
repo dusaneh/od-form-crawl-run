@@ -16,6 +16,10 @@ One Heroku `web` process owns `$PORT` and acts as the public gateway:
 - `/api-console` — authenticated client API explorer;
 - `/login` — UI sign-in.
 
+Only the designated administrator may view `/control-plane`. The authenticated
+`/api-console` remains available to regular operators, while
+`/ops/audit-log` remains available to administrators.
+
 The gateway starts the Vinext production UI and crawler API on loopback-only
 internal ports (defaults `13000` and `18787`, independently configurable).
 Static client assets are served directly by the gateway.
@@ -23,6 +27,11 @@ PostgreSQL is authoritative; `/tmp/formweave-cache` is disposable.
 
 Hosted mode is headless-only and refuses localhost/private-network targets.
 Headful browsing and loopback fixture submission remain workstation features.
+Authenticated operators and API tokens may create crawls and form executions
+only for the exact `https://testforms.dbolab.io` origin. The designated
+administrator account (`dbosmail@gmail.com`) is the only identity authorized
+to use other public origins or view `/control-plane`; this privilege is not
+inherited by API tokens or by the general administrator role.
 
 ## One-time Heroku setup
 

@@ -672,6 +672,49 @@ test(
           });
           return;
         }
+        if (
+          url.pathname === "/api/runs/run_ui_failed" &&
+          request.method() === "GET"
+        ) {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              run: {
+                id: "run_ui_failed",
+                status: "failed",
+                stage: "Artifact quality floor failed",
+                findings: [
+                  {
+                    tone: "danger",
+                    code: "fetch_failed",
+                    title: "Could not fetch target",
+                    detail:
+                      "OpenAI semantic generation was incomplete: max_output_tokens.",
+                  },
+                  {
+                    tone: "danger",
+                    code: "quality_floor",
+                    title: "No durable artifact produced",
+                    detail:
+                      "All target fetches or rendered-DOM extractions failed.",
+                  },
+                ],
+                nodes: [
+                  {
+                    status: "review",
+                    title: "Target page",
+                    subtitle: "Fetch failed",
+                    notes: [
+                      "Screenshot capture was unavailable; crawl data is still preserved.",
+                    ],
+                  },
+                ],
+              },
+            }),
+          });
+          return;
+        }
         if (url.pathname.startsWith(`/api/runs/${run.id}/evidence/`)) {
           await route.fulfill({
             status: 200,
@@ -841,7 +884,7 @@ test(
           true,
         );
       }
-      const apiBaseInput = page.getByLabel("FormWeave API");
+      const apiBaseInput = page.getByLabel("IntakeCR API");
       await apiBaseInput.fill("https://remote-formweave.example");
       await page.waitForFunction(
         () =>
@@ -919,6 +962,29 @@ test(
         field.testValue,
       );
       await page.getByText("Test value", { exact: true }).waitFor();
+
+      await page
+        .getByLabel("Run ID returned by crawl kickoff")
+        .fill("run_ui_failed");
+      await page.getByRole("button", { name: /Poll crawl once/ }).click();
+      const failureBanner = page.locator(".api-console-error");
+      await failureBanner.getByText("WHAT WENT WRONG", { exact: true }).waitFor();
+      await failureBanner
+        .getByText("4 issues found in the response", { exact: true })
+        .waitFor();
+      await failureBanner
+        .getByText("AI script generation reached its output limit", {
+          exact: true,
+        })
+        .waitFor();
+      await failureBanner
+        .getByText("The crawl produced no usable form artifact", {
+          exact: true,
+        })
+        .waitFor();
+      await failureBanner
+        .getByText("Screenshot evidence was unavailable", { exact: true })
+        .waitFor();
 
       await page.goto(`${appUrl}/ops/audit-log`, { waitUntil: "networkidle" });
       await page

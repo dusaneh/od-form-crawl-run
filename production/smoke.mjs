@@ -40,13 +40,13 @@ await check("public health", "/healthz", { expected: 200, includes: "online" });
 await check("anonymous UI redirects", "/control-plane", { expected: 302 });
 await check("login page", "/login?return_to=%2Fcontrol-plane", {
   expected: 200,
-  includes: "Continue to FormWeave",
+  includes: "Continue to IntakeCR",
 });
 await check("anonymous API", "/api/health", { expected: 401 });
-const basicUi = await check("Basic UI", "/control-plane", {
+const basicUi = await check("operator API console", "/api-console", {
   expected: 200,
   headers: { authorization: basic },
-  includes: "Form intelligence",
+  includes: "Crawl, approve, and run a form",
 });
 const sessionCookie = basicUi.response.headers
   .get("set-cookie")
@@ -71,6 +71,11 @@ await check("Bearer rejected for UI", "/control-plane", {
   expected: 302,
   headers: { authorization: bearer },
 });
+await check("operator control plane forbidden", "/control-plane", {
+  expected: 403,
+  headers: { cookie: sessionCookie },
+  includes: "Control-plane access required",
+});
 await check("anonymous audit dashboard redirects", "/ops/audit-log", {
   expected: 302,
 });
@@ -94,6 +99,11 @@ const adminSessionCookie = adminUi.response.headers
 if (!adminSessionCookie) {
   throw new Error("Admin login did not issue a session cookie.");
 }
+await check("designated admin control plane", "/control-plane", {
+  expected: 200,
+  headers: { cookie: adminSessionCookie },
+  includes: "Form intelligence",
+});
 await check("Bearer rejected for audit data", "/api/ops/audit", {
   expected: 401,
   headers: { authorization: bearer },
@@ -123,6 +133,36 @@ await check("hosted headful rejected", "/api/runs", {
   method: "POST",
   headers: { authorization: bearer },
   body: {
+    urls: ["https://testforms.dbolab.io/site_a_simple/intake"],
+    browserMode: "headful",
+  },
+  includes: "hosted_headful_unsupported",
+});
+await check("API token external target forbidden", "/api/runs", {
+  expected: 403,
+  method: "POST",
+  headers: { authorization: bearer },
+  body: {
+    urls: ["https://example.com/form"],
+    browserMode: "headless",
+  },
+  includes: "external_target_access_required",
+});
+await check("operator external target forbidden", "/api/runs", {
+  expected: 403,
+  method: "POST",
+  headers: { cookie: sessionCookie },
+  body: {
+    urls: ["https://example.com/form"],
+    browserMode: "headless",
+  },
+  includes: "external_target_access_required",
+});
+await check("designated admin may reach external crawl validation", "/api/runs", {
+  expected: 400,
+  method: "POST",
+  headers: { cookie: adminSessionCookie },
+  body: {
     urls: ["https://example.com/form"],
     browserMode: "headful",
   },
@@ -131,7 +171,7 @@ await check("hosted headful rejected", "/api/runs", {
 await check("hosted loopback rejected", "/api/runs", {
   expected: 400,
   method: "POST",
-  headers: { authorization: bearer },
+  headers: { cookie: adminSessionCookie },
   body: {
     urls: ["http://localhost:9000/form"],
     allowLocalTargets: true,

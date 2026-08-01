@@ -31,6 +31,13 @@ expired, revoked, or invalid. A `429 authentication_locked` response means
 repeated invalid authentication attempts temporarily locked that principal.
 The focused OpenAPI contracts linked below define the same Bearer scheme.
 
+On the hosted staging service, Bearer tokens and regular operator accounts may
+start crawls and approved form runs only on the exact
+`https://testforms.dbolab.io` origin. Other public origins return
+`403 external_target_access_required` and require the designated administrator's
+user session or Basic credentials. API tokens never inherit that user-only
+privilege.
+
 ## What a client needs
 
 Before integrating, the client needs:

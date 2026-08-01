@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { randomBytes } from "node:crypto";
 
 import { sha256, verifyPassword } from "./auth-crypto.mjs";
+import { userScopes } from "./access-policy.mjs";
 
 const DUMMY_CREDENTIAL = Object.freeze({
   salt: "g0zLz0vVT9HbOuq9YV0HVxc7kPk2aYdx",
@@ -85,8 +86,7 @@ export class AuthStore {
       principal: user.email,
       displayName: user.display_name,
       role: user.role === "admin" ? "admin" : "operator",
-      scopes:
-        user.role === "admin" ? ["ui", "api", "admin"] : ["ui", "api"],
+      scopes: userScopes(user.email, user.role),
     };
   }
 
@@ -211,10 +211,7 @@ export class AuthStore {
       principal: session.email,
       displayName: session.display_name,
       role: session.role === "admin" ? "admin" : "operator",
-      scopes:
-        session.role === "admin"
-          ? ["ui", "api", "admin"]
-          : ["ui", "api"],
+      scopes: userScopes(session.email, session.role),
       expiresAt:
         session.expires_at?.toISOString?.() || session.expires_at,
     };

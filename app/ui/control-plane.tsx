@@ -161,8 +161,8 @@ function Sidebar({
         ))}
       </nav>
       <div className="sidebar-bottom">
-        <div className="avatar" title="FormWeave crawler">
-          FW
+        <div className="avatar" title="IntakeCR crawler">
+          IC
         </div>
       </div>
     </aside>
@@ -1139,7 +1139,7 @@ function TraversalPanel({
           kind: "working",
           label: run.liveTraversal?.currentLabel || run.stage,
           description:
-            "FormWeave is examining the current rendered state and verifies each field after actuation.",
+            "IntakeCR is examining the current rendered state and verifies each field after actuation.",
           status: "active",
           fingerprint: "",
           capturedAt: "",
@@ -2074,7 +2074,7 @@ function LaunchModal({
           <div>
             <span className="eyebrow">NEW FORM TRAVERSAL</span>
             <h2 id="launch-title">Populate, branch, and map forms</h2>
-            <p>Supply one starting URL. The LLM selects one resource-access form journey, stores its versioned script, then FormWeave performs deterministic validation replay.</p>
+            <p>Supply one starting URL. The LLM selects one resource-access form journey, stores its versioned script, then IntakeCR performs deterministic validation replay.</p>
           </div>
           <button onClick={onClose} aria-label="Close launch dialog">×</button>
         </div>
@@ -3217,7 +3217,7 @@ export function ControlPlane() {
           <section className="empty-run-card">
             <span className="eyebrow">NO REAL CRAWLS YET</span>
             <h2>Start with a public form URL</h2>
-            <p>FormWeave will render the page, extract its actual controls, capture evidence, and produce a downloadable report.</p>
+            <p>IntakeCR will render the page, extract its actual controls, capture evidence, and produce a downloadable report.</p>
             <button className="primary-button" onClick={() => setLaunchOpen(true)}>
               <span className="plus">+</span> Launch first crawl
             </button>
@@ -3236,7 +3236,7 @@ export function ControlPlane() {
           />
         )}
         <footer className="app-footer">
-          <span>FORMWEAVE CONTROL PLANE</span>
+          <span>INTAKECR CONTROL PLANE</span>
           <span>
             {runtime
               ? runtime.runtime === "postgresql"

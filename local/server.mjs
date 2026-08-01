@@ -26,6 +26,9 @@ import { createFormWeaveDatabase } from "./postgres/database.mjs";
 import { selectRetainedEvidence } from "./evidence-retention.mjs";
 import { buildRunnerJourney } from "./report-runner-journey.mjs";
 import { summarizeLlmTelemetry } from "./audit/llm-telemetry.mjs";
+import {
+  mayExecuteHostedTarget,
+} from "../production/access-policy.mjs";
 
 const localDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(localDirectory, "..");
@@ -866,12 +869,19 @@ function actorFromRequest(request) {
   const role = String(
     request.headers.get("x-formweave-auth-role") || "",
   ).toLowerCase();
+  const scopes = String(
+    request.headers.get("x-formweave-auth-scopes") || "",
+  )
+    .split(",")
+    .map((scope) => scope.trim())
+    .filter(Boolean);
   if (hosted && mechanism === "bearer" && principal) {
     return {
       actorType: "api_token",
       actorId: principal,
       mechanism,
       role,
+      scopes,
     };
   }
   if (hosted && ["basic", "session"].includes(mechanism) && principal) {
@@ -880,6 +890,7 @@ function actorFromRequest(request) {
       actorId: principal,
       mechanism,
       role,
+      scopes,
     };
   }
   return {
@@ -887,7 +898,34 @@ function actorFromRequest(request) {
     actorId: hosted ? null : "local-direct",
     mechanism: hosted ? "missing" : "local",
     role: hosted ? "" : "local",
+    scopes: [],
   };
+}
+
+function mayExecuteTarget(request, targetUrl) {
+  if (!hosted) return true;
+  const actor = actorFromRequest(request);
+  return mayExecuteHostedTarget(
+    {
+      mechanism: actor.mechanism,
+      principal: actor.actorId,
+      role: actor.role,
+      scopes: actor.scopes,
+    },
+    targetUrl,
+  );
+}
+
+function externalTargetForbidden(request) {
+  return jsonResponse(
+    request,
+    {
+      error:
+        "Only the designated administrator may crawl or run forms outside https://testforms.dbolab.io.",
+      code: "external_target_access_required",
+    },
+    403,
+  );
 }
 
 async function appendOperationalAudit(event, eventKey = randomUUID()) {
@@ -2121,6 +2159,9 @@ async function createRun(request) {
       400,
     );
   }
+  if (!mayExecuteTarget(request, rawUrls[0])) {
+    return externalTargetForbidden(request);
+  }
   if (payload.discoverRelatedPages === true) {
     return jsonResponse(
       request,
@@ -2488,6 +2529,9 @@ async function createApprovedRun(request, formId) {
     form = await readFormRecord(formsRoot, formId, database);
   } catch {
     return jsonResponse(request, { error: "Form not found." }, 404);
+  }
+  if (!mayExecuteTarget(request, form.targetUrl)) {
+    return externalTargetForbidden(request);
   }
   if (
     form.status !== "approved" ||

@@ -2324,8 +2324,7 @@ textarea:focus-visible {
 }
 
 .api-console-error {
-  display: flex;
-  align-items: center;
+  display: grid;
   gap: 10px;
   margin-bottom: 14px;
   padding: 11px 13px;
@@ -2336,13 +2335,105 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
-.api-console-error strong {
+.api-console-error-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.api-console-error-summary > strong {
   padding: 4px 7px;
   border-radius: 5px;
   color: white;
   background: var(--red);
   font-family: var(--font-geist-mono);
   font-size: 9px;
+}
+
+.api-console-failure-explanation {
+  display: grid;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #efbbb6;
+  border-radius: 9px;
+  color: #67312c;
+  background: #fff8f7;
+}
+
+.api-console-error .api-console-failure-explanation {
+  margin-top: 0;
+  border-color: rgb(239 187 182 / 72%);
+  background: rgb(255 255 255 / 60%);
+}
+
+.api-console-failure-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.api-console-failure-heading > span {
+  color: #8b3a34;
+  font-family: var(--font-geist-mono);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.09em;
+}
+
+.api-console-failure-heading > small {
+  color: #91645f;
+  font-size: 9px;
+}
+
+.api-console-failure-explanation ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: failure-item;
+}
+
+.api-console-failure-explanation li {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border-left: 3px solid var(--red);
+  border-radius: 4px 7px 7px 4px;
+  background: white;
+  counter-increment: failure-item;
+}
+
+.api-console-failure-explanation li > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.api-console-failure-explanation li strong {
+  color: #67312c;
+  font-size: 11px;
+}
+
+.api-console-failure-explanation li code {
+  color: #9a4a43;
+  font-size: 8px;
+  overflow-wrap: anywhere;
+}
+
+.api-console-failure-explanation li p {
+  margin: 0;
+  color: #75514d;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.api-console-failure-explanation li > small {
+  color: #9a7773;
+  font-size: 8px;
 }
 
 @media (max-width: 1000px) {

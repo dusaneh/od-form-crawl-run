@@ -2,6 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  apiFailureFrom,
+  type ApiFailure,
+} from "@/app/lib/api-failure";
+
 type JsonObject = Record<string, unknown>;
 type CrawlMode = "probe" | "submit";
 type FixtureAuthorities = {
@@ -23,12 +28,7 @@ type Exchange = {
   status: number;
   response: unknown;
 };
-type ConsoleError = {
-  status: number;
-  code: string;
-  message: string;
-  response: unknown;
-};
+type ConsoleError = ApiFailure;
 
 const DEFAULT_API = "";
 const DEFAULT_TARGET =
@@ -89,14 +89,32 @@ function curlCommand(
 }
 
 function errorFrom(status: number, payload: unknown): ConsoleError {
-  const object =
-    payload && typeof payload === "object" ? (payload as JsonObject) : {};
-  return {
-    status,
-    code: String(object.code || `http_${status}`),
-    message: String(object.error || object.detail || "Request failed."),
-    response: payload,
-  };
+  return apiFailureFrom(status, payload, { force: true }) as ConsoleError;
+}
+
+function FailureExplanation({ failure }: { failure: ConsoleError }) {
+  return (
+    <div className="api-console-failure-explanation">
+      <div className="api-console-failure-heading">
+        <span>WHAT WENT WRONG</span>
+        <small>
+          {failure.issues.length} {failure.issues.length === 1 ? "issue" : "issues"} found in the response
+        </small>
+      </div>
+      <ol>
+        {failure.issues.map((issue, index) => (
+          <li key={`${issue.code}_${index}`}>
+            <div>
+              <strong>{issue.title}</strong>
+              <code>{issue.code}</code>
+            </div>
+            <p>{issue.detail}</p>
+            <small>Source: {issue.source}</small>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
 }
 
 function captureBaseFor(target: string) {
@@ -911,6 +929,13 @@ export function ApiConsole() {
   const selectedExchangeIndex = exchange
     ? exchanges.findIndex((item) => item.id === exchange.id)
     : -1;
+  const selectedExchangeFailure = useMemo(
+    () =>
+      exchange
+        ? apiFailureFrom(exchange.status, exchange.response)
+        : null,
+    [exchange],
+  );
 
   async function request(
     label: string,
@@ -968,6 +993,8 @@ export function ApiConsole() {
       setError(nextError);
       throw nextError;
     }
+    const responseFailure = apiFailureFrom(response.status, payload);
+    if (responseFailure) setError(responseFailure);
     return payload as JsonObject;
   }
 
@@ -992,6 +1019,8 @@ export function ApiConsole() {
         return;
       }
       setCrawl(current);
+      const terminalFailure = apiFailureFrom(200, payload);
+      if (terminalFailure) setError(terminalFailure);
       const ids = Array.isArray(current.formIds) ? current.formIds : [];
       if (ids[0]) setFormId(String(ids[0]));
     } catch {
@@ -1053,12 +1082,13 @@ export function ApiConsole() {
     try {
       new URL(targetUrl);
     } catch (caught) {
-      setError({
-        status: 0,
-        code: "invalid_target_url",
-        message: caught instanceof Error ? caught.message : "Invalid target URL.",
-        response: null,
-      });
+      setError(
+        errorFrom(0, {
+          code: "invalid_target_url",
+          error:
+            caught instanceof Error ? caught.message : "Invalid target URL.",
+        }),
+      );
       return;
     }
     setBusy("crawl");
@@ -1135,6 +1165,8 @@ export function ApiConsole() {
           ? (payload.execution as JsonObject)
           : {};
       setExecution(current);
+      const terminalFailure = apiFailureFrom(200, payload);
+      if (terminalFailure) setError(terminalFailure);
     } catch {
       // The structured error is already displayed.
     } finally {
@@ -1228,8 +1260,11 @@ export function ApiConsole() {
 
       {error && (
         <section className="api-console-error" role="alert">
-          <strong>{error.code}</strong>
-          <span>HTTP {error.status || "client"} · {error.message}</span>
+          <div className="api-console-error-summary">
+            <strong>{error.code}</strong>
+            <span>HTTP {error.status || "client"} · {error.message}</span>
+          </div>
+          <FailureExplanation failure={error} />
         </section>
       )}
 
@@ -1303,7 +1338,7 @@ export function ApiConsole() {
                 ) : null}
               </label>
               <label>
-                FormWeave API
+                IntakeCR API
                 <input
                   value={apiBase}
                   onChange={(event) => setApiBase(event.target.value)}
@@ -1977,7 +2012,9 @@ export function ApiConsole() {
                   <code>{exchange.url}</code>
                   <span
                     className={
-                      exchange.status >= 200 && exchange.status < 400
+                      exchange.status >= 200 &&
+                      exchange.status < 400 &&
+                      !selectedExchangeFailure
                         ? "ok"
                         : "bad"
                     }
@@ -2000,6 +2037,9 @@ export function ApiConsole() {
                   <summary>Equivalent curl</summary>
                   <pre>{exchange.curl}</pre>
                 </details>
+                {selectedExchangeFailure && (
+                  <FailureExplanation failure={selectedExchangeFailure} />
+                )}
                 <details className="api-console-json">
                   <summary>Raw response</summary>
                   <pre>{pretty(exchange.response)}</pre>

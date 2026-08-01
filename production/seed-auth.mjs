@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { hashPassword, sha256 } from "./auth-crypto.mjs";
+import { PRIVILEGED_OPERATOR_EMAIL } from "./access-policy.mjs";
 import { loadEnvFile } from "../local/env.mjs";
 import { createFormWeaveDatabase } from "../local/postgres/database.mjs";
 
@@ -29,7 +30,7 @@ try {
     const displayName = String(user.displayName || email).trim();
     const role =
       String(user.role || "").toLowerCase() === "admin" ||
-      email === "dbosmail@gmail.com"
+      email === PRIVILEGED_OPERATOR_EMAIL
         ? "admin"
         : "operator";
     const credential = await hashPassword(String(user.password || ""));

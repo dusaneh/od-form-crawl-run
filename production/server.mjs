@@ -9,6 +9,10 @@ import { fileURLToPath } from "node:url";
 import { loadEnvFile } from "../local/env.mjs";
 import { createFormWeaveDatabase } from "../local/postgres/database.mjs";
 import { AuthStore } from "./auth-store.mjs";
+import {
+  ACCESS_SCOPES,
+  hasPrivilegedUserScope,
+} from "./access-policy.mjs";
 
 const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -138,6 +142,9 @@ gateway = createServer(async (incoming, outgoing) => {
       url.pathname.startsWith("/api-console/") ||
       url.pathname === "/ops/audit-log" ||
       url.pathname.startsWith("/ops/audit-log/");
+    const controlPlaneProtected =
+      url.pathname === "/control-plane" ||
+      url.pathname.startsWith("/control-plane/");
     const apiProtected = url.pathname.startsWith("/api/");
     const dashboardApi =
       url.pathname === "/api/ops/audit" ||
@@ -177,6 +184,15 @@ gateway = createServer(async (incoming, outgoing) => {
 
     if (adminProtected && identity?.role !== "admin") {
       return forbidden(outgoing, { api: dashboardApi });
+    }
+    if (
+      controlPlaneProtected &&
+      !hasPrivilegedUserScope(identity, ACCESS_SCOPES.controlPlane)
+    ) {
+      return forbidden(outgoing, {
+        api: false,
+        permission: "control-plane",
+      });
     }
 
     const targetPort = apiProtected ? apiPort : uiPort;
@@ -346,7 +362,7 @@ function proxyRequest(incoming, outgoing, targetPort, identity) {
       return;
     }
     sendJson(outgoing, 502, {
-      error: "An internal FormWeave service is unavailable.",
+      error: "An internal IntakeCR service is unavailable.",
       code: "upstream_unavailable",
     });
   });
@@ -470,8 +486,8 @@ function unauthorized(outgoing, { api, lockedUntil }) {
   outgoing.setHeader(
     "www-authenticate",
     api
-      ? 'Basic realm="FormWeave", charset="UTF-8", Bearer realm="FormWeave API"'
-      : 'Basic realm="FormWeave", charset="UTF-8"',
+      ? 'Basic realm="IntakeCR", charset="UTF-8", Bearer realm="IntakeCR API"'
+      : 'Basic realm="IntakeCR", charset="UTF-8"',
   );
   return sendJson(outgoing, 401, {
     error: "Authentication is required.",
@@ -479,14 +495,23 @@ function unauthorized(outgoing, { api, lockedUntil }) {
   });
 }
 
-function forbidden(outgoing, { api }) {
+function forbidden(outgoing, { api, permission = "admin" }) {
+  const controlPlane = permission === "control-plane";
   if (api) {
     return sendJson(outgoing, 403, {
-      error: "Administrator access is required.",
-      code: "admin_required",
+      error: controlPlane
+        ? "Control-plane access is restricted to the designated administrator."
+        : "Administrator access is required.",
+      code: controlPlane ? "control_plane_access_required" : "admin_required",
     });
   }
-  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Access denied · FormWeave</title></head><body style="font-family:system-ui,sans-serif;padding:3rem;color:#153d32"><main><h1>Administrator access required</h1><p>This dashboard is available only to the FormWeave administrator.</p><a href="/">Return home</a></main></body></html>`;
+  const heading = controlPlane
+    ? "Control-plane access required"
+    : "Administrator access required";
+  const detail = controlPlane
+    ? "This control plane is available only to the designated IntakeCR administrator."
+    : "This dashboard is available only to an IntakeCR administrator.";
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Access denied · IntakeCR</title></head><body style="font-family:system-ui,sans-serif;padding:3rem;color:#153d32"><main><h1>${heading}</h1><p>${detail}</p><a href="/">Return home</a></main></body></html>`;
   outgoing.writeHead(403, {
     "content-type": "text/html; charset=utf-8",
     "content-length": Buffer.byteLength(body),
@@ -517,7 +542,7 @@ function sendLoginPage(
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Sign in · FormWeave</title>
+    <title>Sign in · IntakeCR</title>
     <style>
       :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
       * { box-sizing: border-box; }
@@ -543,7 +568,7 @@ function sendLoginPage(
   </head>
   <body>
     <main>
-      <p class="eyebrow">FormWeave protected access</p>
+      <p class="eyebrow">IntakeCR protected access</p>
       <h1>Sign in</h1>
       <p class="intro">Use the individual staging credentials assigned to you.</p>
       ${identity?.role === "admin" ? '<a class="admin-link" href="/ops/audit-log">Open audit dashboard</a>' : ""}
@@ -555,7 +580,7 @@ function sendLoginPage(
         <label>Password
           <input name="password" type="password" autocomplete="current-password" required>
         </label>
-        <button type="submit">Continue to FormWeave</button>
+        <button type="submit">Continue to IntakeCR</button>
       </form>
       <p class="note">Five failed attempts lock an account for 15 minutes. Sessions expire after eight hours.</p>
     </main>

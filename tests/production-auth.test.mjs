@@ -9,6 +9,98 @@ import {
   verifyPassword,
 } from "../production/auth-crypto.mjs";
 import { AuthStore } from "../production/auth-store.mjs";
+import {
+  ACCESS_SCOPES,
+  hasPrivilegedUserScope,
+  isStandardTestTarget,
+  mayExecuteHostedTarget,
+  requiresExternalTargetAccess,
+  userScopes,
+} from "../production/access-policy.mjs";
+
+test("the designated administrator receives narrowly scoped privileges", () => {
+  const scopes = userScopes("DBOSMAIL@gmail.com", "admin");
+  assert.deepEqual(scopes, [
+    "ui",
+    "api",
+    "admin",
+    "control-plane",
+    "external-targets",
+  ]);
+  assert.equal(
+    hasPrivilegedUserScope(
+      {
+        mechanism: "session",
+        principal: "dbosmail@gmail.com",
+        role: "admin",
+        scopes,
+      },
+      ACCESS_SCOPES.controlPlane,
+    ),
+    true,
+  );
+});
+
+test("admin role and API tokens do not grant designated-user privileges", () => {
+  assert.deepEqual(userScopes("another-admin@example.test", "admin"), [
+    "ui",
+    "api",
+    "admin",
+  ]);
+  assert.equal(
+    hasPrivilegedUserScope(
+      {
+        mechanism: "bearer",
+        principal: "dbosmail@gmail.com",
+        role: "admin",
+        scopes: ["admin", "control-plane", "external-targets"],
+      },
+      ACCESS_SCOPES.externalTargets,
+    ),
+    false,
+  );
+});
+
+test("hosted target execution combines origin and designated-user checks", () => {
+  const operator = {
+    mechanism: "session",
+    principal: "operator@example.test",
+    role: "operator",
+    scopes: ["ui", "api"],
+  };
+  const designatedAdmin = {
+    mechanism: "session",
+    principal: "dbosmail@gmail.com",
+    role: "admin",
+    scopes: userScopes("dbosmail@gmail.com", "admin"),
+  };
+  assert.equal(
+    mayExecuteHostedTarget(
+      operator,
+      "https://testforms.dbolab.io/site_a/intake",
+    ),
+    true,
+  );
+  assert.equal(
+    mayExecuteHostedTarget(operator, "https://example.org/application"),
+    false,
+  );
+  assert.equal(
+    mayExecuteHostedTarget(
+      designatedAdmin,
+      "https://example.org/application",
+    ),
+    true,
+  );
+});
+
+test("only the exact HTTPS testforms origin is a standard target", () => {
+  assert.equal(isStandardTestTarget("https://testforms.dbolab.io/site_a"), true);
+  assert.equal(isStandardTestTarget("https://testforms.dbolab.io:443/site_a"), true);
+  assert.equal(requiresExternalTargetAccess("http://testforms.dbolab.io/site_a"), true);
+  assert.equal(requiresExternalTargetAccess("https://sub.testforms.dbolab.io/site_a"), true);
+  assert.equal(requiresExternalTargetAccess("https://example.org/form"), true);
+});
 
 test("password hashes verify without retaining plaintext", async () => {
   const password = generatePassword();

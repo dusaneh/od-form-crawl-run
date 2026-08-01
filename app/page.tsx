@@ -3,6 +3,12 @@ import { headers } from "next/headers";
 export default async function Home() {
   const requestHeaders = await headers();
   const isAdmin = requestHeaders.get("x-formweave-auth-role") === "admin";
+  const scopes = new Set(
+    (requestHeaders.get("x-formweave-auth-scopes") || "")
+      .split(",")
+      .filter(Boolean),
+  );
+  const canViewControlPlane = scopes.has("control-plane");
   return (
     <main
       style={{
@@ -23,7 +29,7 @@ export default async function Home() {
             textTransform: "uppercase",
           }}
         >
-          FormWeave API service
+          IntakeCR API service
         </p>
         <h1
           style={{
@@ -48,9 +54,11 @@ export default async function Home() {
           at protected, non-home routes.
         </p>
         <nav style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
-          <a href="/control-plane" style={linkStyle}>
-            Open control plane
-          </a>
+          {canViewControlPlane && (
+            <a href="/control-plane" style={linkStyle}>
+              Open control plane
+            </a>
+          )}
           <a href="/api-console" style={linkStyle}>
             Open API console
           </a>
