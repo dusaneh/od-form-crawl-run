@@ -22,8 +22,12 @@ import {
 } from "./semantic/submission-result-assessment.mjs";
 import { shouldCaptureStateScreenshot } from "./evidence-retention.mjs";
 import { detectCaptcha } from "./traversal-automation.mjs";
+import {
+  allowedDependencyProbeActions,
+  expectedDependencyProbeValues,
+} from "./traversal-special-rules.mjs";
 
-const GENERATED_FORM_SCRIPT_VERSION = 13;
+const GENERATED_FORM_SCRIPT_VERSION = 15;
 const MAX_GENERATED_STATES = 12;
 const MAX_SAME_PAGE_BRANCH_DEPTH = 1;
 const CANONICAL_PROFILE_KEYS = new Set([
@@ -232,31 +236,10 @@ function scalarKey(value) {
   return `${typeof value}:${String(value)}`;
 }
 
-function expectedChoiceProbeValues(field) {
-  if (!field?.actuate || field.legalAcceptanceType) return [];
-  if (["checkbox", "switch"].includes(field.controlType)) {
-    return [false, true];
-  }
-  if (!["select", "radio"].includes(field.controlType)) return [];
-  const observedOptions =
-    Array.isArray(field.observedOptions) && field.observedOptions.length > 0
-      ? field.observedOptions
-      : field.options || [];
-  return observedOptions
-    .filter(
-      (option) =>
-        String(option.value ?? "").trim() !== "" &&
-        !/^(?:choose|select|please choose|please select)$/i.test(
-          String(option.label || "").trim(),
-        ),
-    )
-    .map((option) => option.value);
-}
-
 export function choiceProbeCoverageIssues(plan) {
   const issues = [];
   for (const field of plan.fields || []) {
-    const expected = expectedChoiceProbeValues(field);
+    const expected = expectedDependencyProbeValues(field);
     if (expected.length === 0) continue;
     const expectedKeys = new Set(expected.map(scalarKey));
     const actual = Array.isArray(field.probeValues) ? field.probeValues : [];
@@ -270,7 +253,7 @@ export function choiceProbeCoverageIssues(plan) {
         detail: `Choice probes must exactly cover observed safe options. Missing: ${missing.map(String).join(", ") || "none"}; extra: ${extra.map(String).join(", ") || "none"}.`,
         selectorCandidates: field.selectors || [],
         instruction:
-          "Return one explicit choice_probe action for every observed non-placeholder option. Checkbox and switch controls require both false and true.",
+          "Return one explicit choice_probe action for every observed non-placeholder option unless the shared special traversal rules exempt the select. Checkbox and switch controls require both false and true.",
       });
     }
   }
@@ -933,6 +916,19 @@ function generatedStatePlan({
             acceptedDisposition?.crawlModelingAuthority ||
             "";
       const sensitivityDecision = policySensitivityDecision(field, rawFact);
+      const planFieldIdentity = {
+        ...field,
+        label: field.rawLabel,
+        observedOptions,
+        rawIdentity: {
+          id: rawFact?.id || "",
+          name: rawFact?.name || "",
+        },
+      };
+      const acceptedProbeActions = allowedDependencyProbeActions(
+        planFieldIdentity,
+        probeActions.get(field.key) || [],
+      );
       return {
         key: field.key,
         label: field.rawLabel,
@@ -978,10 +974,8 @@ function generatedStatePlan({
           field.controlType === "file" && action
             ? "[generated harmless upload]"
             : action?.value ?? field.testValue,
-        probeValues: (probeActions.get(field.key) || []).map(
-          (probe) => probe.value,
-        ),
-        probeRationales: (probeActions.get(field.key) || []).map((probe) => ({
+        probeValues: acceptedProbeActions.map((probe) => probe.value),
+        probeRationales: acceptedProbeActions.map((probe) => ({
           value: probe.value,
           rationale: probe.rationale,
           proposalId: probe.proposalId,
@@ -2961,7 +2955,7 @@ export function terminalEligibilityIssues(completePlan) {
       });
     }
     const expectedRows = state.fields.flatMap((field) =>
-      expectedChoiceProbeValues(field).map((value) => ({
+      expectedDependencyProbeValues(field).map((value) => ({
         fieldKey: field.key,
         value,
       })),

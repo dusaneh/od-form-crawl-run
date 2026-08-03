@@ -14,7 +14,11 @@ import {
   PhysicsToolbox,
   generatedUploadPayload,
 } from "../local/executor/physics-toolbox.mjs";
-import { primeInteractiveSurface } from "../local/executor/interaction-priming.mjs";
+import {
+  alphanumericGist,
+  scalarReadbackEquivalent,
+} from "../local/executor/value-equivalence.mjs";
+import { preparePageOnset } from "../local/executor/interaction-priming.mjs";
 import {
   matchDeclaredState,
   observedIdentityKey,
@@ -26,6 +30,45 @@ const fixturePath = "C:\\pp2\\FCR_B\\server\\test\\fixtures\\form.html";
 function required(kind = "never") {
   return { kind };
 }
+
+test("scalar readback compares the generic alphanumeric gist", () => {
+  assert.equal(alphanumericGist(" AB-123 45 "), "ab12345");
+  assert.equal(scalarReadbackEquivalent("AB12345", "AB-123 45"), true);
+  assert.equal(scalarReadbackEquivalent("Test.User", "test user"), true);
+  assert.equal(scalarReadbackEquivalent("AB12345", "AB-123 46"), false);
+  assert.equal(scalarReadbackEquivalent("---", "..."), false);
+});
+
+test("writeControl accepts site-formatted scalar readback", async () => {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  try {
+    await page.setContent(`
+      <label for="account">Account identifier</label>
+      <input id="account" />
+      <script>
+        document.querySelector("#account").addEventListener("input", (event) => {
+          const gist = event.target.value.replace(/[^a-z0-9]/gi, "");
+          event.target.value = gist.length > 2
+            ? gist.slice(0, 2) + "-" + gist.slice(2, 5) + " " + gist.slice(5)
+            : gist;
+        });
+      </script>
+    `);
+    const toolbox = new PhysicsToolbox(page);
+    const result = await toolbox.writeControl(
+      { selectors: ["#account"] },
+      "text",
+      [],
+      "AB12345",
+    );
+    assert.equal(await page.locator("#account").inputValue(), "AB-123 45");
+    assert.equal(result.verified, true);
+  } finally {
+    await page.close();
+    await browser.close();
+  }
+});
 
 function field({
   key,
@@ -494,7 +537,7 @@ test(
         before.observation.controls.find(
           (field) => field.id === "closed-detail-field",
         )?.visible,
-        false,
+        true,
       );
       assert.equal(
         before.observation.actions.find(
@@ -503,7 +546,7 @@ test(
             action.rawText === "Eligibility questions" &&
             action.visible,
         )?.disclosureExpanded,
-        false,
+        true,
       );
       const result = await toolbox.writeControl(
         { selectors: ["#qual-income"] },
@@ -518,7 +561,6 @@ test(
           ?.visible,
         true,
       );
-      await page.locator("summary").click();
       const expanded = await captureNovelStateInput({ page, toolbox });
       assert.equal(
         expanded.observation.actions.find(
@@ -709,7 +751,7 @@ test("script-declared inactive branch cleanup clears hidden native controls", as
   }
 });
 
-test("interaction priming sweeps the pointer and scrolls documents, frames, and nested surfaces", async () => {
+test("page onset deterministically moves the pointer, expands disclosures, and scrolls every frame once", async () => {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 800, height: 500 } });
   try {
@@ -727,23 +769,59 @@ test("interaction priming sweeps the pointer and scrolls documents, frames, and 
         addEventListener("scroll", () => window.documentScrolls += 1);
       </script>
       <div class="tall">
+        <details id="main-details" ontoggle="window.mainDetailToggles = (window.mainDetailToggles || 0) + 1">
+          <summary>Main disclosure</summary>
+          <p>Revealed details</p>
+        </details>
+        <button id="aria-disclosure" aria-expanded="false" aria-controls="aria-panel"
+          onclick="this.setAttribute('aria-expanded', 'true'); document.querySelector('#aria-panel').hidden = false; window.ariaClicks = (window.ariaClicks || 0) + 1">
+          More information
+        </button>
+        <div id="aria-panel" hidden>Revealed information</div>
         <div id="scrollbox" onscroll="window.containerScrolls = (window.containerScrolls || 0) + 1">
           <div>nested</div>
         </div>
       </div>
-      <iframe srcdoc="<style>body{height:1400px}</style><script>window.frameScrolls=0;addEventListener('scroll',()=>window.frameScrolls+=1)<\/script>frame"></iframe>
+      <iframe srcdoc="<style>body{height:1400px}</style><script>window.frameScrolls=0;window.frameDetailToggles=0;addEventListener('scroll',()=>window.frameScrolls+=1)<\/script><details ontoggle='window.frameDetailToggles += 1'><summary>Frame disclosure</summary>frame details</details>"></iframe>
     `);
     await page.waitForTimeout(50);
-    const result = await primeInteractiveSurface(page);
+    const result = await preparePageOnset(page);
+    assert.equal(result.pageOnsetPerformed, true);
     assert.equal(result.pointerMoves, 5);
+    assert.ok(result.pointerSamples >= 50);
+    assert.ok(result.pointerDurationMs >= 1_000);
+    assert.equal(result.pointerMotionProfile, "deterministic_varied_easing");
     assert.ok(result.framesPrimed >= 2);
     assert.ok(result.documentScrollSteps > 0);
     assert.ok(result.scrollSurfacesPrimed > 0);
+    assert.equal(result.detailsOpened, 2);
+    assert.equal(result.disclosureButtonsOpened, 1);
+    assert.equal(await page.locator("#main-details").getAttribute("open"), "");
+    assert.equal(
+      await page.locator("#aria-disclosure").getAttribute("aria-expanded"),
+      "true",
+    );
     assert.ok((await page.evaluate(() => window.pointerMoves)) >= 5);
     assert.ok((await page.evaluate(() => window.documentScrolls)) > 0);
     assert.ok((await page.evaluate(() => window.containerScrolls || 0)) > 0);
     const childFrame = page.frames().find((frame) => frame !== page.mainFrame());
     assert.ok(await childFrame.evaluate(() => window.frameScrolls > 0));
+    assert.equal(await childFrame.locator("details").getAttribute("open"), "");
+
+    const second = await preparePageOnset(page);
+    assert.equal(second.pageOnsetPerformed, false);
+    assert.equal(second.pointerMoves, 0);
+    assert.equal(await page.evaluate(() => window.ariaClicks), 1);
+    assert.equal(await page.evaluate(() => window.mainDetailToggles), 1);
+    assert.equal(await childFrame.evaluate(() => window.frameDetailToggles), 1);
+
+    await page.goto(
+      "data:text/html,<title>Second document</title><details><summary>Next disclosure</summary>next</details>",
+    );
+    const nextDocument = await preparePageOnset(page);
+    assert.equal(nextDocument.pageOnsetPerformed, true);
+    assert.equal(nextDocument.detailsOpened, 1);
+    assert.equal(await page.locator("details").getAttribute("open"), "");
   } finally {
     await browser.close();
   }

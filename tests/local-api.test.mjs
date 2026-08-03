@@ -305,6 +305,28 @@ test(
       assert.equal(created.run.allowLocalTargets, true);
       assert.equal(created.run.traversalSettings.stableWindowMs, 300);
 
+      const busyResponse = await fetch(`${baseUrl}/api/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          urls: [`${fixture.origin}/fixtures/start`],
+          mode: "probe",
+          browserMode: "headless",
+          allowLocalTargets: true,
+        }),
+      });
+      assert.equal(busyResponse.status, 429);
+      const busy = await busyResponse.json();
+      assert.equal(busy.code, "crawl_capacity_reached");
+      assert.equal(busy.limit, 1);
+      assert.deepEqual(busy.activeRun, { id: runId, kind: "crawl" });
+
+      const busyHealth = await waitForJson(
+        `${baseUrl}/api/health`,
+        (value) => value.activeBrowserRuns === 1,
+      );
+      assert.equal(busyHealth.browserRunLimit, 1);
+
       const createdStatusResponse = await fetch(
         `${baseUrl}/api/runs/${runId}`
       );
@@ -410,6 +432,7 @@ test(
         "utf8"
       );
       assert.match(events, /"kind":"browser_launched"/);
+      assert.match(events, /"kind":"browser_closed"/);
       assert.match(events, /"kind":"evidence_captured"/);
       assert.match(events, /"kind":"recon_script_missing"/);
       assert.doesNotMatch(events, /"kind":"automation_action_completed"/);
@@ -417,6 +440,13 @@ test(
       assert.doesNotMatch(events, /"kind":"state_evidence_captured"/);
       assert.doesNotMatch(events, /"kind":"final_submission_blocked"/);
       assert.match(events, /"kind":"crawl_needs_review"/);
+
+      const idleHealth = await waitForJson(
+        `${baseUrl}/api/health`,
+        (value) =>
+          value.activeCrawls === 0 && value.activeBrowserRuns === 0,
+      );
+      assert.equal(idleHealth.activeExecutions, 0);
 
       const nonReadRequests = fixture.requests.filter(
         (request) => !["GET", "HEAD", "OPTIONS"].includes(request.method)

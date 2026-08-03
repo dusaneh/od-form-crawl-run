@@ -96,6 +96,11 @@ const FAILURE_GUIDANCE: Record<
     detail:
       "The service stopped before the crawl completed. Existing logs were preserved, but a new crawl is required.",
   },
+  crawl_capacity_reached: {
+    title: "Another browser run is already in progress",
+    detail:
+      "IntakeCR allows one browser run at a time. Wait for the active run to finish, then retry.",
+  },
   openai_output_limit: {
     title: "AI script generation reached its output limit",
     detail:

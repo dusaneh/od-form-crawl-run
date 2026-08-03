@@ -13,7 +13,7 @@ export async function captureNovelStateInput({
   priorStates = [],
   locale = "en-US",
 }) {
-  await toolbox.settle();
+  await toolbox.prepare();
   const raw = await page.evaluate(() => {
     const visible = (element) => {
       if (!element?.isConnected) return false;

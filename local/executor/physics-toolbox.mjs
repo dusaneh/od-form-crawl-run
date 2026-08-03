@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
-import { primeInteractiveSurface } from "./interaction-priming.mjs";
+import { preparePageOnset } from "./interaction-priming.mjs";
+import { scalarReadbackEquivalent } from "./value-equivalence.mjs";
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -225,10 +226,8 @@ export class PhysicsToolbox {
 
   async prepare() {
     await this.settle();
-    const priming = await primeInteractiveSurface(this.page);
+    const priming = await preparePageOnset(this.page);
     return {
-      detailsOpened: 0,
-      disclosureButtonsOpened: 0,
       ...priming,
       consentAction: null,
       overlayAction: null,
@@ -456,11 +455,12 @@ export class PhysicsToolbox {
     } else {
       landed = await locator.inputValue().catch(() => null);
     }
-    if (landed !== requested) {
+    if (!scalarReadbackEquivalent(requested, landed)) {
       return {
         verified: false,
         failureCode: "actuation_unverified",
-        detail: "Exact readback did not match the requested value.",
+        detail:
+          "Browser readback did not preserve the requested alphanumeric value.",
       };
     }
     return { verified: true, failureCode: null, detail: null };

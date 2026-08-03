@@ -1,4 +1,4 @@
-import { primeInteractiveSurface } from "./executor/interaction-priming.mjs";
+import { preparePageOnset } from "./executor/interaction-priming.mjs";
 
 const CAPTCHA_TEXT =
   /verify (?:that )?you are human|prove (?:that )?you are human|i am human|captcha|security check|checking your browser|cloudflare turnstile/i;
@@ -77,7 +77,7 @@ export async function waitForStableState(
     )
     .catch(() => {});
   const priming = settings.pointerAndScrollPriming
-    ? await primeInteractiveSurface(page)
+    ? await preparePageOnset(page)
     : null;
   const mutationResult = await waitForMutationQuiet(
     page,

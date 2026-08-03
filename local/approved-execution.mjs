@@ -41,19 +41,8 @@ export async function executeApprovedForm({
     headless: browserMode !== "headful",
     slowMo: browserMode === "headful" ? 60 : 0,
   });
-  const context = await browser.newContext({
-    acceptDownloads: false,
-    bypassCSP: false,
-    ignoreHTTPSErrors: false,
-    javaScriptEnabled: true,
-    locale: "en-US",
-    serviceWorkers: "block",
-    viewport: { width: 1440, height: 1000 },
-  });
-  const page = await context.newPage();
-  page.setDefaultTimeout(
-    Math.max(1_000, Math.min(settings.maxStateWaitMs, 8_000)),
-  );
+  let context;
+  let page;
   const targetOrigin = new URL(targetUrl).origin;
   let allowSameOriginWritesUntil = 0;
   let allowFinalWritesUntil = 0;
@@ -86,7 +75,21 @@ export async function executeApprovedForm({
       }
     };
   };
-  await page.route("**/*", async (route) => {
+  try {
+    context = await browser.newContext({
+      acceptDownloads: false,
+      bypassCSP: false,
+      ignoreHTTPSErrors: false,
+      javaScriptEnabled: true,
+      locale: "en-US",
+      serviceWorkers: "block",
+      viewport: { width: 1440, height: 1000 },
+    });
+    page = await context.newPage();
+    page.setDefaultTimeout(
+      Math.max(1_000, Math.min(settings.maxStateWaitMs, 8_000)),
+    );
+    await page.route("**/*", async (route) => {
     const request = route.request();
     const method = request.method().toUpperCase();
     if (isSameOriginReadLikePost(request, targetOrigin, settings)) {
@@ -117,9 +120,8 @@ export async function executeApprovedForm({
       }
     }
     await route.continue();
-  });
-  await installSubmissionGuards(page, "approved_live");
-  try {
+    });
+    await installSubmissionGuards(page, "approved_live");
     await onEvent?.(
       "approved_execution_browser_started",
       "Opened the approved form in local Chromium.",
@@ -165,8 +167,8 @@ export async function executeApprovedForm({
       onEvent,
     });
   } finally {
-    await page.close().catch(() => {});
-    await context.close().catch(() => {});
+    await page?.close().catch(() => {});
+    await context?.close().catch(() => {});
     await browser.close().catch(() => {});
     await onEvent?.(
       "approved_execution_browser_closed",

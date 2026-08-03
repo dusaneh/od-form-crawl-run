@@ -1265,17 +1265,18 @@ export async function crawlTargetsWithPlaywright(
     headless: browserMode === "headless",
     slowMo: browserMode === "headful" ? 60 : 0,
   });
-  const context = await browser.newContext({
-    acceptDownloads: false,
-    bypassCSP: false,
-    ignoreHTTPSErrors: false,
-    javaScriptEnabled: true,
-    locale: "en-US",
-    serviceWorkers: "block",
-    viewport: { width: 1440, height: 1000 },
-  });
+  let context;
 
   try {
+    context = await browser.newContext({
+      acceptDownloads: false,
+      bypassCSP: false,
+      ignoreHTTPSErrors: false,
+      javaScriptEnabled: true,
+      locale: "en-US",
+      serviceWorkers: "block",
+      viewport: { width: 1440, height: 1000 },
+    });
     while (queue.length && pages.length < MAX_PAGES) {
       const candidate = queue.shift();
       if (
@@ -1308,7 +1309,7 @@ export async function crawlTargetsWithPlaywright(
       await onProgress?.({ pages: pages.length, queued: queue.length });
     }
   } finally {
-    await context.close().catch(() => {});
+    await context?.close().catch(() => {});
     await browser.close().catch(() => {});
     await onBrowserEvent?.(
       "browser_closed",

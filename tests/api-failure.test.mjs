@@ -89,6 +89,21 @@ test("informational findings are excluded from interrupted crawl failures", () =
   ]);
 });
 
+test("browser capacity failures explain when a retry is safe", () => {
+  const failure = apiFailureFrom(429, {
+    code: "crawl_capacity_reached",
+    error:
+      "Another browser run is already in progress. Wait for it to finish before starting a new run.",
+    limit: 1,
+    activeRun: { id: "run_active", kind: "crawl" },
+  });
+
+  assert.ok(failure);
+  assert.equal(failure.code, "crawl_capacity_reached");
+  assert.equal(failure.issues[0].title, "Another browser run is already in progress");
+  assert.match(failure.issues[0].detail, /wait for it to finish/i);
+});
+
 test("HTTP and execution failures include nested response issues", () => {
   const httpFailure = apiFailureFrom(422, {
     code: "validation_blocked",

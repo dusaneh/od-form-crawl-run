@@ -41,6 +41,7 @@ import {
   terminalEligibilityIssues,
   verifyFixtureSubmissionOutcome,
 } from "../local/production-generated-traversal.mjs";
+import { allowedDependencyProbeActions } from "../local/traversal-special-rules.mjs";
 
 function observation() {
   return {
@@ -1203,6 +1204,79 @@ test("LLM-authored choice probes must cover every safe observed option", () => {
   );
 });
 
+test("special traversal rules exempt numeric and calendar-month selects from dependency probes", () => {
+  const numericYear = {
+    fields: [
+      {
+        key: "birth_year",
+        label: "Year",
+        controlType: "select",
+        options: [
+          { value: "", label: "Select" },
+          { value: "year-2025", label: "2025" },
+          { value: "year-2026", label: "2026" },
+        ],
+        actuate: true,
+        selectors: ["#birth-year"],
+        probeValues: [],
+      },
+    ],
+  };
+  assert.deepEqual(choiceProbeCoverageIssues(numericYear), []);
+  assert.deepEqual(
+    allowedDependencyProbeActions(numericYear.fields[0], [
+      { value: "year-2025" },
+    ]),
+    [],
+  );
+
+  const namedMonth = {
+    fields: [
+      {
+        key: "dob_mm",
+        label: "Date of birth",
+        controlType: "select",
+        options: [
+          { value: "", label: "Choose one" },
+          { value: "jan", label: "January" },
+          { value: "feb", label: "February" },
+        ],
+        actuate: true,
+        selectors: ["#dob-mm"],
+        probeValues: [],
+      },
+    ],
+  };
+  assert.deepEqual(choiceProbeCoverageIssues(namedMonth), []);
+  assert.deepEqual(
+    allowedDependencyProbeActions(namedMonth.fields[0], [{ value: "jan" }]),
+    [],
+  );
+
+  const nonNumericBranch = {
+    fields: [
+      {
+        key: "program",
+        label: "Program",
+        controlType: "select",
+        options: [
+          { value: "housing", label: "Housing" },
+          { value: "energy", label: "Energy" },
+        ],
+        actuate: true,
+        selectors: ["#program"],
+        probeValues: [],
+      },
+    ],
+  };
+  assert.deepEqual(
+    choiceProbeCoverageIssues(nonNumericBranch).map(
+      (issue) => issue.targetKey,
+    ),
+    ["program"],
+  );
+});
+
 test("terminal eligibility rejects unsupported same-page depth and cross-page uncertainty", () => {
   const issues = terminalEligibilityIssues({
     states: [
@@ -1488,10 +1562,13 @@ test("semantic model input contains live sensing context and records provenance"
   assert.match(inputText, /99999/);
   assert.match(inputText, /Format constraints|format and constraints/i);
   assert.match(inputText, /expose conditional behavior rather than avoid it/i);
-  assert.match(inputText, /every visible collapsed details, accordion, expando/i);
+  assert.match(
+    inputText,
+    /opens each recognized collapsed details, accordion, expando/i,
+  );
   assert.match(inputText, /Cookie and consent-management banners are session traversal infrastructure/i);
-  assert.match(inputText, /fixed pointer sweep and bounded scrolling/i);
-  assert.match(inputText, /never describe this priming as CAPTCHA/i);
+  assert.match(inputText, /one second of varied-easing mouse movement/i);
+  assert.match(inputText, /never describe this preparation as CAPTCHA/i);
   assert.match(inputText, /serves OneDegree's resource-access mission/i);
   assert.match(
     inputText,

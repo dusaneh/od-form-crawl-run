@@ -202,10 +202,37 @@ const logsRoot = path.join(dataRoot, "logs");
 const aggregateLogPath = path.join(logsRoot, "crawler.jsonl");
 const operationalAuditPath = path.join(logsRoot, "operational-audit.jsonl");
 const settingsPath = path.join(dataRoot, "settings.json");
+const MAX_CONCURRENT_BROWSER_RUNS = 1;
 const runningTasks = new Map();
 const runningExecutions = new Map();
+const activeBrowserRuns = new Map();
 const runActors = new Map();
 const executionActors = new Map();
+
+function browserCapacityResponse(request) {
+  const active = activeBrowserRuns.values().next().value;
+  return jsonResponse(
+    request,
+    {
+      error:
+        "Another browser run is already in progress. Wait for it to finish before starting a new run.",
+      code: "crawl_capacity_reached",
+      limit: MAX_CONCURRENT_BROWSER_RUNS,
+      activeRun: active || null,
+    },
+    429,
+  );
+}
+
+function reserveBrowserRun(id, kind) {
+  if (activeBrowserRuns.size >= MAX_CONCURRENT_BROWSER_RUNS) return false;
+  activeBrowserRuns.set(id, { id, kind });
+  return true;
+}
+
+function releaseBrowserRun(id) {
+  activeBrowserRuns.delete(id);
+}
 
 await Promise.all([
   mkdir(runsRoot, { recursive: true }),
@@ -2128,6 +2155,7 @@ async function executeCrawl(run) {
         );
     }
     runningTasks.delete(run.id);
+    releaseBrowserRun(run.id);
     runActors.delete(run.id);
   }
 }
@@ -2284,43 +2312,53 @@ async function createRun(request) {
       409
     );
   }
-  const traversalSettings = await readTraversalSettings();
-  const initiatedBy = actorFromRequest(request);
-  const run = initialRun(
-    id,
-    urls,
-    name,
-    executionMode,
-    browserMode,
-    allowLocalTargets,
-    fixtureAuthorities,
-    traversalSettings,
-    initiatedBy,
-    now
-  );
-  runActors.set(id, initiatedBy);
-  await mkdir(runDirectory(id), { recursive: true });
-  await saveRun(run);
-  await logEvent(
-    id,
-    "run_created",
-    database
-      ? "Created a PostgreSQL-backed local crawl."
-      : "Created a filesystem-backed local crawl.",
-    {
-    targets: urls.length,
-    browserMode,
-    executionMode,
-    liveApproved: false,
-    allowLocalTargets,
-    discoverRelatedPages: false,
-    fixtureAuthorities,
-    traversalSettingsVersion: traversalSettings.version,
-    },
-  );
-  const task = executeCrawl(run);
-  runningTasks.set(id, task);
-  return jsonResponse(request, { run }, 201);
+  if (!reserveBrowserRun(id, "crawl")) {
+    return browserCapacityResponse(request);
+  }
+  try {
+    const traversalSettings = await readTraversalSettings();
+    const initiatedBy = actorFromRequest(request);
+    const run = initialRun(
+      id,
+      urls,
+      name,
+      executionMode,
+      browserMode,
+      allowLocalTargets,
+      fixtureAuthorities,
+      traversalSettings,
+      initiatedBy,
+      now
+    );
+    runActors.set(id, initiatedBy);
+    await mkdir(runDirectory(id), { recursive: true });
+    await saveRun(run);
+    await logEvent(
+      id,
+      "run_created",
+      database
+        ? "Created a PostgreSQL-backed local crawl."
+        : "Created a filesystem-backed local crawl.",
+      {
+      targets: urls.length,
+      browserMode,
+      executionMode,
+      liveApproved: false,
+      allowLocalTargets,
+      discoverRelatedPages: false,
+      fixtureAuthorities,
+      traversalSettingsVersion: traversalSettings.version,
+      },
+    );
+    const task = executeCrawl(run);
+    runningTasks.set(id, task);
+    return jsonResponse(request, { run }, 201);
+  } catch (error) {
+    runningTasks.delete(id);
+    releaseBrowserRun(id);
+    runActors.delete(id);
+    throw error;
+  }
 }
 
 async function serveFile(request, filePath, contentType, downloadName) {
@@ -2519,6 +2557,7 @@ async function executeApprovedRun(record, form, inputData) {
     );
   } finally {
     runningExecutions.delete(record.executionId);
+    releaseBrowserRun(record.executionId);
     executionActors.delete(record.executionId);
   }
 }
@@ -2586,6 +2625,9 @@ async function createApprovedRun(request, formId) {
     );
   }
   const executionId = `exec_${randomUUID().replaceAll("-", "")}`;
+  if (!reserveBrowserRun(executionId, "approved_execution")) {
+    return browserCapacityResponse(request);
+  }
   const now = new Date().toISOString();
   const initiatedBy = actorFromRequest(request);
   const record = {
@@ -2618,25 +2660,32 @@ async function createApprovedRun(request, formId) {
     createdAt: now,
     updatedAt: now,
   };
-  if (!database) {
-    await mkdir(executionDirectory(executionId), { recursive: false });
+  try {
+    if (!database) {
+      await mkdir(executionDirectory(executionId), { recursive: false });
+    }
+    executionActors.set(executionId, initiatedBy);
+    await writeExecution(record);
+    await logExecutionEvent(
+      executionId,
+      "approved_execution_created",
+      "Created an approved execution without persisting input values.",
+      {
+        formId,
+        approvalId: form.approval.approvalId,
+        submit: payload.submit,
+        inputFieldKeys: record.inputFieldKeys,
+      },
+    );
+    const task = executeApprovedRun(record, form, payload.data);
+    runningExecutions.set(executionId, task);
+    return jsonResponse(request, { execution: record }, 201);
+  } catch (error) {
+    runningExecutions.delete(executionId);
+    releaseBrowserRun(executionId);
+    executionActors.delete(executionId);
+    throw error;
   }
-  executionActors.set(executionId, initiatedBy);
-  await writeExecution(record);
-  await logExecutionEvent(
-    executionId,
-    "approved_execution_created",
-    "Created an approved execution without persisting input values.",
-    {
-      formId,
-      approvalId: form.approval.approvalId,
-      submit: payload.submit,
-      inputFieldKeys: record.inputFieldKeys,
-    },
-  );
-  const task = executeApprovedRun(record, form, payload.data);
-  runningExecutions.set(executionId, task);
-  return jsonResponse(request, { execution: record }, 201);
 }
 
 async function route(request) {
@@ -2679,6 +2728,8 @@ async function route(request) {
       traversalSettingsVersion: DEFAULT_TRAVERSAL_SETTINGS.version,
       activeCrawls: runningTasks.size,
       activeExecutions: runningExecutions.size,
+      activeBrowserRuns: activeBrowserRuns.size,
+      browserRunLimit: MAX_CONCURRENT_BROWSER_RUNS,
     });
   }
   if (url.pathname === "/api/ops/audit" && request.method === "GET") {

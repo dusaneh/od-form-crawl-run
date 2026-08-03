@@ -165,14 +165,15 @@ export class D3Executor {
   }
 
   async prepare() {
-    if (this.prepared) return;
-    await this.toolbox.installRequestGuard();
+    if (!this.prepared) {
+      await this.toolbox.installRequestGuard();
+      this.prepared = true;
+    }
     await this.toolbox.prepare();
-    this.prepared = true;
   }
 
   async observe(state) {
-    await this.toolbox.settle();
+    await this.toolbox.prepare();
     return observeRuntimeStateIdentity({
       page: this.page,
       contract: this.contract,
