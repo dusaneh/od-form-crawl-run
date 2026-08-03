@@ -158,6 +158,8 @@ export type CrawlPage = ParsedPage & {
   entryDetail?: string;
   journeyComplete?: boolean;
   haltReason?: string;
+  semanticGenerationError?: string;
+  semanticInteractionOccurred?: boolean;
   error?: string;
 };
 
@@ -636,6 +638,14 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
     const notes = page.error
       ? [page.error]
       : [
+          ...(page.semanticGenerationError
+            ? [
+                `The page loaded, but IntakeCR could not generate a valid automation script: ${page.semanticGenerationError}`,
+                page.semanticInteractionOccurred
+                  ? "The failure stopped further form interaction; the current rendered observation, field inventory, and screenshot were retained."
+                  : "No form interaction was attempted; the rendered observation, field inventory, and screenshot were retained.",
+              ]
+            : []),
           `${page.rendered ? "Rendered and serialized" : "Fetched"} ${page.bytesFetched.toLocaleString()} bytes from the public page.`,
           `${page.forms} form${page.forms === 1 ? "" : "s"} and ${visibleFields.length} visible field${visibleFields.length === 1 ? "" : "s"} detected.`,
           page.hasScripts
@@ -645,11 +655,17 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
             : "No client-side script tag was observed in the fetched HTML.",
           page.automationActions?.length
             ? `${page.automationActions.length} predictable traversal action${page.automationActions.length === 1 ? "" : "s"} completed before extraction.`
+            : page.semanticGenerationError && page.semanticInteractionOccurred
+              ? "The semantic traversal had already begun; the current rendered state was retained when later script generation failed."
             : "No control actuation occurred before extraction.",
           page.fieldsEntered
             ? `${page.fieldsEntered} synthetic field entr${page.fieldsEntered === 1 ? "y was" : "ies were"} exercised across ${page.stateEvidence?.length || 0} captured states.`
+            : page.semanticGenerationError && page.semanticInteractionOccurred
+              ? "The current rendered values were retained, but the interrupted semantic traversal could not provide a complete entered-field count."
             : "No synthetic field values were entered on this page.",
-          page.reconScriptId
+          page.semanticGenerationError
+            ? "Semantic script generation failed; this page remains observation-only."
+            : page.reconScriptId
             ? `Form-specific recon script ${page.reconScriptId}@${page.reconScriptVersion || 0} owned sequencing.`
             : "No LLM-generated form script matched; this page was extract-and-observe only.",
           page.entryMode === "mid_flow"
@@ -669,10 +685,15 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
       title: pageTitle(page).slice(0, 80),
       subtitle: page.error
         ? "Fetch failed"
+        : page.semanticGenerationError
+          ? `Script generation failed · ${visibleFields.length} fields retained`
         : `${page.httpStatus} · ${page.forms} forms · ${visibleFields.length} fields`,
       fingerprint: page.fingerprint,
       status:
-        page.error || page.captchaDetected || page.unresolvedGate
+        page.error ||
+        page.semanticGenerationError ||
+        page.captchaDetected ||
+        page.unresolvedGate
           ? "review"
           : "complete",
       fields: visibleFields.length,
@@ -803,7 +824,10 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
   const findings: Finding[] = [
     {
       id: `${runId}_summary`,
-      tone: failed.length ? "warning" : "success",
+      tone:
+        failed.length || pages.some((page) => page.semanticGenerationError)
+          ? "warning"
+          : "success",
       code: "crawl_finished",
       title: `${fetched.length} page${fetched.length === 1 ? "" : "s"} fetched`,
       detail: `${contract.filter((field) => !field.hidden).length} visible fields across ${fetched.reduce((sum, page) => sum + page.forms, 0)} forms were extracted from observed page content.`,
@@ -819,6 +843,18 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
       time: "now",
     },
   ];
+  pages
+    .filter((page) => page.semanticGenerationError)
+    .forEach((page, index) => {
+      findings.push({
+        id: `${runId}_semantic_script_failed_${index}`,
+        tone: "danger",
+        code: "semantic_script_generation_failed",
+        title: "Rendered page retained, but automation script generation failed",
+        detail: `The page loaded and ${page.fields.filter((field) => !field.hidden).length} visible fields were captured. IntakeCR could not produce a valid semantic automation script: ${page.semanticGenerationError} ${page.semanticInteractionOccurred ? "The failure stopped further interaction and retained the current rendered state." : "No form interaction was attempted."}`,
+        time: "now",
+      });
+    });
   if (pages.some((page) => page.hasScripts)) {
     findings.push({
       id: `${runId}_dynamic`,
@@ -1009,7 +1045,7 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
       code: "branching_logic_detected",
       title: `${branchStates} conditional branch state${branchStates === 1 ? "" : "s"} detected`,
       detail:
-        "LLM-authored discovery probes changed the visible control contract. First-level same-page branches are populated and replayed; deeper reveals halt before submission.",
+        "Deterministically derived discovery probes changed the visible control contract. First-level same-page branches are interpreted and replayed from the retained script; deeper reveals halt before submission.",
       time: "now",
     });
   }

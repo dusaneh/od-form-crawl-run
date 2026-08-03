@@ -909,6 +909,9 @@ async function crawlOne(
   });
   await installSubmissionGuards(page, executionMode);
 
+  let navigationResponse = null;
+  let semanticGenerationStarted = false;
+  let semanticInteractionOccurred = false;
   try {
     await onBrowserEvent?.("browser_page_opened", `Opening ${url} in local Chromium.`, {
       browserMode,
@@ -917,6 +920,7 @@ async function crawlOne(
       timeout: 45_000,
       waitUntil: "domcontentloaded",
     });
+    navigationResponse = response;
     if (!response) throw new Error("The browser navigation returned no response.");
     if (!response.ok()) {
       throw new Error(`Target returned HTTP ${response.status()}.`);
@@ -999,6 +1003,23 @@ async function crawlOne(
       !automation.captchaDetected &&
       automation.unresolvedGate !== "captcha"
     ) {
+      semanticGenerationStarted = true;
+      const generatedTraversalEvent = async (kind, eventMessage, metadata) => {
+        if (
+          [
+            "field_entry_started",
+            "choice_probe_started",
+            "generated_advance_completed",
+            "automation_action_failed",
+            "probe_actuation_failed",
+            "fixture_terminal_submission_completed",
+            "fixture_terminal_submission_unverified",
+          ].includes(kind)
+        ) {
+          semanticInteractionOccurred = true;
+        }
+        await onBrowserEvent?.(kind, eventMessage, metadata);
+      };
       generatedTraversal = await generateAndReplayForm({
         page,
         runId,
@@ -1008,7 +1029,7 @@ async function crawlOne(
         fixtureAuthorities,
         browserMode,
         authorizeWrites,
-        onEvent: onBrowserEvent,
+        onEvent: generatedTraversalEvent,
       });
       if (!generatedTraversal) {
         await onBrowserEvent?.(
@@ -1210,9 +1231,68 @@ async function crawlOne(
     );
     return pageResult;
   } catch (error) {
+    const message = error?.message || "Unknown browser error";
+    if (
+      semanticGenerationStarted &&
+      error?.semanticGenerationFailure === true &&
+      navigationResponse
+    ) {
+      try {
+        const observedPage = await extractRenderedPage(
+          page,
+          url,
+          navigationResponse,
+          browserMode,
+        );
+        observedPage.durationMs = Date.now() - startedAt;
+        observedPage.blockedWriteRequests = blockedRequests;
+        observedPage.allowedReadLikeRequests = allowedReadLikeRequests;
+        observedPage.automationActions = [];
+        observedPage.stateEvidence = [];
+        observedPage.fieldsEntered = 0;
+        observedPage.entryFailures = 0;
+        observedPage.branchStates = 0;
+        observedPage.submissionsAttempted = 0;
+        observedPage.submissionsSucceeded = 0;
+        observedPage.finalSubmission = "not_requested";
+        observedPage.certificationStatus = "could_not_test";
+        observedPage.journeyUrls = [observedPage.finalUrl];
+        observedPage.journeyComplete = false;
+        observedPage.semanticGenerationError = String(message);
+        observedPage.semanticInteractionOccurred =
+          semanticInteractionOccurred;
+        observedPage.haltReason =
+          `The page loaded and was captured, but IntakeCR could not produce a valid semantic automation script: ${message} ${semanticInteractionOccurred ? "The failure stopped further form interaction; the current rendered state was retained." : "No form interaction was attempted."}`;
+        await onBrowserEvent?.(
+          "semantic_script_generation_failed",
+          `The page loaded and ${observedPage.fields.filter((field) => !field.hidden).length} visible fields were captured, but IntakeCR could not produce a valid automation script. ${semanticInteractionOccurred ? "The failure stopped further form interaction and retained the current rendered state." : "No form interaction was attempted."}`,
+          {
+            url: observedPage.finalUrl,
+            error: String(message),
+            fields: observedPage.fields.filter((field) => !field.hidden).length,
+            forms: observedPage.forms,
+            screenshotCaptured: Boolean(observedPage.screenshot),
+            interactionOccurred: semanticInteractionOccurred,
+            failureCode: "semantic_script_generation_failed",
+          },
+        );
+        return observedPage;
+      } catch (observationError) {
+        await onBrowserEvent?.(
+          "semantic_failure_observation_capture_failed",
+          "Semantic generation and fallback observation capture both failed.",
+          {
+            url,
+            semanticError: String(message),
+            observationError:
+              observationError?.message || String(observationError),
+          },
+        );
+      }
+    }
     await onBrowserEvent?.(
       "browser_page_failed",
-      `Browser crawl failed before a reportable page artifact could be produced: ${error?.message || "Unknown browser error"}`,
+      `Browser crawl failed before a reportable page artifact could be produced: ${message}`,
       {
         url,
         errorName: error?.name || "Error",

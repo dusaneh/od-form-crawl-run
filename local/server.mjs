@@ -1160,6 +1160,8 @@ const criticalRunAudit = new Map([
   ["fixture_terminal_submission_completed", ["success", "submitted"]],
   ["field_entry_failed", ["warning", "field_failed"]],
   ["semantic_proposal_schema_rejected", ["warning", "repairing"]],
+  ["semantic_script_generation_failed", ["warning", "needs_review"]],
+  ["semantic_failure_observation_capture_failed", ["error", "failed"]],
   ["captcha_handoff_required", ["warning", "blocked"]],
   ["generated_script_not_published", ["error", "failed"]],
   ["generated_script_replay_failed", ["error", "failed"]],
@@ -1675,10 +1677,14 @@ async function executeCrawl(run) {
     const visibleFieldsBeforePersistence = output.contract.filter(
       (field) => !field.hidden
     );
+    const retainedSemanticObservation = output.pages.some(
+      (page) => page.semanticGenerationError && !page.error,
+    );
     const qualityFailure =
       fetchedBeforePersistence.length === 0
         ? "All target fetches or rendered-DOM extractions failed."
-        : visibleFieldsBeforePersistence.length === 0
+        : visibleFieldsBeforePersistence.length === 0 &&
+            !retainedSemanticObservation
           ? "The crawl found zero visible fields belonging to a real form."
           : "";
     if (qualityFailure) {
@@ -2095,6 +2101,8 @@ async function executeCrawl(run) {
               (page) => page.certificationStatus === "script_missing"
             )
             ? "Observation complete · generated script required"
+            : output.pages.some((page) => page.semanticGenerationError)
+              ? "Observation retained · semantic script generation needs review"
             : submissionNeedsReview
               ? "Submission outcome requires review"
               : "Scripted traversal needs human review"

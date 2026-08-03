@@ -12,6 +12,33 @@ test("successful API payloads are not reported as failures", () => {
   );
 });
 
+test("observation-only semantic failures are translated for the API console", () => {
+  const failure = apiFailureFrom(200, {
+    run: {
+      status: "awaiting_review",
+      stage: "Observation retained · semantic script generation needs review",
+      findings: [
+        {
+          tone: "danger",
+          code: "semantic_script_generation_failed",
+          title: "Rendered page retained, but automation script generation failed",
+          detail:
+            "Semantic proposal validation failed at $.fields[4].rawLabel: expected a non-empty string.",
+        },
+      ],
+    },
+  });
+
+  assert.ok(failure);
+  assert.equal(failure.code, "semantic_script_generation_failed");
+  assert.equal(
+    failure.issues[0].title,
+    "The page loaded, but its automation script was invalid",
+  );
+  assert.match(failure.issues[0].detail, /screenshot.*retained/i);
+  assert.doesNotMatch(failure.issues[0].detail, /\$\.fields/);
+});
+
 test("failed crawl payloads expose every concrete cause in plain language", () => {
   const failure = apiFailureFrom(200, {
     run: {

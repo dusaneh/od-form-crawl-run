@@ -141,6 +141,124 @@ export function canonicalizeSemanticProposal(
   const observedFacts = new Map(
     (observation?.controls || []).map((fact) => [fact.factId, fact]),
   );
+  const actionControlTypes = new Set([
+    "button",
+    "hidden",
+    "image",
+    "reset",
+    "submit",
+  ]);
+  const hasObservedControlInventory = Array.isArray(observation?.controls);
+  const unsupportedFieldKeys = new Set(
+    (proposal.fields || [])
+      .filter((field) => {
+        if (!hasObservedControlInventory) return false;
+        const sourceFacts = (field.sourceFactIds || [])
+          .map((factId) => observedFacts.get(factId))
+          .filter(Boolean);
+        return (
+          sourceFacts.length === 0 ||
+          sourceFacts.every((fact) =>
+            actionControlTypes.has(
+              String(fact.rawType || fact.tag || "").toLowerCase(),
+            ),
+          )
+        );
+      })
+      .map((field) => field.key),
+  );
+  if (unsupportedFieldKeys.size > 0) {
+    const beforeCount = proposal.fields.length;
+    proposal.fields = proposal.fields.filter(
+      (field) => !unsupportedFieldKeys.has(field.key),
+    );
+    proposal.mechanics.fieldTargets = (
+      proposal.mechanics?.fieldTargets || []
+    ).filter((target) => !unsupportedFieldKeys.has(target.fieldKey));
+    proposal.proposedActions = (proposal.proposedActions || []).filter(
+      (action) =>
+        !unsupportedFieldKeys.has(action.targetKey) ||
+        ["advance", "terminal_submit"].includes(action.kind),
+    );
+    proposal.sections = (proposal.sections || []).map((section) => ({
+      ...section,
+      fieldKeys: (section.fieldKeys || []).filter(
+        (key) => !unsupportedFieldKeys.has(key),
+      ),
+    }));
+    proposal.state.visibleControlKeys = (
+      proposal.state?.visibleControlKeys || []
+    ).filter((key) => !unsupportedFieldKeys.has(key));
+    normalizations.push({
+      path: "$.fields",
+      kind: "remove_unsupported_or_action_fields",
+      beforeCount,
+      afterCount: proposal.fields.length,
+      removedKeys: [...unsupportedFieldKeys].sort(),
+    });
+  }
+
+  const validGuidanceKeys = new Set([
+    ...(proposal.guidance || []).map((item) => item.key),
+    ...(existingContract?.guidance || []).map((item) => item.key),
+  ]);
+  for (const [index, field] of (proposal.fields || []).entries()) {
+    const before = field.guidanceRefs || [];
+    const after = before.filter((key) => validGuidanceKeys.has(key));
+    if (after.length !== before.length) {
+      field.guidanceRefs = after;
+      normalizations.push({
+        path: `$.fields[${index}].guidanceRefs`,
+        kind: "drop_unknown_guidance_references",
+        before,
+        after,
+      });
+    }
+  }
+  for (const [index, section] of (proposal.sections || []).entries()) {
+    const before = section.guidanceRefs || [];
+    const after = before.filter((key) => validGuidanceKeys.has(key));
+    if (after.length !== before.length) {
+      section.guidanceRefs = after;
+      normalizations.push({
+        path: `$.sections[${index}].guidanceRefs`,
+        kind: "drop_unknown_guidance_references",
+        before,
+        after,
+      });
+    }
+  }
+
+  const validSectionKeys = new Set([
+    ...(proposal.sections || []).map((section) => section.key),
+    ...(existingContract?.sections || []).map((section) => section.key),
+  ]);
+  for (const [index, field] of (proposal.fields || []).entries()) {
+    if (field.sectionKey && !validSectionKeys.has(field.sectionKey)) {
+      const before = field.sectionKey;
+      field.sectionKey = null;
+      normalizations.push({
+        path: `$.fields[${index}].sectionKey`,
+        kind: "drop_unknown_section_reference",
+        before,
+        after: null,
+      });
+    }
+  }
+
+  const choiceProbeCount = (proposal.proposedActions || []).filter(
+    (action) => action.kind === "choice_probe",
+  ).length;
+  if (choiceProbeCount > 0) {
+    proposal.proposedActions = proposal.proposedActions.filter(
+      (action) => action.kind !== "choice_probe",
+    );
+    normalizations.push({
+      path: "$.proposedActions",
+      kind: "remove_model_authored_choice_probes",
+      removedCount: choiceProbeCount,
+    });
+  }
   const targetsByField = new Map(
     (proposal.mechanics?.fieldTargets || []).map((target) => [
       target.fieldKey,
@@ -408,10 +526,11 @@ function promptText(observation) {
     "Resolution hints must be selectors copied exactly from selectorCandidates in the raw facts.",
     "Prefer the full structural :nth-of-type selector candidate for progression and any otherwise-ambiguous control. If runtimeValidationFeedback reports an ambiguous locator, replace it with a supplied selector candidate that identifies exactly that intended element.",
     "Every visible applicant control should have a canonical field and a format-valid, obviously synthetic test value. Satisfying the observed field format and constraints is mandatory; add conspicuous test wording only where that format permits it.",
+    "Never model submit, reset, image-button, hidden, or ordinary button controls as applicant fields. They belong only to observed actions and, when selected, the one declared progression action.",
     "Discovery must expose conditional behavior rather than avoid it. For visible select, radio, checkbox, switch, and button-like applicant controls, choose the format-valid option or boolean state most likely to reveal dependent questions. Never justify a value because it avoids revealing controls.",
-    "For every unprotected visible radio group, checkbox, switch, or non-exempt select, propose explicit choice_probe actions covering every non-placeholder observed option. Do not propose choice_probe actions for selects whose meaningful option values or labels are all numeric, or for calendar-month selects recognized by a month-like identity or mostly month-name options. Those shared special traversal rules treat bounded date-like selectors as scalar input, not dependency branches. For a checkbox or switch, propose both false and true. Each choice_probe value must be an observed raw option value or boolean state; shared code will reject incomplete coverage and will not invent missing probes.",
+    "Do not propose choice_probe actions. Shared deterministic code derives the complete safe probe set directly from observed option facts, excluding numeric and calendar-month selects under the centralized traversal rules. The model is responsible for one primary action per applicant field and for interpreting a rendered difference only after deterministic probing finds one.",
     "A visible terminal-looking action does not prove the current contract is complete while an unprobed choice control could reveal more applicant controls. The runtime will re-sense visibility after proposed field actions.",
-    "Propose exactly one primary typed action for every visible applicant control: field_actuation for ordinary controls and the matching protected action kind for uploads, legal acceptance, credentials, login, payment, or CAPTCHA. Choice_probe actions are additional explicit discovery instructions.",
+    "Propose exactly one primary typed action for every visible applicant control: field_actuation for ordinary controls and the matching protected action kind for uploads, legal acceptance, credentials, login, payment, or CAPTCHA.",
     "Propose exactly one action for the declared progression target. mechanics.progressionTarget.sourceFactId must identify the one observed visible action fact chosen by the model. Selectors must come from that same fact; deterministic compilation will bind the chosen fact to its unique structural locator without changing the chosen action.",
     "This crawl serves OneDegree's resource-access mission. Select exactly one public form journey that most directly helps a person obtain an essential service or coordinate a referral: housing, food, healthcare, financial assistance, employment, education, legal aid, childcare, transportation, or another basic support service.",
     "Form-entry priority is: intake/application/enrollment/service-request/referral/eligibility form; then public registration that directly grants access to the resource; only when none is available, a contact or request-information form that can accelerate access. Prefer the form for the person seeking service over provider, partner, administrator, donation, volunteer, newsletter, survey, marketing, or general-feedback forms.",
@@ -443,6 +562,8 @@ export async function generateSemanticProposal(
     fetchImpl = fetch,
     log = async () => {},
     configuration = semanticConfiguration(),
+    maxSchemaAttempts = 2,
+    timeoutMs: requestedTimeoutMs = null,
   } = {},
 ) {
   if (!configuration.configured) {
@@ -459,7 +580,7 @@ export async function generateSemanticProposal(
     screenshotSha256: observation.screenshot.sha256,
   });
   const controller = new AbortController();
-  const timeoutMs = Math.max(
+  const configuredTimeoutMs = Math.max(
     1_000,
     Math.min(
       Number.parseInt(
@@ -469,14 +590,26 @@ export async function generateSemanticProposal(
       360_000,
     ),
   );
+  const timeoutMs = Math.max(
+    1_000,
+    Math.min(
+      Number.isFinite(Number(requestedTimeoutMs))
+        ? Number(requestedTimeoutMs)
+        : configuredTimeoutMs,
+      configuredTimeoutMs,
+    ),
+  );
+  const schemaAttemptLimit = Math.max(
+    1,
+    Math.min(Number.parseInt(String(maxSchemaAttempts), 10) || 2, 2),
+  );
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const rejectedDrafts = [];
     let correction = "";
-    const maxSchemaAttempts = 4;
     for (
       let attempt = 1;
-      attempt <= maxSchemaAttempts;
+      attempt <= schemaAttemptLimit;
       attempt += 1
     ) {
       const response = await fetchImpl("https://api.openai.com/v1/responses", {
@@ -561,13 +694,16 @@ export async function generateSemanticProposal(
           error: error instanceof Error ? error.message : String(error),
           proposal,
         });
-        if (attempt === maxSchemaAttempts) throw error;
+        if (attempt === schemaAttemptLimit) throw error;
         correction = [
           "",
           "",
           "Your prior draft was rejected by deterministic schema validation.",
           `Validation error: ${error instanceof Error ? error.message : String(error)}`,
-          "Return a corrected complete proposal. Do not change observed facts merely to satisfy validation.",
+          "Correct only the invalid path and any references that necessarily depend on it. Preserve every unrelated valid value from the prior proposal.",
+          "Return the complete corrected proposal because the response schema requires a complete document. Do not change observed facts merely to satisfy validation.",
+          "Prior canonical proposal:",
+          JSON.stringify(proposal),
         ].join("\n");
         continue;
       }
@@ -596,13 +732,16 @@ export async function generateSemanticProposal(
     }
     throw new Error("Semantic generation exhausted its repair budget.");
   } catch (error) {
+    const failure =
+      error instanceof Error ? error : new Error(String(error));
+    failure.semanticGenerationFailure = true;
     await log("semantic_generation_failed", {
       model: configuration.model,
       promptVersion: configuration.promptVersion,
       durationMs: Date.now() - startedAt,
-      error: error instanceof Error ? error.message : String(error),
+      error: failure.message,
     });
-    throw error;
+    throw failure;
   } finally {
     clearTimeout(timeout);
   }

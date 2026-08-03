@@ -163,7 +163,15 @@ export async function captureNovelStateInput({
 
     const controlElements = [
       ...document.querySelectorAll("input, select, textarea"),
-    ];
+    ].filter(
+      (element) =>
+        !(
+          element instanceof HTMLInputElement &&
+          ["button", "hidden", "image", "reset", "submit"].includes(
+            element.type.toLowerCase(),
+          )
+        ),
+    );
     const controls = controlElements.map((element, index) => {
       const optionFacts =
         element instanceof HTMLSelectElement

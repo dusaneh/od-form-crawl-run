@@ -513,6 +513,7 @@ test(
           <summary>Eligibility questions</summary>
           <input id="closed-detail-field" name="closed_detail_field" type="text">
         </details>
+        <input id="semantic-submit" type="submit" value="Send application">
       `);
     });
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -547,6 +548,18 @@ test(
             action.visible,
         )?.disclosureExpanded,
         true,
+      );
+      assert.equal(
+        before.observation.controls.some(
+          (field) => field.id === "semantic-submit",
+        ),
+        false,
+      );
+      assert.equal(
+        before.observation.actions.find(
+          (action) => action.rawText === "Send application",
+        )?.rawType,
+        "submit",
       );
       const result = await toolbox.writeControl(
         { selectors: ["#qual-income"] },

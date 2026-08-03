@@ -118,7 +118,3 @@ export function expectedDependencyProbeValues(field) {
   if (dependencyProbeExemption(field)) return [];
   return meaningfulChoiceOptions(field).map((option) => option.value);
 }
-
-export function allowedDependencyProbeActions(field, actions) {
-  return dependencyProbeExemption(field) ? [] : actions || [];
-}

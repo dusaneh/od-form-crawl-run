@@ -22,12 +22,9 @@ import {
 } from "./semantic/submission-result-assessment.mjs";
 import { shouldCaptureStateScreenshot } from "./evidence-retention.mjs";
 import { detectCaptcha } from "./traversal-automation.mjs";
-import {
-  allowedDependencyProbeActions,
-  expectedDependencyProbeValues,
-} from "./traversal-special-rules.mjs";
+import { expectedDependencyProbeValues } from "./traversal-special-rules.mjs";
 
-const GENERATED_FORM_SCRIPT_VERSION = 15;
+const GENERATED_FORM_SCRIPT_VERSION = 16;
 const MAX_GENERATED_STATES = 12;
 const MAX_SAME_PAGE_BRANCH_DEPTH = 1;
 const CANONICAL_PROFILE_KEYS = new Set([
@@ -253,7 +250,7 @@ export function choiceProbeCoverageIssues(plan) {
         detail: `Choice probes must exactly cover observed safe options. Missing: ${missing.map(String).join(", ") || "none"}; extra: ${extra.map(String).join(", ") || "none"}.`,
         selectorCandidates: field.selectors || [],
         instruction:
-          "Return one explicit choice_probe action for every observed non-placeholder option unless the shared special traversal rules exempt the select. Checkbox and switch controls require both false and true.",
+          "Rebuild deterministic probeValues from every observed non-placeholder option unless the shared special traversal rules exempt the select. Checkbox and switch controls require both false and true.",
       });
     }
   }
@@ -393,7 +390,7 @@ export function radioGroupProposalIssues(proposal, observation) {
         sourceFactIds: [...factIds].sort(),
         expectedOptionValues: expectedValues,
         instruction:
-          "Return one radio field for the shared raw name, link every option sourceFactId to it, preserve the group legend and per-option labels, propose one primary field action, and add one choice_probe per observed option value.",
+          "Return one radio field for the shared raw name, link every option sourceFactId to it, preserve the group legend and per-option labels, and propose one primary field action. Shared code derives option probes deterministically.",
       });
     }
   }
@@ -524,7 +521,7 @@ export function exhaustedDisclosureProgressionIssues(proposal, observation) {
         selectorCandidates: selected.selectorCandidates,
       },
       instruction:
-        "Choose another observed progression fact and return a complete replacement proposal. Do not target an already-expanded disclosure. If every disclosure has been explored and the actual terminal control is next, declare it as terminal_submit rather than advance.",
+        "Use the prior proposal as the base and change only progression plus references that necessarily depend on it. Choose another observed progression fact. Do not target an already-expanded disclosure. If every disclosure has been explored and the actual terminal control is next, declare it as terminal_submit rather than advance.",
     },
   ];
 }
@@ -836,25 +833,6 @@ function fieldActionMap(proposal, safety) {
   );
 }
 
-function choiceProbeActionMap(proposal, safety) {
-  const acceptedIds = new Set(
-    safety.acceptedActions.map((action) => action.proposalId),
-  );
-  const grouped = new Map();
-  for (const action of proposal.proposedActions) {
-    if (
-      action.kind !== "choice_probe" ||
-      !acceptedIds.has(action.proposalId)
-    ) {
-      continue;
-    }
-    const current = grouped.get(action.targetKey) || [];
-    current.push(action);
-    grouped.set(action.targetKey, current);
-  }
-  return grouped;
-}
-
 function generatedStatePlan({
   proposal,
   observation,
@@ -862,7 +840,6 @@ function generatedStatePlan({
   provenance,
 }) {
   const actions = fieldActionMap(proposal, safety);
-  const probeActions = choiceProbeActionMap(proposal, safety);
   const targets = new Map(
     proposal.mechanics.fieldTargets.map((target) => [
       target.fieldKey,
@@ -916,18 +893,20 @@ function generatedStatePlan({
             acceptedDisposition?.crawlModelingAuthority ||
             "";
       const sensitivityDecision = policySensitivityDecision(field, rawFact);
+      const actuate = Boolean(action) && !optionValuesUnavailable;
       const planFieldIdentity = {
         ...field,
         label: field.rawLabel,
         observedOptions,
+        actuate,
+        legalAcceptanceType,
         rawIdentity: {
           id: rawFact?.id || "",
           name: rawFact?.name || "",
         },
       };
-      const acceptedProbeActions = allowedDependencyProbeActions(
+      const deterministicProbeValues = expectedDependencyProbeValues(
         planFieldIdentity,
-        probeActions.get(field.key) || [],
       );
       return {
         key: field.key,
@@ -974,13 +953,14 @@ function generatedStatePlan({
           field.controlType === "file" && action
             ? "[generated harmless upload]"
             : action?.value ?? field.testValue,
-        probeValues: acceptedProbeActions.map((probe) => probe.value),
-        probeRationales: acceptedProbeActions.map((probe) => ({
-          value: probe.value,
-          rationale: probe.rationale,
-          proposalId: probe.proposalId,
+        probeValues: deterministicProbeValues,
+        probeRationales: deterministicProbeValues.map((value) => ({
+          value,
+          rationale:
+            "Deterministically derived from the observed safe option inventory.",
+          proposalId: null,
         })),
-        actuate: Boolean(action) && !optionValuesUnavailable,
+        actuate,
         skipReason: optionValuesUnavailable
           ? "option_values_unavailable"
           : action
@@ -1865,14 +1845,23 @@ async function generateAndExecuteBranchVariant({
   let generated;
   let safety;
   let plan;
-  const maxBranchRepairAttempts = 6;
+  const maxBranchRepairAttempts = 2;
+  const branchRepairDeadlineAt = Date.now() + 120_000;
   for (
     let repairAttempt = 1;
     repairAttempt <= maxBranchRepairAttempts;
     repairAttempt += 1
   ) {
+    const remainingSemanticMs = branchRepairDeadlineAt - Date.now();
+    if (remainingSemanticMs <= 1_000) {
+      throw new Error(
+        "First-level branch semantic validation exceeded its two-minute repair budget. No branch action was executed.",
+      );
+    }
     generated = await generateSemanticProposal(scopedCapture, {
       log: modelLog,
+      maxSchemaAttempts: repairAttempt === 1 ? 2 : 1,
+      timeoutMs: remainingSemanticMs,
     });
     safety = validateProposalSafety({
       proposal: generated.proposal,
@@ -1952,9 +1941,10 @@ async function generateAndExecuteBranchVariant({
         ...scopedCapture.observation,
         runtimeValidationFeedback: {
           priorProposalId: generated.proposal.proposalId,
+          priorProposal: generated.proposal,
           issues: repairIssues,
           instruction:
-            "Return a complete replacement branch-variant proposal correcting every issue while preserving every valid in-scope control and action from prior attempts. Requirements fixed in earlier attempts remain mandatory. Generate only runtimeBranchScope.scopedSourceFactIds, represent each radio name as one field, provide exactly one primary typed action for every in-scope field, and use 9999 for currency/income/rent text controls. No action has been taken.",
+            "Use priorProposal as the base and correct only the listed invalid paths and their dependent references. Return the complete branch-variant proposal required by the response schema. Preserve unrelated valid values, generate only runtimeBranchScope.scopedSourceFactIds, represent each radio name as one field, provide exactly one primary typed action per in-scope field, and emit no choice_probe actions. No action has been taken.",
         },
       },
     };
@@ -2075,12 +2065,12 @@ async function generateAndExecuteBranchVariant({
       ...nestedProbes.coverage.map((row, index) => ({
         category: "choice_probe",
         label: `${row.label}: ${String(row.value)}`,
-        strategy: "stored LLM-authored nested option probe",
+        strategy: "stored deterministic nested option probe",
         timestamp: new Date().toISOString(),
-        classification: "llm_generated_probe",
+        classification: "deterministic",
         rationale:
           row.assessment?.rationale ||
-          "The branch-variant script explicitly declared this option probe.",
+          "The branch-variant script retained this deterministic option probe.",
         source: `generated:${plan.proposalId}@${plan.scriptVersion}`,
         testValue: row.value,
         outcome: row.status === "verified" ? "landed" : "could_not_test",
@@ -2135,7 +2125,7 @@ async function executeChoiceProbes({
     for (const [probeIndex, value] of field.probeValues.entries()) {
       await onEvent?.(
         "choice_probe_started",
-        `Executing LLM-authored option probe for ${field.label}: ${String(value)}.`,
+        `Executing deterministic option probe for ${field.label}: ${String(value)}.`,
         {
           fieldKey: field.key,
           value,
@@ -2144,13 +2134,13 @@ async function executeChoiceProbes({
             field.probeRationales?.[probeIndex]?.proposalId || null,
           rationale:
             field.probeRationales?.[probeIndex]?.rationale ||
-            "LLM-authored exhaustive option probe.",
+            "Deterministically derived exhaustive option probe.",
         },
       );
       const outcome = await withOuterWriteWindow(
         authorizeWrites,
         "same-origin",
-        `LLM-authored choice probe ${field.key}=${String(value)}`,
+        `deterministic choice probe ${field.key}=${String(value)}`,
         () =>
           toolbox.writeControl(
             { selectors: field.selectors },
@@ -2457,7 +2447,7 @@ async function replayChoiceProbes({
     const outcome = await withOuterWriteWindow(
       authorizeWrites,
       "same-origin",
-      `retained LLM-authored choice probe ${field.key}=${String(expected.value)}`,
+      `retained deterministic choice probe ${field.key}=${String(expected.value)}`,
       () =>
         toolbox.writeControl(
           { selectors: field.selectors },
@@ -2520,12 +2510,12 @@ async function replayChoiceProbes({
     actions.push({
       category: "choice_probe",
       label: `${field.label}: ${String(expected.value)}`,
-      strategy: "retained LLM-authored exhaustive option probe",
+      strategy: "retained deterministic exhaustive option probe",
       timestamp: new Date().toISOString(),
       classification: "deterministic_replay",
       rationale:
         expected.assessment?.rationale ||
-        "Replayed an option probe authored during semantic generation.",
+        "Replayed an option probe derived from the observed option inventory.",
       source: `generated:${plan.proposalId}@${plan.scriptVersion}`,
       testValue: expected.value,
       outcome: "landed",
@@ -2838,7 +2828,7 @@ function generatedFieldActions(plan, fieldResults, stateId) {
     return {
       category: "field_entry",
       label: field.label,
-      strategy: "stored LLM-authored discovery probe",
+      strategy: "stored LLM-authored field action",
       timestamp: new Date().toISOString(),
       classification: "llm_generated_probe",
       rationale: field.rationale,
@@ -4121,14 +4111,38 @@ export async function generateAndReplayForm({
     let safety;
     let plan;
     const repairHistory = [];
-    const maxRepairAttempts = 6;
+    const maxRepairAttempts = 2;
+    const semanticRepairDeadlineAt = Date.now() + 120_000;
     for (
       let repairAttempt = 1;
       repairAttempt <= maxRepairAttempts;
       repairAttempt += 1
     ) {
+      const remainingSemanticMs = semanticRepairDeadlineAt - Date.now();
+      if (remainingSemanticMs <= 1_000 && plan) {
+        const detail =
+          "Semantic script validation exceeded its two-minute repair budget. The rendered observation was retained and no form action was executed.";
+        await onEvent?.("generated_script_validation_exhausted", detail, {
+          sequence,
+          repairAttempt,
+          issues: repairHistory.at(-1)?.issues || [],
+          failureCode: "semantic_repair_budget_exhausted",
+        });
+        return couldNotTestGeneratedState({
+          page,
+          plan,
+          fieldResults: [],
+          onEvent,
+          priorResult: generationJourney,
+          journeyUrls: [...journeyUrls, page.url()],
+          stateExaminations: sequence,
+          detail,
+        });
+      }
       generated = await generateSemanticProposal(captured, {
         log: modelLog,
+        maxSchemaAttempts: repairAttempt === 1 ? 2 : 1,
+        timeoutMs: remainingSemanticMs,
       });
       safety = validateProposalSafety({
         proposal: generated.proposal,
@@ -4216,7 +4230,7 @@ export async function generateAndReplayForm({
       if (repairIssues.length === 0) break;
       await onEvent?.(
         "generated_script_resolution_repair",
-        `The generated state script had ${repairIssues.length} validation issue${repairIssues.length === 1 ? "" : "s"}; requesting an LLM repair before actuation.`,
+        `The generated state script had ${repairIssues.length} validation issue${repairIssues.length === 1 ? "" : "s"}; requesting one targeted LLM repair before actuation.`,
         {
           sequence,
           repairAttempt,
@@ -4256,10 +4270,11 @@ export async function generateAndReplayForm({
           ...captured.observation,
           runtimeValidationFeedback: {
             priorProposalId: generated.proposal.proposalId,
+            priorProposal: generated.proposal,
             issues: repairIssues,
             failureHistory: repairHistory,
             instruction:
-              "Return a complete replacement proposal correcting every issue and preserving every previously valid field and action. Requirements fixed in earlier repair attempts remain mandatory even when absent from the newest issue list. Every visible applicant field must still have exactly one primary action; choice_probe actions are additional and never replace that primary action. Use exact selectorCandidates that resolve uniquely and format-valid, conspicuously synthetic values. Format constraints are mandatory; use 9999 for currency/income/rent text controls, reserved test-shaped values for other strict numeric/code fields, and FORMWEAVE TEST wording only for free text. No action has been taken.",
+              "Use priorProposal as the base. Correct only the listed invalid paths and references that necessarily depend on them, preserving every unrelated valid field and action byte-for-byte where the schema permits. Return the complete proposal required by the response schema. Do not emit choice_probe actions; shared code derives them deterministically. Use exact selectorCandidates that resolve uniquely and format-valid synthetic values. No action has been taken.",
           },
         },
       };
@@ -4445,12 +4460,12 @@ export async function generateAndReplayForm({
           ...probeExecution.coverage.map((row) => ({
             category: "choice_probe",
             label: `${row.label}: ${String(row.value)}`,
-            strategy: "stored LLM-authored exhaustive option probe",
+            strategy: "stored deterministic exhaustive option probe",
             timestamp: new Date().toISOString(),
-            classification: "llm_generated_probe",
+            classification: "deterministic",
             rationale:
               row.assessment?.rationale ||
-              "The generated script explicitly declared this option probe.",
+              "The generated script retained this deterministic option probe.",
             source: `generated:${plan.proposalId}@${plan.scriptVersion}`,
             testValue: row.value,
             outcome:
@@ -4505,7 +4520,7 @@ export async function generateAndReplayForm({
       );
       await onEvent?.(
         "generated_script_choice_coverage_stored",
-        `Stored ${probeExecution.coverage.length} verified/attempted LLM-authored option probe result${probeExecution.coverage.length === 1 ? "" : "s"} for ${plan.state.key}.`,
+        `Stored ${probeExecution.coverage.length} verified/attempted deterministic option probe result${probeExecution.coverage.length === 1 ? "" : "s"} for ${plan.state.key}.`,
         {
           stateKey: plan.state.key,
           sequence,
@@ -4730,7 +4745,7 @@ export async function generateAndReplayForm({
       }
       await onEvent?.(
         "branching_logic_detected",
-        `LLM-authored probes revealed ${revealedControls.length} additional visible control${revealedControls.length === 1 ? "" : "s"} at supported depth ${nextBranchDepth}; the revealed state will be sent to the LLM before any progression.`,
+        `Deterministic probes revealed ${revealedControls.length} additional visible control${revealedControls.length === 1 ? "" : "s"} at supported depth ${nextBranchDepth}; the revealed state will be sent to the LLM before any progression.`,
         {
           sequence,
           stateKey: plan.state.key,
@@ -5005,7 +5020,7 @@ export async function generateAndReplayForm({
           {
             category: "form_advance",
             label: plan.progression.key,
-            strategy: "stored LLM-authored discovery probe",
+            strategy: "stored LLM-authored progression action",
             timestamp: new Date().toISOString(),
             classification: "llm_generated_probe",
             rationale: plan.progression.rationale,
@@ -5174,7 +5189,7 @@ export async function generateAndReplayForm({
         {
           category: "form_advance",
           label: plan.progression.key,
-          strategy: "stored LLM-authored discovery probe",
+          strategy: "stored LLM-authored progression action",
           timestamp: new Date().toISOString(),
           classification: "llm_generated_probe",
           rationale: plan.progression.rationale,

@@ -110,6 +110,11 @@ const FAILURE_GUIDANCE: Record<
     title: "AI analysis could not be completed",
     detail: "The crawl data was retained, but AI enrichment failed.",
   },
+  semantic_script_generation_failed: {
+    title: "The page loaded, but its automation script was invalid",
+    detail:
+      "The rendered page, discovered fields, screenshot, and generation diagnostics were retained. The failure stopped further form interaction.",
+  },
   fetch_failed: {
     title: "The target page could not be processed",
     detail: "The browser could not fetch or extract usable content from the target page.",
@@ -252,6 +257,9 @@ function translatedDetail(code: string, raw: string) {
   if (code === "crawl_interrupted") {
     return FAILURE_GUIDANCE.crawl_interrupted.detail;
   }
+  if (code === "semantic_script_generation_failed") {
+    return FAILURE_GUIDANCE.semantic_script_generation_failed.detail;
+  }
   if (code === "network_error") return FAILURE_GUIDANCE.network_error.detail;
   return raw || FAILURE_GUIDANCE[code]?.detail || "The API reported a failure without additional detail.";
 }
@@ -368,6 +376,7 @@ export function apiFailureFrom(
     hasFailureStatus(entity?.value || null) ||
     statusOf(eligibility) === "disqualified" ||
     hasFailureStatus(submission) ||
+    array(entity?.value.findings).some(isFailureEntry) ||
     Boolean(text(root?.error));
 
   if (!failed) return null;

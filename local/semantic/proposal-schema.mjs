@@ -1,7 +1,7 @@
 import { CONTROL_TYPES, GUIDANCE_KINDS, PROGRESSION_KINDS } from "../contracts/codes.mjs";
 
 export const SEMANTIC_PROPOSAL_SCHEMA_VERSION = 1;
-export const SEMANTIC_PROMPT_VERSION = "gate2-semantic-state-v4";
+export const SEMANTIC_PROMPT_VERSION = "gate2-semantic-state-v5";
 
 export const ACTION_KINDS = Object.freeze([
   "field_actuation",
@@ -417,7 +417,7 @@ export const SEMANTIC_PROPOSAL_JSON_SCHEMA = {
         type: "object",
         properties: {
           key: { type: "string" },
-          rawLabel: { type: "string" },
+          rawLabel: { type: "string", minLength: 1 },
           controlType: { type: "string", enum: [...CONTROL_TYPES] },
           required: { type: "boolean" },
           options: {

@@ -41,7 +41,7 @@ import {
   terminalEligibilityIssues,
   verifyFixtureSubmissionOutcome,
 } from "../local/production-generated-traversal.mjs";
-import { allowedDependencyProbeActions } from "../local/traversal-special-rules.mjs";
+import { expectedDependencyProbeValues } from "../local/traversal-special-rules.mjs";
 
 function observation() {
   return {
@@ -445,6 +445,85 @@ test("model proposal canonicalization fixes only set ordering and opaque IDs", (
       (item) => item.kind === "align_with_declared_progression",
     ),
   );
+});
+
+test("canonicalization removes action controls, unsafe references, and model-authored probes", () => {
+  const raw = proposal();
+  raw.fields[1].guidanceRefs.push("invented_guidance");
+  raw.sections[0].guidanceRefs.push("invented_guidance");
+  raw.fields.push(
+    field({
+      key: "submit",
+      rawLabel: "",
+      controlType: "text",
+      factId: "field_submit",
+      selector: "#submit",
+      testValue: "FORMWEAVE TEST",
+    }),
+  );
+  raw.sections[0].fieldKeys.push("submit");
+  raw.state.visibleControlKeys.push("submit");
+  raw.mechanics.fieldTargets.push({
+    fieldKey: "submit",
+    selectors: ["#submit"],
+  });
+  raw.proposedActions.push(
+    {
+      proposalId: "action_submit_as_field",
+      kind: "field_actuation",
+      targetKey: "submit",
+      value: "FORMWEAVE TEST",
+      rationale: "Incorrectly treat submit as a field.",
+    },
+    {
+      proposalId: "probe_name",
+      kind: "choice_probe",
+      targetKey: "display_name",
+      value: "FORMWEAVE TEST",
+      rationale: "Model-authored probes are ignored.",
+    },
+  );
+  const observed = observation();
+  observed.controls.push({
+    factId: "field_submit",
+    tag: "input",
+    rawType: "submit",
+    id: "submit",
+    rawLabel: "",
+    selectorCandidates: ["#submit"],
+  });
+
+  const normalized = canonicalizeSemanticProposal(raw, null, observed);
+
+  assert.equal(
+    normalized.proposal.fields.some((candidate) => candidate.key === "submit"),
+    false,
+  );
+  assert.equal(
+    normalized.proposal.proposedActions.some(
+      (action) => action.proposalId === "action_submit_as_field",
+    ),
+    false,
+  );
+  assert.equal(
+    normalized.proposal.proposedActions.some(
+      (action) => action.kind === "choice_probe",
+    ),
+    false,
+  );
+  assert.equal(
+    normalized.proposal.proposedActions.some(
+      (action) => action.proposalId === "action_submit",
+    ),
+    true,
+  );
+  assert.deepEqual(normalized.proposal.fields[1].guidanceRefs, [
+    "synthetic_guidance",
+  ]);
+  assert.deepEqual(normalized.proposal.sections[0].guidanceRefs, [
+    "synthetic_guidance",
+  ]);
+  assert.doesNotThrow(() => validateSemanticProposal(normalized.proposal));
 });
 
 test("non-model safety accepts crawl-safe uploads and rejects disallowed protected actions", () => {
@@ -1112,7 +1191,7 @@ test("fixture submission requires a successful response or an observed same-page
   );
 });
 
-test("LLM-authored choice probes must cover every safe observed option", () => {
+test("deterministic choice probes must cover every safe observed option", () => {
   const base = {
     state: { key: "benefit_state" },
     progression: {
@@ -1224,9 +1303,7 @@ test("special traversal rules exempt numeric and calendar-month selects from dep
   };
   assert.deepEqual(choiceProbeCoverageIssues(numericYear), []);
   assert.deepEqual(
-    allowedDependencyProbeActions(numericYear.fields[0], [
-      { value: "year-2025" },
-    ]),
+    expectedDependencyProbeValues(numericYear.fields[0]),
     [],
   );
 
@@ -1249,7 +1326,7 @@ test("special traversal rules exempt numeric and calendar-month selects from dep
   };
   assert.deepEqual(choiceProbeCoverageIssues(namedMonth), []);
   assert.deepEqual(
-    allowedDependencyProbeActions(namedMonth.fields[0], [{ value: "jan" }]),
+    expectedDependencyProbeValues(namedMonth.fields[0]),
     [],
   );
 
@@ -1274,6 +1351,10 @@ test("special traversal rules exempt numeric and calendar-month selects from dep
       (issue) => issue.targetKey,
     ),
     ["program"],
+  );
+  assert.deepEqual(
+    expectedDependencyProbeValues(nonNumericBranch.fields[0]),
+    ["housing", "energy"],
   );
 });
 
@@ -1562,6 +1643,7 @@ test("semantic model input contains live sensing context and records provenance"
   assert.match(inputText, /99999/);
   assert.match(inputText, /Format constraints|format and constraints/i);
   assert.match(inputText, /expose conditional behavior rather than avoid it/i);
+  assert.match(inputText, /Do not propose choice_probe actions/i);
   assert.match(
     inputText,
     /opens each recognized collapsed details, accordion, expando/i,
@@ -1601,6 +1683,7 @@ test("schema-invalid model drafts are retained and repaired once", async () => {
     state: { ...valid.state, normalizedRoute: "not-a-route" },
   };
   const events = [];
+  const requestBodies = [];
   let calls = 0;
   const result = await generateSemanticProposal(
     { observation: observation(), screenshot: Buffer.from("png-bytes") },
@@ -1612,7 +1695,8 @@ test("schema-invalid model drafts are retained and repaired once", async () => {
         promptVersion: SEMANTIC_PROMPT_VERSION,
       },
       log: async (kind, detail) => events.push({ kind, detail }),
-      fetchImpl: async () => {
+      fetchImpl: async (_url, init) => {
+        requestBodies.push(JSON.parse(init.body));
         calls += 1;
         return {
           ok: true,
@@ -1641,6 +1725,11 @@ test("schema-invalid model drafts are retained and repaired once", async () => {
   assert.ok(
     events.some((event) => event.kind === "semantic_proposal_schema_rejected"),
   );
+  const repairedPrompt = requestBodies[1].input[1].content.find(
+    (item) => item.type === "input_text",
+  ).text;
+  assert.match(repairedPrompt, /Correct only the invalid path/i);
+  assert.match(repairedPrompt, /Prior canonical proposal:/i);
 });
 
 test("semantic generation records are immutable and retain safety/provenance", async () => {

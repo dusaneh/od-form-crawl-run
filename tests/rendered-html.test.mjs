@@ -175,3 +175,43 @@ test("builds run nodes and contracts from crawl results without demo data", () =
   assert.equal(output.findings[0].code, "crawl_finished");
   assert.equal(output.findings.some((finding) => finding.code === "dynamic_review_required"), true);
 });
+
+test("retains rendered evidence when semantic script generation fails", () => {
+  const parsed = parsePageHtml(fixture, "https://services.example.gov/apply");
+  const output = buildCrawlOutput(
+    [
+      {
+        ...parsed,
+        requestedUrl: "https://services.example.gov/apply",
+        finalUrl: "https://services.example.gov/apply",
+        httpStatus: 200,
+        contentType: "text/html",
+        durationMs: 120,
+        bytesFetched: 2048,
+        fingerprint: fingerprintPage(parsed),
+        screenshot: new Uint8Array([1, 2, 3]),
+        screenshotContentType: "image/png",
+        screenshotProvider: "test",
+        rendered: true,
+        certificationStatus: "could_not_test",
+        semanticGenerationError:
+          "Semantic proposal validation failed at $.fields[4].rawLabel.",
+      },
+    ],
+    "run_semantic_failure",
+  );
+
+  assert.match(output.nodes[0].subtitle, /Script generation failed/i);
+  assert.equal(output.nodes[0].evidenceAvailable, true);
+  assert.match(output.nodes[0].notes.join(" "), /No form interaction was attempted/i);
+  assert.equal(
+    output.findings.some(
+      (finding) => finding.code === "semantic_script_generation_failed",
+    ),
+    true,
+  );
+  assert.equal(
+    output.findings.some((finding) => finding.code === "fetch_failed"),
+    false,
+  );
+});
