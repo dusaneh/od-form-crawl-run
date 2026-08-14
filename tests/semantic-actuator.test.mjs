@@ -738,6 +738,38 @@ test("semantic repair can correct the field/source binding and its mechanics", (
   assert.notEqual(repaired.candidateHash, repair.baseCandidateHash);
 });
 
+test("semantic repair deterministically canonicalizes duplicate opaque action IDs", () => {
+  const proposal = semanticProposal();
+  const repair = {
+    schemaVersion: 1,
+    repairId: "repair_duplicate_action_id_01",
+    layer: "semantic",
+    baseCandidateHash: hashJson(proposal),
+    issueIds: ["issue_branch_companion_action"],
+    operations: [
+      {
+        op: "replace_action",
+        targetKey: "field_01",
+        value: {
+          ...proposal.proposedActions[0],
+          proposalId: proposal.proposedActions[1].proposalId,
+        },
+      },
+    ],
+    rationale:
+      "Compose the branch action while treating proposal identifiers as opaque bookkeeping.",
+  };
+  const repaired = applySemanticRepair({
+    proposal,
+    repair,
+    observation: observation(),
+  });
+  assert.equal(new Set(repaired.proposal.proposedActions.map((item) => item.proposalId)).size, 2);
+  assert.equal(repaired.normalizations.length, 1);
+  assert.equal(repaired.normalizations[0].kind, "deduplicate_opaque_id");
+  assert.equal(proposal.proposedActions[0].proposalId, "set_field_01");
+});
+
 test("repair routing can return from actuator preflight to semantic repair", () => {
   const semantic = routeRepair({
     stage: "actuator_preflight_failed",

@@ -109,6 +109,21 @@ test(
       assert.deepEqual(health.browser.modes, ["headless", "headful"]);
       assert.equal(health.generationMode, "reuse_or_generate");
       assert.equal(health.traversalSettingsVersion, 4);
+      assert.equal(health.permissions.llmReasoningOverride, false);
+      const localReasoningOverride = await fetch(`${baseUrl}/api/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          urls: [`${fixture.origin}/fixtures/start`],
+          allowLocalTargets: true,
+          llmReasoning: { semantic: "high" },
+        }),
+      });
+      assert.equal(localReasoningOverride.status, 403);
+      assert.equal(
+        (await localReasoningOverride.json()).code,
+        "llm_reasoning_override_required",
+      );
       const localAuditResponse = await fetch(`${baseUrl}/api/ops/audit`, {
         headers: {
           "x-formweave-auth-mechanism": "session",

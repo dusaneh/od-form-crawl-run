@@ -1,3 +1,5 @@
+import { reasoningEffortFor, reasoningRequestFor } from "../llm-reasoning.mjs";
+
 function outputText(response) {
   if (typeof response?.output_text === "string") return response.output_text;
   for (const item of response?.output || []) {
@@ -67,14 +69,18 @@ export function assertProviderStructuredOutputSchema(schema) {
 
 export function structuredModelConfiguration(modelVariable = "OPENAI_ACTUATOR_MODEL") {
   const apiKey = process.env.OPENAI_KEY || process.env.OPENAI_API_KEY || "";
+  const callType =
+    modelVariable === "OPENAI_SEMANTIC_MODEL" ? "semantic" : "actuator";
   return {
     configured: Boolean(apiKey),
     apiKey,
+    callType,
     model:
       process.env[modelVariable] ||
       process.env.OPENAI_SEMANTIC_MODEL ||
       process.env.OPENAI_MODEL ||
       "gpt-5.4-mini",
+    reasoningEffort: reasoningEffortFor(callType),
   };
 }
 
@@ -118,6 +124,10 @@ export async function callStructuredModel({
       },
       body: JSON.stringify({
         model: configuration.model,
+        ...reasoningRequestFor(
+          configuration.callType || "actuator",
+          configuration.reasoningEffort || "none",
+        ),
         store: false,
         input: [
           { role: "system", content: system },
@@ -150,6 +160,7 @@ export async function callStructuredModel({
       value: JSON.parse(outputText(payload)),
       responseId: payload.id || null,
       model: configuration.model,
+      reasoningEffort: configuration.reasoningEffort || "none",
     };
   } finally {
     clearTimeout(timeout);

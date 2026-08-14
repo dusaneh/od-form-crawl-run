@@ -1,3 +1,5 @@
+import { reasoningEffortFor, reasoningRequestFor } from "./llm-reasoning.mjs";
+
 const analysisSchema = {
   type: "object",
   properties: {
@@ -155,6 +157,7 @@ export function openAIConfiguration() {
         ? "OPENAI_API_KEY"
         : "none",
     model: process.env.OPENAI_MODEL || "gpt-5.4-mini",
+    reasoningEffort: reasoningEffortFor("analysis"),
   };
 }
 
@@ -164,6 +167,7 @@ export async function analyzeCrawl(pages, log) {
     return {
       status: "skipped",
       model: configuration.model,
+      reasoningEffort: configuration.reasoningEffort || "none",
       summary: "",
       pagePurpose: "",
       visibleForms: [],
@@ -240,6 +244,7 @@ export async function analyzeCrawl(pages, log) {
   const startedAt = Date.now();
   await log("openai_analysis_started", "Analyzing crawl facts and screenshots.", {
     model: configuration.model,
+    reasoningEffort: configuration.reasoningEffort || "none",
     screenshots: content.filter((item) => item.type === "input_image").length,
   });
 
@@ -252,6 +257,10 @@ export async function analyzeCrawl(pages, log) {
       },
       body: JSON.stringify({
         model: configuration.model,
+        ...reasoningRequestFor(
+          "analysis",
+          configuration.reasoningEffort || "none",
+        ),
         store: false,
         input: [
           {
@@ -289,12 +298,14 @@ export async function analyzeCrawl(pages, log) {
     const parsed = JSON.parse(outputText(payload));
     await log("openai_analysis_completed", "Structured OpenAI analysis stored.", {
       model: configuration.model,
+      reasoningEffort: configuration.reasoningEffort || "none",
       durationMs: Date.now() - startedAt,
       inferredFields: parsed.inferredFields.length,
     });
     return {
       status: "completed",
       model: configuration.model,
+      reasoningEffort: configuration.reasoningEffort || "none",
       ...parsed,
       completedAt: new Date().toISOString(),
     };
@@ -308,6 +319,7 @@ export async function analyzeCrawl(pages, log) {
     return {
       status: "failed",
       model: configuration.model,
+      reasoningEffort: configuration.reasoningEffort || "none",
       summary: "",
       pagePurpose: "",
       visibleForms: [],

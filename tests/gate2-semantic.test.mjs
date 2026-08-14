@@ -3010,6 +3010,7 @@ test("semantic model input contains live sensing context and records provenance"
     },
   );
   const userContent = requestBody.input[1].content;
+  assert.deepEqual(requestBody.reasoning, { effort: "none" });
   const inputText = userContent.find((item) => item.type === "input_text").text;
   assert.match(inputText, /accessibilitySnapshot/);
   assert.match(inputText, /priorStates/);
@@ -3042,6 +3043,7 @@ test("semantic model input contains live sensing context and records provenance"
     "high",
   );
   assert.equal(result.provenance.responseId, "resp_test");
+  assert.equal(result.provenance.reasoningEffort, "none");
   assert.equal(result.provenance.promptVersion, SEMANTIC_PROMPT_VERSION);
   assert.deepEqual(
     events.map((event) => event.kind),

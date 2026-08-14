@@ -156,6 +156,8 @@ test("OpenAI success returns schema-constrained analysis and redacted events", a
       assert.match(suppliedFacts, /section_0_0/);
       assert.match(suppliedFacts, /same_page_branch/);
       assert.equal(body.store, false);
+      assert.deepEqual(body.reasoning, { effort: "none" });
+      assert.equal(result.reasoningEffort, "none");
       assert.equal(body.text.format.type, "json_schema");
       assert.equal(body.text.format.strict, true);
       assert.equal(

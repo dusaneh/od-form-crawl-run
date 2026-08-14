@@ -1154,6 +1154,18 @@ export async function generateValidateStateActuator({
           repair: generatedRepair.repair,
           observation,
         });
+        if (repaired.normalizations.length > 0) {
+          await onEvent(
+            "semantic_repair_candidate_canonicalized",
+            "Canonicalized opaque action identifiers after composing a semantic repair.",
+            {
+              sequence,
+              actuatorAttempt,
+              layer: "semantic",
+              normalizations: repaired.normalizations,
+            },
+          );
+        }
         rebuilt = await validateSemanticCandidate({
           proposal: repaired.proposal,
           plan: currentPlan,

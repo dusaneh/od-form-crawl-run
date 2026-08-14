@@ -586,6 +586,7 @@ test(
                 keySource: "OPENAI_KEY",
                 model: "gpt-5.6",
               },
+              permissions: { llmReasoningOverride: true },
               browser: {
                 engine: "playwright-chromium",
                 modes: ["headless", "headful"],
@@ -872,6 +873,9 @@ test(
       await page.getByRole("button", { name: /Close launch dialog/ }).click();
 
       await page.goto(`${appUrl}/api-console`, { waitUntil: "networkidle" });
+      await page.getByLabel("Semantic planning").selectOption("high");
+      await page.getByLabel("Actuators and repairs").selectOption("medium");
+      await page.getByLabel("Final report analysis").selectOption("low");
       for (const authorityLabel of [
         "Consent / terms",
         "Signature",
@@ -898,6 +902,12 @@ test(
         true,
       );
       await apiBaseInput.fill("http://127.0.0.1:8787");
+      await page.getByRole("button", { name: /Start crawl/ }).click();
+      assert.deepEqual(launchPayload.llmReasoning, {
+        semantic: "high",
+        actuator: "medium",
+        analysis: "low",
+      });
       await page
         .getByLabel("Run ID returned by crawl kickoff")
         .fill(run.id);

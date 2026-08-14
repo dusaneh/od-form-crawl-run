@@ -66,11 +66,31 @@ test("hosted crawl and form-run targets enforce designated-user access", async (
     "x-formweave-auth-principal": "dbosmail@gmail.com",
     "x-formweave-auth-role": "admin",
     "x-formweave-auth-scopes":
-      "ui,api,admin,control-plane,external-targets",
+      "ui,api,admin,control-plane,external-targets,llm-reasoning-override",
   };
 
   try {
     await waitForServer(`${baseUrl}/api/health`, child, output);
+
+    const operatorHealth = await getJson(`${baseUrl}/api/health`, operatorHeaders);
+    assert.equal(operatorHealth.body.permissions.llmReasoningOverride, false);
+    const adminHealth = await getJson(`${baseUrl}/api/health`, adminHeaders);
+    assert.equal(adminHealth.body.permissions.llmReasoningOverride, true);
+
+    const operatorReasoningOverride = await postJson(
+      `${baseUrl}/api/runs`,
+      operatorHeaders,
+      {
+        urls: ["https://testforms.dbolab.io/site_a_simple/intake"],
+        browserMode: "headless",
+        llmReasoning: { semantic: "high" },
+      },
+    );
+    assert.equal(operatorReasoningOverride.status, 403);
+    assert.equal(
+      operatorReasoningOverride.body.code,
+      "llm_reasoning_override_required",
+    );
 
     const operatorExternal = await postJson(
       `${baseUrl}/api/runs`,
@@ -103,6 +123,11 @@ test("hosted crawl and form-run targets enforce designated-user access", async (
       {
         urls: ["https://example.org/application"],
         browserMode: "headful",
+        llmReasoning: {
+          semantic: "high",
+          actuator: "medium",
+          analysis: "low",
+        },
       },
     );
     assert.equal(adminExternal.status, 400);
@@ -170,5 +195,10 @@ async function postJson(url, headers, body) {
     headers,
     body: JSON.stringify(body),
   });
+  return { status: response.status, body: await response.json() };
+}
+
+async function getJson(url, headers) {
+  const response = await fetch(url, { headers });
   return { status: response.status, body: await response.json() };
 }

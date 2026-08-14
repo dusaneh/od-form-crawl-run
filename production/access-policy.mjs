@@ -4,6 +4,7 @@ export const STANDARD_TEST_ORIGIN = "https://testforms.dbolab.io";
 export const ACCESS_SCOPES = Object.freeze({
   controlPlane: "control-plane",
   externalTargets: "external-targets",
+  llmReasoningOverride: "llm-reasoning-override",
 });
 
 export function userScopes(email, role) {
@@ -15,7 +16,11 @@ export function userScopes(email, role) {
     normalizedEmail === PRIVILEGED_OPERATOR_EMAIL &&
     normalizedRole === "admin"
   ) {
-    scopes.push(ACCESS_SCOPES.controlPlane, ACCESS_SCOPES.externalTargets);
+    scopes.push(
+      ACCESS_SCOPES.controlPlane,
+      ACCESS_SCOPES.externalTargets,
+      ACCESS_SCOPES.llmReasoningOverride,
+    );
   }
   return scopes;
 }

@@ -1,6 +1,7 @@
 import { hashJson } from "../contracts/artifact-store.mjs";
 import { validateSemanticRepairDocument } from "../contracts/semantic-actuator-schemas.mjs";
 import { validateSemanticProposal } from "./proposal-schema.mjs";
+import { uniquifyActionProposalIds } from "./proposal-normalization.mjs";
 
 export class SemanticRepairError extends TypeError {
   constructor(message, code = "SEMANTIC_REPAIR_INVALID") {
@@ -244,6 +245,7 @@ export function applySemanticRepair({ proposal, repair, observation = null }) {
       invalidatedTargetKeys.add(operation.value);
     }
   }
+  const normalizations = uniquifyActionProposalIds(candidate);
   validateSemanticProposal(candidate, observation?.existingContract);
   const bindingIssues = observation
     ? semanticRepairBindingIssues(candidate, observation)
@@ -262,5 +264,6 @@ export function applySemanticRepair({ proposal, repair, observation = null }) {
     parentCandidateHash: baseHash,
     invalidatedTargetKeys: [...invalidatedTargetKeys].sort(),
     repairId: repair.repairId,
+    normalizations,
   };
 }

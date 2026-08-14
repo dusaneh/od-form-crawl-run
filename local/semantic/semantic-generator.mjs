@@ -8,6 +8,8 @@ import {
   isConspicuouslySynthetic,
   isLegalAcceptanceField,
 } from "./proposal-safety.mjs";
+import { reasoningEffortFor, reasoningRequestFor } from "../llm-reasoning.mjs";
+import { uniquifyActionProposalIds } from "./proposal-normalization.mjs";
 
 function outputText(response) {
   for (const item of response.output || []) {
@@ -1091,26 +1093,7 @@ export function canonicalizeSemanticProposal(
     }
   }
 
-  const usedActionIds = new Set();
-  for (const [index, action] of (proposal.proposedActions || []).entries()) {
-    const original = String(action.proposalId || "");
-    let candidate = original;
-    let suffix = index + 1;
-    while (usedActionIds.has(candidate)) {
-      candidate = `${original}__${suffix}`;
-      suffix += 1;
-    }
-    if (candidate !== original) {
-      action.proposalId = candidate;
-      normalizations.push({
-        path: `$.proposedActions[${index}].proposalId`,
-        kind: "deduplicate_opaque_id",
-        before: original,
-        after: candidate,
-      });
-    }
-    usedActionIds.add(candidate);
-  }
+  normalizations.push(...uniquifyActionProposalIds(proposal));
 
   return { proposal, normalizations };
 }
@@ -1124,6 +1107,7 @@ export function semanticConfiguration() {
       process.env.OPENAI_SEMANTIC_MODEL ||
       process.env.OPENAI_MODEL ||
       "gpt-5.4-mini",
+    reasoningEffort: reasoningEffortFor("semantic"),
     promptVersion: SEMANTIC_PROMPT_VERSION,
   };
 }
@@ -1195,6 +1179,7 @@ export async function generateSemanticProposal(
   const startedAt = Date.now();
   await log("semantic_generation_started", {
     model: configuration.model,
+    reasoningEffort: configuration.reasoningEffort || "none",
     promptVersion: configuration.promptVersion,
     url: observation.url,
     screenshotSha256: observation.screenshot.sha256,
@@ -1240,6 +1225,10 @@ export async function generateSemanticProposal(
         },
         body: JSON.stringify({
           model: configuration.model,
+          ...reasoningRequestFor(
+            "semantic",
+            configuration.reasoningEffort || "none",
+          ),
           store: false,
           input: [
             {
@@ -1330,6 +1319,7 @@ export async function generateSemanticProposal(
       const provenance = {
         generatedAt: new Date().toISOString(),
         model: configuration.model,
+        reasoningEffort: configuration.reasoningEffort || "none",
         promptVersion: configuration.promptVersion,
         responseId: payload.id || null,
         durationMs: Date.now() - startedAt,
@@ -1342,6 +1332,7 @@ export async function generateSemanticProposal(
       await log("semantic_generation_completed", {
         proposalId: proposal.proposalId,
         model: configuration.model,
+        reasoningEffort: configuration.reasoningEffort || "none",
         promptVersion: configuration.promptVersion,
         durationMs: provenance.durationMs,
         attempts: attempt,
@@ -1357,6 +1348,7 @@ export async function generateSemanticProposal(
     failure.semanticGenerationFailure = true;
     await log("semantic_generation_failed", {
       model: configuration.model,
+      reasoningEffort: configuration.reasoningEffort || "none",
       promptVersion: configuration.promptVersion,
       durationMs: Date.now() - startedAt,
       error: failure.message,

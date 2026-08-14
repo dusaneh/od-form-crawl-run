@@ -9,6 +9,12 @@ import {
 
 type JsonObject = Record<string, unknown>;
 type CrawlMode = "probe" | "submit";
+type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
+type LlmReasoningProfile = {
+  semantic: ReasoningEffort;
+  actuator: ReasoningEffort;
+  analysis: ReasoningEffort;
+};
 type FixtureAuthorities = {
   acknowledgement: boolean;
   consent: boolean;
@@ -35,6 +41,18 @@ const DEFAULT_TARGET =
   "http://localhost:9000/site_af_branch_cards/intake";
 const DEFAULT_CAPTURE =
   "http://localhost:9000/site_af_branch_cards";
+const DEFAULT_LLM_REASONING: LlmReasoningProfile = {
+  semantic: "none",
+  actuator: "none",
+  analysis: "none",
+};
+const REASONING_EFFORTS: ReasoningEffort[] = [
+  "none",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+];
 const commonErrors = [
   ["script_missing", "No LLM-authored script could be generated or loaded."],
   ["quality_floor", "The crawl did not collect enough verified evidence."],
@@ -46,6 +64,14 @@ const commonErrors = [
   ["actuation_unverified", "A scripted field action failed browser readback."],
   ["advance_no_navigation", "A progression action did not reach its expected state."],
   ["terminal_submission_unverified", "Submit ran, but success was not verified."],
+  [
+    "llm_reasoning_override_required",
+    "Only the designated administrator may override LLM reasoning.",
+  ],
+  [
+    "llm_reasoning_profile_invalid",
+    "The per-call reasoning profile is malformed or unsupported.",
+  ],
 ];
 
 function apiUrl(base: string, path: string) {
@@ -843,6 +869,13 @@ export function ApiConsole() {
   );
   const [crawlMode, setCrawlMode] = useState<CrawlMode>("probe");
   const [allowLocalTargets, setAllowLocalTargets] = useState(false);
+  const [llmReasoningPermission, setLlmReasoningPermission] = useState<{
+    apiBase: string;
+    allowed: boolean;
+  } | null>(null);
+  const [llmReasoning, setLlmReasoning] = useState<LlmReasoningProfile>(
+    DEFAULT_LLM_REASONING,
+  );
   const [fixtureAuthorities, setFixtureAuthorities] = useState<FixtureAuthorities>({
     acknowledgement: true,
     consent: true,
@@ -894,6 +927,38 @@ export function ApiConsole() {
     setBrowserMode("headless");
     setAllowLocalTargets(false);
   }, [hostedApi]);
+
+  useEffect(() => {
+    if (!apiBase) return;
+    let active = true;
+    fetch(apiUrl(apiBase, "/api/health"), {
+      cache: "no-store",
+      credentials: "include",
+    })
+      .then(async (response) => (response.ok ? response.json() : null))
+      .then((payload: unknown) => {
+        if (!active || !payload || typeof payload !== "object") return;
+        const permissions = (payload as JsonObject).permissions;
+        setLlmReasoningPermission({
+          apiBase,
+          allowed: Boolean(
+            permissions &&
+              typeof permissions === "object" &&
+              (permissions as JsonObject).llmReasoningOverride === true,
+          ),
+        });
+      })
+      .catch(() => {
+        if (active) setLlmReasoningPermission({ apiBase, allowed: false });
+      });
+    return () => {
+      active = false;
+    };
+  }, [apiBase]);
+
+  const canOverrideLlmReasoning =
+    llmReasoningPermission?.apiBase === apiBase &&
+    llmReasoningPermission.allowed;
 
   const inputSchema = useMemo(() => {
     const value = form?.inputSchema;
@@ -1111,6 +1176,7 @@ export function ApiConsole() {
         browserMode: hostedApi ? "headless" : browserMode,
         allowLocalTargets: hostedApi ? false : allowLocalTargets,
         componentAuthorities: fixtureAuthorities,
+        ...(canOverrideLlmReasoning ? { llmReasoning } : {}),
       });
       const run =
         payload.run && typeof payload.run === "object"
@@ -1355,6 +1421,42 @@ export function ApiConsole() {
                 pages.
               </span>
             </div>
+            {canOverrideLlmReasoning ? (
+              <fieldset className="api-console-reasoning">
+                <legend>Admin-only LLM reasoning</legend>
+                <p>
+                  Per-crawl override for <code>dbosmail@gmail.com</code>. The
+                  current default remains <code>none</code>; higher levels can
+                  improve difficult decisions but cost more time and tokens.
+                </p>
+                {(
+                  [
+                    ["semantic", "Semantic planning"],
+                    ["actuator", "Actuators and repairs"],
+                    ["analysis", "Final report analysis"],
+                  ] as [keyof LlmReasoningProfile, string][]
+                ).map(([key, label]) => (
+                  <label key={key}>
+                    {label}
+                    <select
+                      value={llmReasoning[key]}
+                      onChange={(event) =>
+                        setLlmReasoning((current) => ({
+                          ...current,
+                          [key]: event.target.value as ReasoningEffort,
+                        }))
+                      }
+                    >
+                      {REASONING_EFFORTS.map((effort) => (
+                        <option key={effort} value={effort}>
+                          {effort}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </fieldset>
+            ) : null}
             <div className="api-console-switches">
               <label>
                 <input

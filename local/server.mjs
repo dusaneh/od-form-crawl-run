@@ -27,8 +27,14 @@ import { selectRetainedEvidence } from "./evidence-retention.mjs";
 import { buildRunnerJourney } from "./report-runner-journey.mjs";
 import { summarizeLlmTelemetry } from "./audit/llm-telemetry.mjs";
 import {
+  ACCESS_SCOPES,
+  hasPrivilegedUserScope,
   mayExecuteHostedTarget,
 } from "../production/access-policy.mjs";
+import {
+  normalizeLlmReasoningProfile,
+  withLlmReasoningProfile,
+} from "./llm-reasoning.mjs";
 
 const localDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(localDirectory, "..");
@@ -943,6 +949,18 @@ function mayExecuteTarget(request, targetUrl) {
   );
 }
 
+function mayOverrideLlmReasoning(actor) {
+  return hasPrivilegedUserScope(
+    {
+      mechanism: actor?.mechanism,
+      principal: actor?.actorId,
+      role: actor?.role,
+      scopes: actor?.scopes,
+    },
+    ACCESS_SCOPES.llmReasoningOverride,
+  );
+}
+
 function externalTargetForbidden(request) {
   return jsonResponse(
     request,
@@ -1353,6 +1371,7 @@ function initialRun(
   allowLocalTargets,
   fixtureAuthorities,
   traversalSettings,
+  llmReasoning,
   initiatedBy,
   now
 ) {
@@ -1390,6 +1409,7 @@ function initialRun(
     componentAuthorities: fixtureAuthorities,
     fixtureAuthorities,
     traversalSettings,
+    llmReasoning,
     nodes,
     edges: [],
     findings: [
@@ -2244,6 +2264,34 @@ async function executeCrawl(run) {
 
 async function createRun(request) {
   const payload = await bodyJson(request);
+  const initiatedBy = actorFromRequest(request);
+  if (
+    payload.llmReasoning !== undefined &&
+    !mayOverrideLlmReasoning(initiatedBy)
+  ) {
+    return jsonResponse(
+      request,
+      {
+        error:
+          "Only the designated administrator may override LLM reasoning effort.",
+        code: "llm_reasoning_override_required",
+      },
+      403,
+    );
+  }
+  let llmReasoning;
+  try {
+    llmReasoning = normalizeLlmReasoningProfile(payload.llmReasoning);
+  } catch (error) {
+    return jsonResponse(
+      request,
+      {
+        error: error instanceof Error ? error.message : String(error),
+        code: "llm_reasoning_profile_invalid",
+      },
+      400,
+    );
+  }
   const suppliedUrls = Array.isArray(payload.urls) ? payload.urls : [];
   const rawUrls = suppliedUrls
     .map((url) => String(url).trim())
@@ -2399,7 +2447,6 @@ async function createRun(request) {
   }
   try {
     const traversalSettings = await readTraversalSettings();
-    const initiatedBy = actorFromRequest(request);
     const run = initialRun(
       id,
       urls,
@@ -2409,6 +2456,7 @@ async function createRun(request) {
       allowLocalTargets,
       fixtureAuthorities,
       traversalSettings,
+      llmReasoning,
       initiatedBy,
       now
     );
@@ -2430,9 +2478,12 @@ async function createRun(request) {
       discoverRelatedPages: false,
       fixtureAuthorities,
       traversalSettingsVersion: traversalSettings.version,
+      llmReasoning,
       },
     );
-    const task = executeCrawl(run);
+    const task = withLlmReasoningProfile(run.llmReasoning, () =>
+      executeCrawl(run),
+    );
     runningTasks.set(id, task);
     return jsonResponse(request, { run }, 201);
   } catch (error) {
@@ -2778,6 +2829,7 @@ async function route(request) {
   if (url.pathname === "/api/health" && request.method === "GET") {
     const openai = openAIConfiguration();
     const postgres = database ? await database.ping() : null;
+    const actor = actorFromRequest(request);
     return jsonResponse(request, {
       status: "online",
       runtime: database ? "postgresql" : "local-filesystem",
@@ -2797,6 +2849,9 @@ async function route(request) {
         configured: openai.configured,
         keySource: openai.keySource,
         model: openai.model,
+      },
+      permissions: {
+        llmReasoningOverride: mayOverrideLlmReasoning(actor),
       },
       browser: {
         engine: "playwright-chromium",

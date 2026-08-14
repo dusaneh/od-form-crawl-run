@@ -1,3 +1,5 @@
+import { reasoningEffortFor, reasoningRequestFor } from "../llm-reasoning.mjs";
+
 export const SUBMISSION_RESULT_SCHEMA_VERSION = 1;
 export const SUBMISSION_RESULT_PROMPT_VERSION =
   "phase1-submission-result-v1";
@@ -191,6 +193,7 @@ export async function generateSubmissionResultAssessment(
         process.env.OPENAI_SEMANTIC_MODEL ||
         process.env.OPENAI_MODEL ||
         "gpt-5.4-mini",
+      reasoningEffort: reasoningEffortFor("semantic"),
       promptVersion: SUBMISSION_RESULT_PROMPT_VERSION,
     },
   } = {},
@@ -209,6 +212,7 @@ export async function generateSubmissionResultAssessment(
   await log("submission_result_assessment_started", {
     url: observation.url,
     model: configuration.model,
+    reasoningEffort: configuration.reasoningEffort || "none",
     promptVersion: configuration.promptVersion,
   });
   const controller = new AbortController();
@@ -234,6 +238,10 @@ export async function generateSubmissionResultAssessment(
       },
       body: JSON.stringify({
         model: configuration.model,
+        ...reasoningRequestFor(
+          "semantic",
+          configuration.reasoningEffort || "none",
+        ),
         store: false,
         input: [
           {
@@ -276,12 +284,14 @@ export async function generateSubmissionResultAssessment(
     const provenance = {
       generatedAt: new Date().toISOString(),
       model: configuration.model,
+      reasoningEffort: configuration.reasoningEffort || "none",
       promptVersion: configuration.promptVersion,
       responseId: payload.id || null,
       durationMs: Date.now() - startedAt,
     };
     await log("submission_result_assessment_completed", {
       model: configuration.model,
+      reasoningEffort: configuration.reasoningEffort || "none",
       promptVersion: configuration.promptVersion,
       outcome: assessment.outcome,
       confidence: assessment.confidence,

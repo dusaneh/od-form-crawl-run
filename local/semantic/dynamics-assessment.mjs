@@ -1,3 +1,5 @@
+import { reasoningEffortFor, reasoningRequestFor } from "../llm-reasoning.mjs";
+
 export const DYNAMICS_ASSESSMENT_SCHEMA_VERSION = 1;
 export const DYNAMICS_PROMPT_VERSION = "phase1-dynamics-assessment-v11";
 
@@ -190,6 +192,7 @@ export async function generateDynamicsAssessment(
         process.env.OPENAI_SEMANTIC_MODEL ||
         process.env.OPENAI_MODEL ||
         "gpt-5.4-mini",
+      reasoningEffort: reasoningEffortFor("semantic"),
       promptVersion: DYNAMICS_PROMPT_VERSION,
     },
   } = {},
@@ -204,6 +207,7 @@ export async function generateDynamicsAssessment(
   await log("dynamics_assessment_started", {
     transitionKind: input.transitionKind,
     model: configuration.model,
+    reasoningEffort: configuration.reasoningEffort || "none",
     promptVersion: configuration.promptVersion,
   });
   const controller = new AbortController();
@@ -229,6 +233,10 @@ export async function generateDynamicsAssessment(
       },
       body: JSON.stringify({
         model: configuration.model,
+        ...reasoningRequestFor(
+          "semantic",
+          configuration.reasoningEffort || "none",
+        ),
         store: false,
         input: [
           {
@@ -271,12 +279,14 @@ export async function generateDynamicsAssessment(
     const provenance = {
       generatedAt: new Date().toISOString(),
       model: configuration.model,
+      reasoningEffort: configuration.reasoningEffort || "none",
       promptVersion: configuration.promptVersion,
       responseId: payload.id || null,
       durationMs: Date.now() - startedAt,
     };
     await log("dynamics_assessment_completed", {
       model: configuration.model,
+      reasoningEffort: configuration.reasoningEffort || "none",
       promptVersion: configuration.promptVersion,
       transitionKind: assessment.transitionKind,
       outcome: assessment.outcome,

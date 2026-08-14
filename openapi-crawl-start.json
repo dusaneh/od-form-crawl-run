@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FormWeave — Kick Off Crawl",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "description": "Starts one asynchronous, single-form crawl and returns the run ID needed by the crawl-status API. The LLM may navigate from the supplied page to one resource-access form; heuristic related-page discovery and alternate-form crawling are disabled. The caller explicitly chooses whether the synthetic crawl stops at the terminal boundary or submits the form."
   },
   "servers": [
@@ -64,6 +64,9 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
           "409": {
             "$ref": "#/components/responses/Conflict"
           }
@@ -122,6 +125,17 @@
             "default": false,
             "description": "Allows loopback targets only when FormWeave is itself running locally. Hosted deployments reject this flag because localhost would refer to the remote worker. Other private-network targets remain blocked."
           },
+          "llmReasoning": {
+            "type": "object",
+            "description": "Optional per-crawl reasoning-effort override. Omit it to retain the current none default for every call type. Only the designated dbosmail@gmail.com administrator session may send this property; other identities receive HTTP 403.",
+            "properties": {
+              "version": { "type": "integer", "const": 1, "default": 1 },
+              "semantic": { "$ref": "#/components/schemas/ReasoningEffort" },
+              "actuator": { "$ref": "#/components/schemas/ReasoningEffort" },
+              "analysis": { "$ref": "#/components/schemas/ReasoningEffort" }
+            },
+            "additionalProperties": false
+          },
           "componentAuthorities": {
             "type": "object",
             "description": "Fresh per-crawl permission for the LLM-authored script to model these component types with synthetic values. These permissions apply to public and local targets and are independent of the terminal submit choice.",
@@ -160,6 +174,11 @@
             "$ref": "#/components/schemas/QueuedRun"
           }
         }
+      },
+      "ReasoningEffort": {
+        "type": "string",
+        "enum": ["none", "low", "medium", "high", "xhigh"],
+        "default": "none"
       },
       "QueuedRun": {
         "type": "object",
@@ -228,6 +247,16 @@
       },
       "Unauthorized": {
         "description": "Bearer token missing, invalid, expired, or revoked.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "The authenticated identity is not the designated administrator for this privileged override.",
         "content": {
           "application/json": {
             "schema": {

@@ -658,6 +658,7 @@ export async function generateActuatorBundle(
     bundleVersion,
     promptVersion: ACTUATOR_PROMPT_VERSION,
     model: configuration.model,
+    reasoningEffort: configuration.reasoningEffort || "none",
   });
   try {
     const targets = actuatorTargets(semanticProposal);
@@ -789,6 +790,10 @@ export async function generateActuatorBundle(
     const provenance = {
       generatedAt: new Date().toISOString(),
       model: generatedTargets[0]?.model || configuration.model,
+      reasoningEffort:
+        generatedTargets[0]?.reasoningEffort ||
+        configuration.reasoningEffort ||
+        "none",
       promptVersion: ACTUATOR_PROMPT_VERSION,
       responseId: generatedTargets[0]?.responseId || null,
       responseIds: generatedTargets.map((generated) => generated.responseId),
@@ -805,6 +810,7 @@ export async function generateActuatorBundle(
       handlers: bundle.handlers.length,
       modules: bundle.modules.length,
       bundleHash: checked.bundleHash,
+      reasoningEffort: provenance.reasoningEffort,
       durationMs: provenance.durationMs,
     });
     return { bundle, bundleHash: checked.bundleHash, provenance };
@@ -814,6 +820,7 @@ export async function generateActuatorBundle(
       bundleId,
       bundleVersion,
       promptVersion: ACTUATOR_PROMPT_VERSION,
+      reasoningEffort: configuration.reasoningEffort || "none",
       durationMs: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -892,6 +899,7 @@ export async function generateActuatorRepair(
     provenance: {
       generatedAt: new Date().toISOString(),
       model: generated.model,
+      reasoningEffort: generated.reasoningEffort || "none",
       promptVersion: ACTUATOR_REPAIR_PROMPT_VERSION,
       responseId: generated.responseId,
     },
@@ -956,6 +964,7 @@ export async function generateRepairDiagnosis(
     provenance: {
       generatedAt: new Date().toISOString(),
       model: generated.model,
+      reasoningEffort: generated.reasoningEffort || "none",
       promptVersion: REPAIR_DIAGNOSIS_PROMPT_VERSION,
       responseId: generated.responseId,
       ...assigned.provenance,
@@ -1008,6 +1017,7 @@ export async function generateSemanticRepair(
     provenance: {
       generatedAt: new Date().toISOString(),
       model: generated.model,
+      reasoningEffort: generated.reasoningEffort || "none",
       promptVersion: SEMANTIC_REPAIR_PROMPT_VERSION,
       responseId: generated.responseId,
     },

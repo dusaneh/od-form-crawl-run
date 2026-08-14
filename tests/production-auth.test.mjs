@@ -26,6 +26,7 @@ test("the designated administrator receives narrowly scoped privileges", () => {
     "admin",
     "control-plane",
     "external-targets",
+    "llm-reasoning-override",
   ]);
   assert.equal(
     hasPrivilegedUserScope(
@@ -53,7 +54,12 @@ test("admin role and API tokens do not grant designated-user privileges", () => 
         mechanism: "bearer",
         principal: "dbosmail@gmail.com",
         role: "admin",
-        scopes: ["admin", "control-plane", "external-targets"],
+        scopes: [
+          "admin",
+          "control-plane",
+          "external-targets",
+          "llm-reasoning-override",
+        ],
       },
       ACCESS_SCOPES.externalTargets,
     ),
