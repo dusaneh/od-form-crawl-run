@@ -127,7 +127,7 @@ const run = {
           screenshotProvider: "playwright-local-headless",
         },
       ],
-      sensitiveMasks: 0,
+      sensitiveMasks: [],
       notes: ["Rendered in local Chromium."],
     },
     {
@@ -145,7 +145,7 @@ const run = {
       evidenceAvailable: true,
       sourceUrl: "https://forms.example.test/apply",
       screenshotProvider: "playwright-local-headless",
-      sensitiveMasks: 0,
+      sensitiveMasks: [],
       notes: ["One synthetic value recorded."],
     },
   ],

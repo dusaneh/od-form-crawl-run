@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "name": "seven-tests-complexity-stratified-v1",
+  "seed": "formweave-development-run-2026-08-10",
+  "batchSize": 7,
+  "batchCount": 7,
+  "trials": 1,
+  "selectionAlgorithm": "complexity-stratified-v1",
+  "protocolBase": "https://testforms.dbolab.io/api/v1",
+  "appApiOrigin": "http://127.0.0.1:8787",
+  "executionGoal": "submit",
+  "appExecutionMode": "fixture_submit",
+  "browserMode": "headless",
+  "timeoutMs": 900000,
+  "freshGenerationRequired": true
+}

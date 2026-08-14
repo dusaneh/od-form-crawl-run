@@ -24,6 +24,8 @@ import {
 } from "./test-values.mjs";
 import { captureFullPageAndTiles } from "./browser-evidence.mjs";
 import { generateAndReplayForm } from "./production-generated-traversal.mjs";
+import { reconcileCanonicalProfileKey } from "./semantic/canonical-profile.mjs";
+import { normalizeReportedField } from "./semantic/reporting-taxonomy.mjs";
 
 const MAX_HTML_BYTES = 5_000_000;
 const MAX_PAGES = 16;
@@ -48,6 +50,28 @@ function journeyUrlKey(value) {
   } catch {
     return String(value || "");
   }
+}
+
+function journeyPageRecords(journeyUrls = [], stateEvidence = [], fallbackForms = 0) {
+  const records = new Map();
+  const include = (value) => {
+    const key = journeyUrlKey(value);
+    if (!key || records.has(key)) return;
+    records.set(key, { url: String(value || ""), forms: 0, stateIds: [] });
+  };
+  for (const value of journeyUrls) include(value);
+  for (const state of stateEvidence) include(state.url);
+  for (const state of stateEvidence) {
+    const record = records.get(journeyUrlKey(state.url));
+    if (!record) continue;
+    record.forms = Math.max(record.forms, Number(state.forms || 0));
+    record.stateIds.push(state.id);
+  }
+  const values = [...records.values()];
+  if (values.length === 1 && values[0].forms === 0) {
+    values[0].forms = Number(fallbackForms || 0);
+  }
+  return values;
 }
 
 export function validatePlaywrightTarget(value, { allowLoopback = false } = {}) {
@@ -92,7 +116,88 @@ function semanticKey(value, index) {
 }
 
 function fieldIdentity(field) {
-  return `${field.frameUrl}|${field.selector || field.key}|${field.control}`;
+  let scope = String(field.frameUrl || field.originUrl || "");
+  try {
+    const parsed = new URL(scope);
+    scope = `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    // Non-URL frame identities remain useful as opaque scope keys.
+  }
+  return `${scope}|${field.selector || field.key}|${field.control}`;
+}
+
+function normalizedFieldLabel(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function takeMatchingExtractedMetadata(available, observed) {
+  const observedName = String(
+    observed.name || observed.id || observed.key || "",
+  );
+  let bestIndex = -1;
+  let bestScore = -1;
+  for (let index = 0; index < available.length; index += 1) {
+    const candidate = available[index];
+    if (candidate.control !== observed.control) continue;
+    const candidateName = String(
+      candidate.name || candidate.id || candidate.key || "",
+    );
+    if (observedName && candidateName && observedName !== candidateName) {
+      continue;
+    }
+    let score = 0;
+    if (fieldIdentity(candidate) === fieldIdentity(observed)) score += 100;
+    if (candidate.selector && candidate.selector === observed.selector) {
+      score += 80;
+    }
+    if (
+      candidate.id &&
+      observed.id &&
+      String(candidate.id) === String(observed.id)
+    ) {
+      score += 60;
+    }
+    if (
+      normalizedFieldLabel(candidate.label) &&
+      normalizedFieldLabel(candidate.label) ===
+        normalizedFieldLabel(observed.label)
+    ) {
+      score += 40;
+    }
+    if (candidateName && candidateName === observedName) score += 20;
+    if (score > bestScore) {
+      bestIndex = index;
+      bestScore = score;
+    }
+  }
+  if (bestIndex < 0 || bestScore < 20) return null;
+  return available.splice(bestIndex, 1)[0];
+}
+
+export function structuralObservedFieldOrder(fields = []) {
+  return fields
+    .map((field, insertionOrdinal) => ({ field, insertionOrdinal }))
+    .sort((left, right) => {
+      const leftState = Number.isFinite(left.field.stateOrdinal)
+        ? left.field.stateOrdinal
+        : Number.MAX_SAFE_INTEGER;
+      const rightState = Number.isFinite(right.field.stateOrdinal)
+        ? right.field.stateOrdinal
+        : Number.MAX_SAFE_INTEGER;
+      if (leftState !== rightState) return leftState - rightState;
+      const leftDocument = Number.isFinite(left.field.documentOrdinal)
+        ? left.field.documentOrdinal
+        : Number.MAX_SAFE_INTEGER;
+      const rightDocument = Number.isFinite(right.field.documentOrdinal)
+        ? right.field.documentOrdinal
+        : Number.MAX_SAFE_INTEGER;
+      if (leftDocument !== rightDocument) return leftDocument - rightDocument;
+      return left.insertionOrdinal - right.insertionOrdinal;
+    })
+    .map(({ field }) => field);
 }
 
 function dedupeFields(rawFields) {
@@ -162,7 +267,7 @@ function dedupeFields(rawFields) {
       upload: rawField.upload || {},
       consent: Boolean(rawField.consent),
       adminAssisted: Boolean(rawField.adminAssisted),
-      canonicalProfileKey: rawField.canonicalProfileKey || "unmappable",
+      canonicalProfileKey: reconcileCanonicalProfileKey({ ...rawField, key }),
       repeatableSection: rawField.repeatableSection || "",
       addRowControl: rawField.addRowControl || "",
       otherSpecifyFor: rawField.otherSpecifyFor || "",
@@ -176,6 +281,12 @@ function dedupeFields(rawFields) {
       testValueSource: rawField.testValueSource,
       entryStatus: rawField.entryStatus,
       entryError: rawField.entryError,
+      stateOrdinal: Number.isFinite(rawField.stateOrdinal)
+        ? rawField.stateOrdinal
+        : 0,
+      documentOrdinal: Number.isFinite(rawField.documentOrdinal)
+        ? rawField.documentOrdinal
+        : result.length,
     };
     if (groupKey) seen.set(groupKey, result.length);
     result.push(field);
@@ -559,6 +670,7 @@ async function extractFrame(frame, pageUrl, frameIndex) {
             guidanceIds,
             questionRef,
             formId: element.closest("form")?.id || "",
+            documentOrdinal: index,
           };
         });
       if (
@@ -811,6 +923,8 @@ async function crawlOne(
   enableGeneratedTraversal,
   artifactRunDirectory,
   generatedScriptRoot,
+  actuatorRepository,
+  actuatorMode,
   runId
 ) {
   const page = await context.newPage();
@@ -926,7 +1040,7 @@ async function crawlOne(
       throw new Error(`Target returned HTTP ${response.status()}.`);
     }
     const reconScript = reconScriptResolver(page.url(), { allowLoopback });
-    await waitForStableState(
+    const initialStability = await waitForStableState(
       page,
       traversalSettings,
       onBrowserEvent,
@@ -936,14 +1050,24 @@ async function crawlOne(
     const automation = {
       actions: [],
       captchaDetected: observedCaptcha.detected,
+      invisibleCaptchaDetected: observedCaptcha.nonInteractiveDetected === true,
       unresolvedGate: observedCaptcha.detected ? "captcha" : "",
       stateExaminations: 1,
+      interactionGatePrepared:
+        initialStability.priming?.interactionGatePrepared === true,
     };
     if (observedCaptcha.detected) {
       await onBrowserEvent?.(
         "captcha_handoff_required",
         "CAPTCHA or human-verification gate detected; observation-only mode performed no interaction.",
         observedCaptcha
+      );
+    }
+    if (observedCaptcha.nonInteractiveDetected) {
+      await onBrowserEvent?.(
+        "invisible_captcha",
+        "A non-interactive score-based CAPTCHA signal was observed; observation and safe traversal may continue.",
+        observedCaptcha,
       );
     }
     if (reconScript) {
@@ -1025,6 +1149,8 @@ async function crawlOne(
         runId,
         runDirectory: artifactRunDirectory,
         scriptRegistryRoot: generatedScriptRoot,
+        actuatorRepository,
+        actuatorMode,
         executionMode,
         fixtureAuthorities,
         browserMode,
@@ -1052,6 +1178,10 @@ async function crawlOne(
             evidence: [],
             observedFields: [],
             fieldsEntered: 0,
+            fieldsPlanned: 0,
+            fieldsAttempted: 0,
+            fieldsVerified: 0,
+            attemptedFieldFailures: 0,
             entryFailures: 0,
             branchStates: 0,
             submissionsAttempted: 0,
@@ -1077,26 +1207,27 @@ async function crawlOne(
     }
     const pageResult = await extractRenderedPage(page, url, response, browserMode);
     const extractedFields = [...pageResult.fields];
-    const extractedMetadata = new Map(
-      extractedFields.map((field) => [
-        `${field.control}|${field.name || field.id || field.key}`,
-        field,
-      ])
-    );
+    const extractedMetadata = [...extractedFields];
     const fieldMap = new Map(
       (reconScript?.contractFromObserved ? [] : pageResult.fields).map((field) => [
         fieldIdentity(field),
         field,
       ])
     );
-    for (const observed of formTraversal.observedFields) {
+    for (const observed of structuralObservedFieldOrder(
+      formTraversal.observedFields,
+    )) {
       const identity = fieldIdentity(observed);
-      const existing = fieldMap.get(identity);
-      const metadata = extractedMetadata.get(
-        `${observed.control}|${observed.name || observed.id || observed.key}`
+      const metadata = takeMatchingExtractedMetadata(
+        extractedMetadata,
+        observed,
       );
-      if (!existing && metadata) {
-        fieldMap.delete(fieldIdentity(metadata));
+      const metadataIdentity = metadata ? fieldIdentity(metadata) : null;
+      const existing =
+        fieldMap.get(identity) ||
+        (metadataIdentity ? fieldMap.get(metadataIdentity) : null);
+      if (metadataIdentity && metadataIdentity !== identity) {
+        fieldMap.delete(metadataIdentity);
       }
       fieldMap.set(
         identity,
@@ -1145,7 +1276,9 @@ async function crawlOne(
         if (!reconScript.contractFilter(field)) fieldMap.delete(identity);
       }
     }
-    pageResult.fields = [...fieldMap.values()];
+    pageResult.fields = structuralObservedFieldOrder([...fieldMap.values()]).map(
+      normalizeReportedField,
+    );
     pageResult.sections = (pageResult.sections || []).map((section) => ({
       ...section,
       questionKeys: pageResult.fields
@@ -1165,6 +1298,12 @@ async function crawlOne(
     pageResult.captchaDetected =
       automation.captchaDetected ||
       formTraversal.captchaDetected === true;
+    pageResult.invisibleCaptchaDetected =
+      automation.invisibleCaptchaDetected ||
+      formTraversal.invisibleCaptchaDetected === true;
+    pageResult.interactionGatePrepared =
+      automation.interactionGatePrepared === true ||
+      formTraversal.interactionGatePrepared === true;
     pageResult.unresolvedGate =
       automation.unresolvedGate ||
       formTraversal.unresolvedGate ||
@@ -1174,7 +1313,29 @@ async function crawlOne(
       generatedTraversal?.generatedArtifact?.modelCallsThisRun ??
       automation.stateExaminations;
     pageResult.stateEvidence = formTraversal.evidence;
+    pageResult.sensitiveMasks = (formTraversal.evidence || []).flatMap(
+      (state) => state.sensitiveMasks || [],
+    );
+    const latestMaskedEvidence = [...(formTraversal.evidence || [])]
+      .reverse()
+      .find(
+        (state) =>
+          state.screenshot && (state.sensitiveMasks || []).length > 0,
+      );
+    if (latestMaskedEvidence) {
+      pageResult.screenshot = latestMaskedEvidence.screenshot;
+      pageResult.screenshotContentType =
+        latestMaskedEvidence.screenshotContentType || "image/png";
+      pageResult.screenshotProvider =
+        latestMaskedEvidence.screenshotProvider || "playwright-generated-d1";
+    }
     pageResult.fieldsEntered = formTraversal.fieldsEntered;
+    pageResult.fieldsPlanned = formTraversal.fieldsPlanned || 0;
+    pageResult.fieldsAttempted = formTraversal.fieldsAttempted || 0;
+    pageResult.fieldsVerified =
+      formTraversal.fieldsVerified ?? formTraversal.fieldsEntered ?? 0;
+    pageResult.attemptedFieldFailures =
+      formTraversal.attemptedFieldFailures || 0;
     pageResult.entryFailures = formTraversal.entryFailures;
     pageResult.branchStates = formTraversal.branchStates;
     pageResult.submissionsAttempted = formTraversal.submissionsAttempted;
@@ -1189,10 +1350,20 @@ async function crawlOne(
       formTraversal.reconScriptVersion || reconScript?.version || 0;
     pageResult.generatedArtifact = formTraversal.generatedArtifact || null;
     pageResult.journeyUrls = formTraversal.journeyUrls || [pageResult.finalUrl];
+    pageResult.journeyPages = journeyPageRecords(
+      pageResult.journeyUrls,
+      pageResult.stateEvidence || [],
+      pageResult.forms,
+    );
     pageResult.entryMode = formTraversal.entryMode || "unknown";
     pageResult.entryDetail = formTraversal.entryDetail || "";
     pageResult.journeyComplete = formTraversal.journeyComplete !== false;
     pageResult.haltReason = formTraversal.haltReason || "";
+    pageResult.failureStage = formTraversal.failureStage || "";
+    pageResult.blockedBeforeActuation =
+      formTraversal.blockedBeforeActuation === true;
+    pageResult.failureIssues = formTraversal.failureIssues || [];
+    pageResult.actuatorWarnings = formTraversal.actuatorWarnings || [];
     pageResult.fingerprintInput = fingerprintPageInput(pageResult);
     pageResult.fingerprint = fingerprintPage(pageResult);
     pageResult.fingerprintAlgorithmVersion = FINGERPRINT_ALGORITHM_VERSION;
@@ -1211,6 +1382,10 @@ async function crawlOne(
           automation.actions.length + formTraversal.actions.length,
         stateEvidence: formTraversal.evidence.length,
         fieldsEntered: formTraversal.fieldsEntered,
+        fieldsPlanned: pageResult.fieldsPlanned,
+        fieldsAttempted: pageResult.fieldsAttempted,
+        fieldsVerified: pageResult.fieldsVerified,
+        attemptedFieldFailures: pageResult.attemptedFieldFailures,
         entryFailures: formTraversal.entryFailures,
         branchStates: formTraversal.branchStates,
         submissionsAttempted: formTraversal.submissionsAttempted,
@@ -1227,6 +1402,9 @@ async function crawlOne(
         entryMode: pageResult.entryMode,
         journeyComplete: pageResult.journeyComplete,
         haltReason: pageResult.haltReason,
+        failureStage: pageResult.failureStage,
+        blockedBeforeActuation: pageResult.blockedBeforeActuation,
+        failureIssues: pageResult.failureIssues,
       }
     );
     return pageResult;
@@ -1250,6 +1428,12 @@ async function crawlOne(
         observedPage.automationActions = [];
         observedPage.stateEvidence = [];
         observedPage.fieldsEntered = 0;
+        observedPage.fieldsPlanned = observedPage.fields.filter(
+          (field) => !field.hidden,
+        ).length;
+        observedPage.fieldsAttempted = 0;
+        observedPage.fieldsVerified = 0;
+        observedPage.attemptedFieldFailures = 0;
         observedPage.entryFailures = 0;
         observedPage.branchStates = 0;
         observedPage.submissionsAttempted = 0;
@@ -1261,6 +1445,17 @@ async function crawlOne(
         observedPage.semanticGenerationError = String(message);
         observedPage.semanticInteractionOccurred =
           semanticInteractionOccurred;
+        observedPage.failureStage = "semantic_generation_failed";
+        observedPage.blockedBeforeActuation =
+          semanticInteractionOccurred !== true;
+        observedPage.failureIssues = [
+          {
+            code: "semantic_script_generation_failed",
+            targetKey: "",
+            detail: String(message),
+            issueId: "issue_1",
+          },
+        ];
         observedPage.haltReason =
           `The page loaded and was captured, but IntakeCR could not produce a valid semantic automation script: ${message} ${semanticInteractionOccurred ? "The failure stopped further form interaction; the current rendered state was retained." : "No form interaction was attempted."}`;
         await onBrowserEvent?.(
@@ -1319,6 +1514,8 @@ export async function crawlTargetsWithPlaywright(
     enableGeneratedTraversal = false,
     artifactRunDirectory = null,
     generatedScriptRoot = null,
+    actuatorRepository = null,
+    actuatorMode = "compatibility",
   } = {}
 ) {
   if (!["headless", "headful"].includes(browserMode)) {
@@ -1380,6 +1577,8 @@ export async function crawlTargetsWithPlaywright(
         enableGeneratedTraversal,
         artifactRunDirectory,
         generatedScriptRoot,
+        actuatorRepository,
+        actuatorMode,
         runId
       );
       pages.push(page);

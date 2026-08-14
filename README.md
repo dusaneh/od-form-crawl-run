@@ -51,6 +51,10 @@ OPENAI_KEY=your-key-here
 # Optional model override
 OPENAI_MODEL=gpt-5.4-mini
 OPENAI_SEMANTIC_MODEL=gpt-5.4-mini
+OPENAI_ACTUATOR_MODEL=gpt-5.4-mini
+FORMWEAVE_ACTUATOR_MODE=enforced
+FORMWEAVE_ACTUATOR_TIMEOUT_MS=120000
+FORMWEAVE_ACTUATOR_REPAIR_BUDGET_MS=240000
 ```
 
 `OPENAI_API_KEY` is also accepted as a compatibility fallback. The credential
@@ -83,6 +87,21 @@ feeds schema-constrained semantic proposals; non-model safety admits or
 rejects each action; accepted mechanics are retained in an immutable
 form-specific script; and deterministic Playwright replay executes only those
 stored mechanics. Retained replay intentionally has no semantic model call.
+
+Newly generated states carry independently repairable, human-readable actuator
+modules. The model generates one bounded module per semantic target; the
+compiler binds and assembles them into the per-site bundle. `enforced` is the
+production default: modules are AST/capability/hash validated, persisted before
+actuation, browser-preflighted, and used for field, probe, and progression
+commands. Nonterminal progression is preflighted and the clean page is restored
+before the complete script runs. `shadow` validates and
+persists modules without using them on the live traversal page;
+`compatibility` bypasses actuator generation for explicit legacy/conformance
+work only. Semantic-binding failures can reopen typed semantic repair;
+mechanics failures repair complete named handler modules.
+The per-request actuator timeout and total repair budget are independently
+bounded; budget exhaustion fails closed with the staged evidence retained and
+never falls back to compatibility execution.
 
 - `local/recon-scripts/` contains legacy hand-authored planners. Their manual
   version integers are not D1 generated-script versions.
@@ -146,6 +165,7 @@ data/
       generated/
         semantic-generation/
         state-plans/
+        actuator-candidates/
         form-script/
 ```
 
@@ -178,6 +198,11 @@ can be used explicitly for isolated filesystem tests.
 Remote database connections use certificate-verified TLS automatically.
 `POSTGRES_SSL=require` is available only for providers whose certificate chain
 cannot be verified by the local runtime.
+
+Semantic candidates, readable actuator source modules, repair documents,
+validation runs, and certified releases are stored in append-only PostgreSQL
+tables with SHA-256 linkage. Screenshot and other binary objects continue to
+use the existing `bytea` blob/object tables rather than being embedded in JSON.
 
 Apply the versioned schema:
 

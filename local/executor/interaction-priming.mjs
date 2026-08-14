@@ -6,7 +6,7 @@ const POINTER_PATH = Object.freeze([
   Object.freeze({ x: 0.18, y: 0.86, easing: "ease_out", durationMs: 200 }),
 ]);
 
-const PAGE_ONSET_MARKER = "__intakecrDeterministicPageOnsetV1";
+const PAGE_ONSET_MARKER = "__intakecrDeterministicPageOnsetV2";
 
 function easedProgress(kind, value) {
   if (kind === "ease_in") return value * value;
@@ -58,116 +58,50 @@ async function movePointerDeterministically(page) {
   };
 }
 
-async function expandFrameDisclosures(
-  frame,
-  { maxDisclosurePasses, maxDisclosures },
-) {
-  return frame.evaluate(
-    async ({ passLimit, disclosureLimit }) => {
-      const attemptedMarker = "data-intakecr-onset-expansion-attempted";
-      const nextFrame = () =>
-        new Promise((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(resolve)),
-        );
-      const visible = (element) => {
-        if (!element?.isConnected) return false;
-        const style = getComputedStyle(element);
-        const rectangle = element.getBoundingClientRect();
-        return (
-          style.display !== "none" &&
-          style.visibility !== "hidden" &&
-          Number(style.opacity || "1") > 0 &&
-          rectangle.width > 0 &&
-          rectangle.height > 0
-        );
-      };
-      const collapsedBootstrapTarget = (element) => {
-        const selector =
-          element.getAttribute("data-bs-target") ||
-          element.getAttribute("data-target") ||
-          (element.getAttribute("href") || "").startsWith("#")
-            ? element.getAttribute("data-bs-target") ||
-              element.getAttribute("data-target") ||
-              element.getAttribute("href")
-            : "";
-        if (!selector) return true;
-        try {
-          const target = document.querySelector(selector);
-          return !target?.matches(".show, .in, [aria-hidden='false']");
-        } catch {
-          return true;
-        }
-      };
-      const isCollapsedDisclosure = (element) => {
-        if (element.tagName === "SUMMARY") {
-          return !element.closest("details")?.open;
-        }
-        if (element.getAttribute("aria-expanded") === "false") return true;
-        if (
-          element.matches("[data-bs-toggle='collapse'], [data-toggle='collapse']")
-        ) {
-          return collapsedBootstrapTarget(element);
-        }
-        return false;
-      };
-      const result = {
-        disclosuresAttempted: 0,
-        disclosuresOpened: 0,
-        detailsOpened: 0,
-        disclosureButtonsOpened: 0,
-      };
-      for (let pass = 0; pass < passLimit; pass += 1) {
-        const remaining = Math.max(
-          0,
-          disclosureLimit - result.disclosuresAttempted,
-        );
-        if (remaining === 0) break;
-        const candidates = [
-          ...document.querySelectorAll(
-            "details:not([open]) > summary, [aria-expanded='false'], [data-bs-toggle='collapse'], [data-toggle='collapse']",
-          ),
-        ]
-          .filter(
-            (element) =>
-              !element.hasAttribute(attemptedMarker) &&
-              visible(element) &&
-              isCollapsedDisclosure(element),
-          )
-          .slice(0, remaining);
-        if (candidates.length === 0) break;
-        for (const element of candidates) {
-          const wasDetails = element.tagName === "SUMMARY";
-          element.setAttribute(attemptedMarker, "true");
-          result.disclosuresAttempted += 1;
-          element.scrollIntoView({ block: "center", inline: "nearest" });
-          element.click();
-          await nextFrame();
-          const opened = wasDetails
-            ? element.closest("details")?.open === true
-            : element.getAttribute("aria-expanded") === "true" ||
-              !isCollapsedDisclosure(element);
-          if (opened) {
-            result.disclosuresOpened += 1;
-            if (wasDetails) result.detailsOpened += 1;
-            else result.disclosureButtonsOpened += 1;
-          }
-        }
-      }
-      return result;
-    },
-    {
-      passLimit: maxDisclosurePasses,
-      disclosureLimit: maxDisclosures,
-    },
-  );
+async function applicantSurfaceSnapshot(page) {
+  return page.mainFrame().evaluate(() => {
+    const visible = (element) => {
+      const style = getComputedStyle(element);
+      const rectangle = element.getBoundingClientRect();
+      return (
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        Number(style.opacity || "1") > 0 &&
+        rectangle.width > 0 &&
+        rectangle.height > 0
+      );
+    };
+    const applicantControls = [
+      ...document.querySelectorAll(
+        "input:not([type='hidden']):not([type='submit']):not([type='button']):not([type='reset']), select, textarea",
+      ),
+    ];
+    const keyFor = (element, index) =>
+      element.id ||
+      element.getAttribute("name") ||
+      `${element.tagName.toLowerCase()}:${element.getAttribute("type") || ""}:${index}`;
+    return {
+      visibleApplicantControls: applicantControls
+        .map((element, index) => ({ element, key: keyFor(element, index) }))
+        .filter(({ element }) => visible(element))
+        .map(({ key }) => key),
+      visibleForms: [...document.querySelectorAll("form")]
+        .map((element, index) => ({
+          element,
+          key: element.id || element.getAttribute("name") || `form:${index}`,
+        }))
+        .filter(({ element }) => visible(element))
+        .map(({ key }) => key),
+    };
+  });
 }
 
 async function primeFrameScrolling(
   frame,
-  { maxDocumentSteps, maxScrollSurfaces },
+  { maxDocumentSteps },
 ) {
   return frame.evaluate(
-    async ({ documentSteps, surfaceLimit }) => {
+    async ({ documentSteps }) => {
       const nextFrame = () =>
         new Promise((resolve) =>
           requestAnimationFrame(() => requestAnimationFrame(resolve)),
@@ -175,6 +109,7 @@ async function primeFrameScrolling(
       const result = {
         documentScrollSteps: 0,
         scrollSurfacesPrimed: 0,
+        scrollSurfacesDeferred: 0,
       };
       const startingY = window.scrollY;
       for (let index = 0; index < documentSteps; index += 1) {
@@ -202,31 +137,24 @@ async function primeFrameScrolling(
         result.documentScrollSteps += 1;
         await nextFrame();
       }
-      const surfaces = [...document.querySelectorAll("*")]
+      // Nested scroll regions can be application controls: scrolling a terms
+      // panel may enable an acceptance button. Merely seeing overflow is not
+      // enough authority to actuate it. Leave those regions untouched so the
+      // generated per-form actuator can own and verify any required sequence.
+      result.scrollSurfacesDeferred = [...document.querySelectorAll("*")]
         .filter((element) => {
           const style = getComputedStyle(element);
           return (
             element.scrollHeight > element.clientHeight + 8 &&
             ["auto", "scroll"].includes(style.overflowY)
           );
-        })
-        .slice(0, surfaceLimit);
-      for (const element of surfaces) {
-        const startingTop = element.scrollTop;
-        element.scrollTop = element.scrollHeight;
-        element.dispatchEvent(new Event("scroll", { bubbles: true }));
-        result.scrollSurfacesPrimed += 1;
-        await nextFrame();
-        element.scrollTop = startingTop;
-        element.dispatchEvent(new Event("scroll", { bubbles: true }));
-      }
+        }).length;
       window.scrollTo({ top: startingY, behavior: "instant" });
       window.dispatchEvent(new Event("scroll"));
       return result;
     },
     {
       documentSteps: maxDocumentSteps,
-      surfaceLimit: maxScrollSurfaces,
     },
   );
 }
@@ -249,11 +177,12 @@ export async function primeInteractiveSurface(
   page,
   {
     maxDocumentSteps = 20,
-    maxScrollSurfaces = 60,
-    maxDisclosurePasses = 4,
-    maxDisclosures = 80,
   } = {},
 ) {
+  const beforeSurface = await applicantSurfaceSnapshot(page).catch(() => ({
+    visibleApplicantControls: [],
+    visibleForms: [],
+  }));
   const pointer = await movePointerDeterministically(page);
   const result = {
     pageOnsetPerformed: true,
@@ -262,6 +191,7 @@ export async function primeInteractiveSurface(
     inaccessibleFrames: 0,
     documentScrollSteps: 0,
     scrollSurfacesPrimed: 0,
+    scrollSurfacesDeferred: 0,
     disclosuresAttempted: 0,
     disclosuresOpened: 0,
     detailsOpened: 0,
@@ -269,29 +199,32 @@ export async function primeInteractiveSurface(
   };
   for (const frame of page.frames()) {
     try {
-      const expanded = await expandFrameDisclosures(frame, {
-        maxDisclosurePasses,
-        maxDisclosures: Math.max(
-          0,
-          maxDisclosures - result.disclosuresAttempted,
-        ),
-      });
-      result.disclosuresAttempted += expanded.disclosuresAttempted;
-      result.disclosuresOpened += expanded.disclosuresOpened;
-      result.detailsOpened += expanded.detailsOpened;
-      result.disclosureButtonsOpened += expanded.disclosureButtonsOpened;
       const scrolled = await primeFrameScrolling(frame, {
         maxDocumentSteps,
-        maxScrollSurfaces,
       });
       result.framesPrimed += 1;
       result.documentScrollSteps += scrolled.documentScrollSteps;
       result.scrollSurfacesPrimed += scrolled.scrollSurfacesPrimed;
+      result.scrollSurfacesDeferred += scrolled.scrollSurfacesDeferred;
     } catch {
       result.inaccessibleFrames += 1;
     }
   }
   await page.waitForTimeout(100).catch(() => {});
+  const afterSurface = await applicantSurfaceSnapshot(page).catch(() => ({
+    visibleApplicantControls: [],
+    visibleForms: [],
+  }));
+  const beforeControls = new Set(beforeSurface.visibleApplicantControls);
+  const beforeForms = new Set(beforeSurface.visibleForms);
+  result.revealedApplicantControls = afterSurface.visibleApplicantControls.filter(
+    (key) => !beforeControls.has(key),
+  ).length;
+  result.revealedForms = afterSurface.visibleForms.filter(
+    (key) => !beforeForms.has(key),
+  ).length;
+  result.interactionGatePrepared =
+    result.revealedApplicantControls > 0 || result.revealedForms > 0;
   return result;
 }
 
@@ -309,10 +242,14 @@ export async function preparePageOnset(page, options = {}) {
       inaccessibleFrames: 0,
       documentScrollSteps: 0,
       scrollSurfacesPrimed: 0,
+      scrollSurfacesDeferred: 0,
       disclosuresAttempted: 0,
       disclosuresOpened: 0,
       detailsOpened: 0,
       disclosureButtonsOpened: 0,
+      revealedApplicantControls: 0,
+      revealedForms: 0,
+      interactionGatePrepared: false,
     };
   }
   return primeInteractiveSurface(page, options);

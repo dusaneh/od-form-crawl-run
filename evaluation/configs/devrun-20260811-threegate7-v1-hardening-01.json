@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "name": "devrun-20260811-threegate7-v1-hardening-01",
+  "seed": "formweave-v1-hardening-2026-08-13:representative-01",
+  "batchSize": 7,
+  "batchCount": 1,
+  "trials": 1,
+  "selectionAlgorithm": "fixed-representative-v1",
+  "protocolBase": "https://testforms.dbolab.io/api/v1",
+  "appApiOrigin": "http://127.0.0.1:8788",
+  "executionGoal": "submit",
+  "appExecutionMode": "fixture_submit",
+  "browserMode": "headless",
+  "timeoutMs": 900000,
+  "freshGenerationRequired": true,
+  "scenarioKeys": [
+    "site_ab_decoy_forms/primary",
+    "site_i_dynamic_form/primary",
+    "site_ad_wizard_links/primary",
+    "site_ag_widget_maze/primary",
+    "site_f_veterans_required/primary",
+    "site_g_sensitive_nocaptcha/primary",
+    "site_t_challenges/primary"
+  ]
+}

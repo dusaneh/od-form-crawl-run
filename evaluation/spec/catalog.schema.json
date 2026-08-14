@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://testforms.dbolab.io/schemas/evaluation-catalog-v1.json",
+  "title": "Testforms evaluation catalog v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "catalog_revision",
+    "generated_at",
+    "sites"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "catalog_revision": { "$ref": "#/$defs/revision" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "sites": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/site" }
+    }
+  },
+  "$defs": {
+    "revision": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Immutable content revision, preferably sha256:<hex>."
+    },
+    "site": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "site_id",
+        "display_name",
+        "enabled",
+        "feature_tags",
+        "scenarios"
+      ],
+      "properties": {
+        "site_id": {
+          "type": "string",
+          "pattern": "^site_[a-z0-9_]+$"
+        },
+        "display_name": { "type": "string", "minLength": 1 },
+        "enabled": { "type": "boolean" },
+        "feature_tags": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": "Sampling metadata only. It must never be included in the application crawl prompt."
+        },
+        "scenarios": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/scenario" }
+        }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenario_id",
+        "title",
+        "enabled",
+        "entry_url",
+        "ground_truth_url",
+        "fixture_revision",
+        "submission_capture"
+      ],
+      "properties": {
+        "scenario_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "title": { "type": "string", "minLength": 1 },
+        "enabled": { "type": "boolean" },
+        "entry_url": { "type": "string", "format": "uri" },
+        "ground_truth_url": { "type": "string", "format": "uri" },
+        "fixture_revision": { "$ref": "#/$defs/revision" },
+        "submission_capture": { "type": "boolean" },
+        "sampling_tags": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "default": []
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "name": "five-tests-three-batches-v1",
+  "seed": "formweave-evaluation-v1",
+  "batchSize": 5,
+  "batchCount": 3,
+  "trials": 1,
+  "selectionAlgorithm": "feature-balanced-v1",
+  "protocolBase": "https://testforms.dbolab.io/api/v1",
+  "appApiOrigin": "http://127.0.0.1:8787",
+  "executionGoal": "submit",
+  "appExecutionMode": "fixture_submit",
+  "browserMode": "headless",
+  "timeoutMs": 900000,
+  "freshGenerationRequired": true
+}

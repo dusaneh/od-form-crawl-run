@@ -1,0 +1,166 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Testforms Evaluation API",
+    "version": "1.0.0",
+    "description": "Answer-isolated catalog, scenario oracle, and correlated submission capture for FormWeave evaluation."
+  },
+  "servers": [
+    { "url": "https://testforms.dbolab.io" },
+    { "url": "http://localhost:9000" }
+  ],
+  "paths": {
+    "/api/v1/catalog": {
+      "get": {
+        "operationId": "getEvaluationCatalog",
+        "summary": "List enabled test sites and scenarios without oracle answers",
+        "responses": {
+          "200": {
+            "description": "Versioned scenario catalog",
+            "headers": {
+              "ETag": { "schema": { "type": "string" } }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "./catalog.schema.json" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/evaluations": {
+      "post": {
+        "operationId": "createEvaluation",
+        "summary": "Allocate a correlated evaluation and scenario-local fixture state",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "./evaluation.schema.json#/$defs/createRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Allocated evaluation",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "./evaluation.schema.json#/$defs/createResponse" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/sites/{site_id}/scenarios/{scenario_id}/ground-truth": {
+      "get": {
+        "operationId": "getScenarioGroundTruth",
+        "summary": "Read the complete oracle for one scenario after execution",
+        "parameters": [
+          { "$ref": "#/components/parameters/SiteId" },
+          { "$ref": "#/components/parameters/ScenarioId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Scenario ground truth",
+            "headers": {
+              "ETag": { "schema": { "type": "string" } }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "./ground-truth.schema.json" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/evaluations/{evaluation_id}/submission": {
+      "get": {
+        "operationId": "getEvaluationSubmission",
+        "summary": "Read the exact captured submission correlated to one evaluation",
+        "parameters": [
+          { "$ref": "#/components/parameters/EvaluationId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Captured successful terminal submission",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "./submission.schema.json" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/evaluations/{evaluation_id}": {
+      "delete": {
+        "operationId": "deleteEvaluation",
+        "summary": "Delete one evaluation and its captured payload",
+        "parameters": [
+          { "$ref": "#/components/parameters/EvaluationId" }
+        ],
+        "responses": {
+          "204": { "description": "Deleted or already absent" }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "SiteId": {
+        "name": "site_id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "pattern": "^site_[a-z0-9_]+$" }
+      },
+      "ScenarioId": {
+        "name": "scenario_id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+      },
+      "EvaluationId": {
+        "name": "evaluation_id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "pattern": "^eval_[A-Za-z0-9_-]{12,}$" }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "detail"],
+        "properties": {
+          "code": { "type": "string" },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "responses": {
+      "NotFound": {
+        "description": "Unknown resource, expired evaluation, or no submission captured",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "Scenario state cannot be allocated",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "evaluation_id": "eval_1fb049fc3e90bf5b",
+  "submission_id": "1fb049fc3e90bf5b",
+  "received_at": "2026-08-09T12:05:00Z",
+  "site_id": "site_af_branch_cards",
+  "scenario_id": "primary",
+  "source_url": "https://testforms.dbolab.io/site_af_branch_cards/intake",
+  "fixture_revision": "sha256:example-site-af-primary-fixture",
+  "serialization": "application/x-www-form-urlencoded",
+  "fields": {
+    "full_name": "FORMWEAVE TEST PERSON",
+    "zip_code": "99999",
+    "housing_type": "own",
+    "referral_source": "school",
+    "has_children": "on",
+    "children_count": "5"
+  },
+  "success_marker_observed": true
+}

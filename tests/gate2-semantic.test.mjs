@@ -11,6 +11,7 @@ import {
 } from "../local/semantic/proposal-schema.mjs";
 import {
   classifyProtectedField,
+  conspicuouslySyntheticFallback,
   isConspicuouslySynthetic,
   validateProposalSafety,
 } from "../local/semantic/proposal-safety.mjs";
@@ -19,10 +20,17 @@ import {
   generateSemanticProposal,
 } from "../local/semantic/semantic-generator.mjs";
 import { writeSemanticGenerationRecord } from "../local/semantic/semantic-record-store.mjs";
+import { reconcileCanonicalProfileKey } from "../local/semantic/canonical-profile.mjs";
+import { normalizeReportedField } from "../local/semantic/reporting-taxonomy.mjs";
 import {
   generateDynamicsAssessment,
   validateDynamicsAssessment,
 } from "../local/semantic/dynamics-assessment.mjs";
+import {
+  buildTransitionStateDelta,
+  contextualDynamicsFallback,
+  enforceStateDeltaAssessment,
+} from "../local/semantic/state-delta.mjs";
 import {
   generateSubmissionResultAssessment,
   validateSubmissionResultAssessment,
@@ -31,17 +39,581 @@ import {
 import {
   assertExecutablePlanSafety,
   choiceProbeCoverageIssues,
+  descriptiveSensitivityDecision,
+  disclosureBlockedFieldIssues,
   exhaustedDisclosureProgressionIssues,
+  fieldActionMetrics,
+  generatedFieldActions,
   inferJourneyEntryMode,
   mergeTraversalResults,
+  mergeObservedFields,
   pendingDisclosureIssues,
   policySensitivityDecision,
   policySensitiveField,
+  radioGroupProposalIssues,
+  reportedFieldSensitivity,
   replayAuthorityIssues,
   terminalEligibilityIssues,
+  shouldRecordPassiveReadback,
+  virtualInventoryFields,
   verifyFixtureSubmissionOutcome,
 } from "../local/production-generated-traversal.mjs";
 import { expectedDependencyProbeValues } from "../local/traversal-special-rules.mjs";
+
+test("typed state deltas treat cross-page URL reflection as transport evidence", () => {
+  const delta = buildTransitionStateDelta({
+    transitionKind: "page_advance",
+    before: {
+      url: "https://example.invalid/intake",
+      controls: [],
+      sections: [],
+      guidance: [],
+    },
+    after: {
+      url: "https://example.invalid/step-2?last_name=FORMWEAVE%20TEST",
+      title: "Step 2",
+      heading: "Continue",
+      controls: [
+        { rawType: "tel", visible: true, disabled: false, rawLabel: "Phone" },
+      ],
+      sections: [],
+      guidance: [],
+    },
+    enteredValues: [
+      { fieldKey: "last_name", label: "Last name", value: "FORMWEAVE TEST" },
+    ],
+  });
+  assert.equal(delta.classification, "transport_carry_forward");
+  assert.equal(delta.blocking, false);
+  assert.equal(delta.terminalAuthorization, "eligible_for_semantic_review");
+  assert.deepEqual(delta.surfaces, ["url_query"]);
+
+  const enforced = enforceStateDeltaAssessment(
+    {
+      schemaVersion: 1,
+      assessmentId: "assessment_1",
+      transitionKind: "page_advance",
+      outcome: "independent",
+      confidence: "medium",
+      evidence: [],
+      rationale: "The next page appears linear.",
+    },
+    delta,
+  );
+  assert.equal(enforced.overridden, false);
+  assert.equal(enforced.assessment.outcome, "independent");
+});
+
+test("typed dynamics fallback retains a page advance after repeated contradictory labels", () => {
+  const corrected = contextualDynamicsFallback(
+    {
+      schemaVersion: 1,
+      assessmentId: "assessment_01",
+      transitionKind: "page_advance",
+      outcome: "cross_page_dependency",
+      confidence: "high",
+      evidence: ["The displayed value differs from the entered value."],
+      rationale: "The different value is an answer echo.",
+    },
+    {
+      transitionKind: "page_advance",
+      outcome: "independent",
+      issue: "A mismatched value cannot prove an answer echo.",
+    },
+  );
+  assert.equal(corrected.outcome, "independent");
+  assert.equal(corrected.confidence, "medium");
+  validateDynamicsAssessment(corrected, "page_advance");
+});
+
+test("typed state deltas reject a labeled readback that differs from the entered value", () => {
+  const before = {
+    url: "https://example.invalid/step-1",
+    controls: [],
+    sections: [],
+    guidance: [],
+  };
+  const after = {
+    url: "https://example.invalid/step-2",
+    controls: [],
+    sections: [],
+    guidance: [
+      {
+        rawText:
+          "You told us your household size: 3. Now tell us about recent work.",
+      },
+    ],
+  };
+  const stateDelta = buildTransitionStateDelta({
+    transitionKind: "page_advance",
+    before,
+    after,
+    enteredValues: [
+      {
+        fieldKey: "household_size",
+        label: "Household Size *",
+        value: 2,
+        sensitive: false,
+      },
+    ],
+  });
+  assert.equal(stateDelta.hasReadbackMismatch, true);
+  assert.equal(stateDelta.readbackMismatches.length, 1);
+  assert.equal(
+    Object.hasOwn(stateDelta.readbackMismatches[0], "value"),
+    false,
+  );
+  const assessment = {
+    schemaVersion: 1,
+    assessmentId: "assessment_mismatched_readback",
+    transitionKind: "page_advance",
+    outcome: "cross_page_dependency",
+    confidence: "high",
+    evidence: ["The page says the prior household size was 3."],
+    rationale:
+      "The tailored sentence is an answer echo and therefore changes the next page.",
+  };
+  const enforced = enforceStateDeltaAssessment(assessment, stateDelta);
+  assert.equal(enforced.overridden, true);
+  assert.equal(enforced.assessment.outcome, "independent");
+  assert.equal(
+    enforced.overrideReason,
+    "mismatched_readback_without_dependency_evidence",
+  );
+
+  const causalDelta = buildTransitionStateDelta({
+    transitionKind: "page_advance",
+    before,
+    after: {
+      ...after,
+      guidance: [
+        {
+          rawText:
+            "You told us your household size: 3. Because you selected emergency assistance, this page now requires an additional document.",
+        },
+      ],
+    },
+    enteredValues: [
+      {
+        fieldKey: "household_size",
+        label: "Household Size *",
+        value: 2,
+        sensitive: false,
+      },
+    ],
+  });
+  assert.equal(causalDelta.hasAnswerConditionedWording, true);
+  assert.equal(
+    enforceStateDeltaAssessment(assessment, causalDelta).overridden,
+    false,
+  );
+});
+
+test("typed state deltas route rendered reflections to semantic review without deciding meaning", () => {
+  const before = {
+    url: "https://example.invalid/start",
+    title: "Start",
+    controls: [],
+    sections: [],
+    guidance: [],
+  };
+  const enteredValues = [
+    { fieldKey: "case_name", label: "Case name", value: "FORMWEAVE ALPHA" },
+  ];
+  const editable = buildTransitionStateDelta({
+    transitionKind: "page_advance",
+    before,
+    after: {
+      url: "https://example.invalid/details",
+      heading: "Continue FORMWEAVE ALPHA",
+      controls: [
+        { rawType: "text", visible: true, disabled: false, rawLabel: "Details" },
+      ],
+      sections: [],
+      guidance: [],
+    },
+    enteredValues,
+  });
+  assert.equal(editable.blocking, false);
+  assert.equal(
+    editable.classification,
+    "rendered_reflection_requires_semantic_review",
+  );
+  assert.equal(editable.semanticReviewRequired, true);
+  assert.ok(editable.surfaces.includes("visible_text"));
+
+  const readOnly = buildTransitionStateDelta({
+    transitionKind: "page_advance",
+    before,
+    after: {
+      url: "https://example.invalid/review",
+      heading: "Review FORMWEAVE ALPHA",
+      controls: [],
+      sections: [],
+      guidance: [],
+    },
+    enteredValues,
+  });
+  assert.equal(
+    readOnly.classification,
+    "rendered_reflection_requires_semantic_review",
+  );
+  assert.equal(readOnly.blocking, false);
+});
+
+test("typed state deltas retain sensitive numeric readbacks for masking without calling them dependencies", () => {
+  const delta = buildTransitionStateDelta({
+    transitionKind: "page_advance",
+    before: { url: "https://example.invalid/start", controls: [] },
+    after: {
+      url: "https://example.invalid/review?income=9999",
+      heading: "Review monthly income: $9,999",
+      controls: [],
+    },
+    enteredValues: [
+      {
+        fieldKey: "monthly_income",
+        label: "Monthly income",
+        value: "9999",
+        sensitive: true,
+      },
+    ],
+  });
+  assert.equal(delta.classification, "passive_readback");
+  assert.equal(delta.semanticReviewRequired, false);
+  assert.equal(delta.blocking, false);
+  assert.ok(delta.reflections.some((item) => item.sensitive));
+});
+
+test("typed state deltas correct readback-only dependency claims but preserve causal evidence", () => {
+  const enteredValues = [
+    { fieldKey: "household_size", value: "FORMWEAVE ALPHA" },
+  ];
+  const before = { url: "https://example.invalid/start", controls: [] };
+  const passive = buildTransitionStateDelta({
+    transitionKind: "page_advance",
+    before,
+    after: {
+      url: "https://example.invalid/review",
+      heading: "You told us FORMWEAVE ALPHA. Review your answers.",
+      controls: [],
+    },
+    enteredValues,
+  });
+  const claimedDependency = {
+    schemaVersion: 1,
+    assessmentId: "assessment_readback",
+    transitionKind: "page_advance",
+    outcome: "cross_page_dependency",
+    confidence: "high",
+    evidence: ["The page repeats FORMWEAVE ALPHA."],
+    rationale: "The displayed wording references the prior response.",
+  };
+  const corrected = enforceStateDeltaAssessment(claimedDependency, passive);
+  assert.equal(corrected.overridden, true);
+  assert.equal(corrected.assessment.outcome, "independent");
+
+  const causal = buildTransitionStateDelta({
+    transitionKind: "page_advance",
+    before,
+    after: {
+      url: "https://example.invalid/details",
+      heading:
+        "Because you selected FORMWEAVE ALPHA, this explanation is required.",
+      controls: [],
+    },
+    enteredValues,
+  });
+  assert.equal(causal.hasAnswerConditionedWording, true);
+  const preserved = enforceStateDeltaAssessment(claimedDependency, causal);
+  assert.equal(preserved.overridden, false);
+  assert.equal(preserved.assessment.outcome, "cross_page_dependency");
+
+  const taskBound = enforceStateDeltaAssessment(
+    {
+      ...claimedDependency,
+      rationale:
+        "The echoed name identifies the residency record being updated, so the prior answer changes the target of the task.",
+    },
+    passive,
+  );
+  assert.equal(taskBound.overridden, false);
+  assert.equal(taskBound.assessment.outcome, "cross_page_dependency");
+});
+
+test("reported sensitivity stays descriptive while runtime policy may be stricter", () => {
+  assert.equal(
+    reportedFieldSensitivity({ semanticSensitive: false, sensitive: true }),
+    false,
+  );
+  assert.equal(reportedFieldSensitivity({ sensitive: true }), true);
+  assert.equal(
+    reportedFieldSensitivity({
+      key: "monthly_income",
+      controlType: "text",
+      semanticSensitive: false,
+      sensitive: true,
+    }),
+    true,
+  );
+  assert.equal(
+    reportedFieldSensitivity({
+      key: "date_of_birth",
+      controlType: "date",
+      semanticSensitive: false,
+      sensitive: true,
+    }),
+    true,
+  );
+  assert.equal(
+    reportedFieldSensitivity({
+      key: "disability_rating",
+      rawLabel: "Disability rating percentage",
+      controlType: "number",
+      semanticSensitive: true,
+      sensitive: true,
+    }),
+    false,
+  );
+  assert.equal(
+    descriptiveSensitivityDecision({
+      key: "disability_rating",
+      rawLabel: "Disability rating percentage",
+      controlType: "number",
+      semanticSensitive: true,
+    }).code,
+    "descriptive_disability_classification",
+  );
+});
+
+test("independent semantic review resolves rendered reflection into passive readback evidence", () => {
+  assert.equal(
+    shouldRecordPassiveReadback(
+      { outcome: "independent" },
+      {
+        classification: "rendered_reflection_requires_semantic_review",
+        hasRenderedReflection: true,
+        reflections: [{ fieldKey: "case_name", surface: "visible_text" }],
+      },
+    ),
+    true,
+  );
+  assert.equal(
+    shouldRecordPassiveReadback(
+      { outcome: "cross_page_dependency" },
+      { hasRenderedReflection: true, reflections: [{}] },
+    ),
+    false,
+  );
+});
+
+test("canonical profile reconciliation promotes only exact high-confidence identities", () => {
+  assert.equal(reconcileCanonicalProfileKey({ key: "first_name" }), "first_name");
+  assert.equal(reconcileCanonicalProfileKey({ name: "email_address" }), "email");
+  assert.equal(reconcileCanonicalProfileKey({ id: "dob" }), "date_of_birth");
+  assert.equal(
+    reconcileCanonicalProfileKey({ key: "preferred_language" }),
+    "primary_language",
+  );
+  assert.equal(
+    reconcileCanonicalProfileKey({ key: "disability_rating" }),
+    "disability_status",
+  );
+  assert.equal(
+    reconcileCanonicalProfileKey({ key: "children_count" }),
+    "num_children",
+  );
+  assert.equal(
+    reconcileCanonicalProfileKey({ canonicalProfileKey: "children_count" }),
+    "num_children",
+  );
+  assert.equal(
+    reconcileCanonicalProfileKey({ key: "referred_by" }),
+    "referral_source",
+  );
+  assert.equal(
+    reconcileCanonicalProfileKey({ key: "address_line_1" }),
+    "current_address",
+  );
+  assert.equal(
+    reconcileCanonicalProfileKey({ key: "postal_code" }),
+    "zip_code",
+  );
+  assert.equal(
+    reconcileCanonicalProfileKey({
+      key: "field_0",
+      canonicalProfileKey: "unmappable",
+      rawIdentity: { name: "first_name", id: "first-name" },
+    }),
+    "first_name",
+  );
+  assert.equal(
+    reconcileCanonicalProfileKey({
+      key: "current_situation",
+      canonicalProfileKey: "housing_status",
+    }),
+    "housing_status",
+  );
+  assert.equal(
+    reconcileCanonicalProfileKey({ key: "relationship_status" }),
+    "unmappable",
+  );
+  assert.equal(
+    reconcileCanonicalProfileKey({ key: "card_expiry" }),
+    "unmappable",
+  );
+});
+
+test("physical observed-field merging preserves the richest record without duplicate controls", () => {
+  const merged = mergeObservedFields([
+    {
+      stateOrdinal: 1,
+      name: "email",
+      control: "email",
+      selector: "#email",
+      selectorCandidates: ["#email"],
+      canonicalProfileKey: "unmappable",
+      entryStatus: "not_attempted",
+      documentOrdinal: 4,
+    },
+    {
+      stateOrdinal: 1,
+      name: "email",
+      control: "email",
+      selector: "#email",
+      selectorCandidates: ["#email", "[name=email]"],
+      canonicalProfileKey: "email",
+      entryStatus: "entered",
+      documentOrdinal: 4,
+    },
+  ]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].entryStatus, "entered");
+  assert.equal(merged[0].canonicalProfileKey, "email");
+  assert.deepEqual(merged[0].selectorCandidates, ["#email", "[name=email]"]);
+});
+
+test("field reporting metrics ignore choice probes and reflect verified entries", () => {
+  const actions = [
+    ...Array.from({ length: 9 }, (_, index) => ({
+      category: "field_entry",
+      label: `Field ${index + 1}`,
+      outcome: "landed",
+    })),
+    ...Array.from({ length: 13 }, (_, index) => ({
+      category: "choice_probe",
+      label: `Option ${index + 1}`,
+      outcome: "landed",
+    })),
+  ];
+  assert.deepEqual(fieldActionMetrics(actions), {
+    fieldsPlanned: 9,
+    fieldsAttempted: 9,
+    fieldsVerified: 9,
+    attemptedFieldFailures: 0,
+  });
+});
+
+test("required review confirmations are one-way acceptance controls, not reversible branch probes", () => {
+  const review = {
+    key: "review_confirm",
+    label: "Please confirm the information is correct before submitting",
+    rawLabel: "Please confirm the information is correct before submitting",
+    controlType: "checkbox",
+    required: true,
+    actuate: true,
+    legalAcceptanceType: "reviewConfirmation",
+  };
+  assert.deepEqual(expectedDependencyProbeValues(review), []);
+  assert.equal(
+    classifyProtectedField({
+      field: review,
+      fact: {
+        rawType: "checkbox",
+        rawLabel: review.label,
+        name: "review_confirm",
+      },
+    }),
+    "legal_acceptance_interaction",
+  );
+});
+
+test("canonicalization routes ordinary review-checkbox proposals through the typed acceptance boundary", () => {
+  const raw = proposal();
+  const observed = observation();
+  const normalized = canonicalizeSemanticProposal(raw, null, observed);
+  const action = normalized.proposal.proposedActions.find(
+    (item) => item.proposalId === "action_agree",
+  );
+  assert.equal(action.kind, "legal_acceptance_interaction");
+  assert.equal(action.value, true);
+  assert.ok(
+    normalized.normalizations.some(
+      (item) => item.kind === "typed_acceptance_action_boundary",
+    ),
+  );
+});
+
+test("final reporting taxonomy normalizes aliases, contact sensitivity, and search controls", () => {
+  assert.deepEqual(
+    normalizeReportedField({
+      key: "address",
+      name: "address",
+      control: "search",
+      sensitive: true,
+    }),
+    {
+      key: "address",
+      name: "address",
+      control: "text",
+      sensitive: false,
+      canonicalProfileKey: "current_address",
+      descriptiveSensitivityDecision: {
+        sensitive: false,
+        code: "descriptive_non_sensitive_current_address",
+        source: "shared_reporting_policy",
+        taxonomyVersion: "1.1.0",
+        rationale:
+          "The canonical field identity has a stable descriptive sensitivity classification.",
+      },
+    },
+  );
+  const newsletter = normalizeReportedField({
+    key: "newsletter_email",
+    control: "email",
+    sensitive: true,
+  });
+  assert.equal(newsletter.canonicalProfileKey, "unmappable");
+  assert.equal(newsletter.sensitive, false);
+});
+
+test("canonicalization supplies a policy-owned synthetic fallback for unsafe ordinary text", () => {
+  const raw = proposal();
+  raw.fields.find((item) => item.key === "display_name").testValue = "No";
+  raw.proposedActions.find((item) => item.targetKey === "display_name").value = "No";
+  const normalized = canonicalizeSemanticProposal(raw, null, observation());
+  const action = normalized.proposal.proposedActions.find(
+    (item) => item.targetKey === "display_name",
+  );
+  assert.equal(action.value, "FORMWEAVE TEST");
+  assert.equal(
+    normalized.proposal.fields.find((item) => item.key === "display_name")
+      .testValue,
+    "FORMWEAVE TEST",
+  );
+  assert.ok(
+    normalized.normalizations.some(
+      (item) => item.kind === "policy_synthetic_text_fallback",
+    ),
+  );
+  assert.equal(
+    conspicuouslySyntheticFallback(
+      { controlType: "text", key: "provider" },
+      { rawType: "text", minLength: "2", maxLength: "40" },
+    ),
+    "FORMWEAVE TEST",
+  );
+});
 
 function observation() {
   return {
@@ -359,6 +931,151 @@ function proposal() {
   };
 }
 
+test("canonicalization makes native select options and values DOM-authoritative", () => {
+  const observed = observation();
+  observed.controls[0] = {
+    ...observed.controls[0],
+    tag: "select",
+    rawType: null,
+    options: [
+      { value: "", label: "Select" },
+      { value: "1", label: "1" },
+      { value: "6+", label: "6+" },
+    ],
+  };
+  const draft = proposal();
+  const select = draft.fields.find((item) => item.key === "display_name");
+  select.controlType = "select";
+  select.options = [
+    { value: "", label: "Choose" },
+    { value: "1", label: "One" },
+    { value: "6", label: "Six or more" },
+  ];
+  select.testValue = "6+";
+  const action = draft.proposedActions.find(
+    (item) => item.targetKey === "display_name",
+  );
+  action.value = "6";
+
+  const normalized = canonicalizeSemanticProposal(draft, null, observed);
+  const fieldResult = normalized.proposal.fields.find(
+    (item) => item.key === "display_name",
+  );
+  const actionResult = normalized.proposal.proposedActions.find(
+    (item) => item.targetKey === "display_name",
+  );
+  assert.deepEqual(fieldResult.options, observed.controls[0].options);
+  assert.equal(fieldResult.testValue, "6+");
+  assert.equal(actionResult.value, "6+");
+  assert.ok(
+    normalized.normalizations.some(
+      (item) => item.kind === "dom_authoritative_select_options",
+    ),
+  );
+  assert.ok(
+    normalized.normalizations.some(
+      (item) => item.kind === "dom_authoritative_select_test_value",
+    ),
+  );
+});
+
+test("canonicalization replaces an invented select value with an observed safe value", () => {
+  const observed = observation();
+  observed.controls[0] = {
+    ...observed.controls[0],
+    tag: "select",
+    rawType: null,
+    options: [
+      { value: "", label: "Select" },
+      { value: "bridge", label: "Bridge" },
+      { value: "rapid", label: "Rapid" },
+    ],
+  };
+  const draft = proposal();
+  const select = draft.fields.find((item) => item.key === "display_name");
+  select.controlType = "select";
+  select.options = [{ value: "invented", label: "Invented" }];
+  select.testValue = "invented";
+  const action = draft.proposedActions.find(
+    (item) => item.targetKey === "display_name",
+  );
+  action.value = "invented";
+
+  const normalized = canonicalizeSemanticProposal(draft, null, observed);
+  const fieldResult = normalized.proposal.fields.find(
+    (item) => item.key === "display_name",
+  );
+  const actionResult = normalized.proposal.proposedActions.find(
+    (item) => item.targetKey === "display_name",
+  );
+  assert.equal(fieldResult.testValue, "bridge");
+  assert.equal(actionResult.value, "bridge");
+});
+
+test("targeted semantic repair drafts compose with the prior valid candidate", () => {
+  const prior = proposal();
+  const correction = structuredClone(prior);
+  correction.proposalId = "proposal_targeted_correction";
+  correction.fields = prior.fields.filter(
+    (item) => item.key === "display_name",
+  );
+  correction.mechanics.fieldTargets = prior.mechanics.fieldTargets.filter(
+    (item) => item.fieldKey === "display_name",
+  );
+  correction.proposedActions = prior.proposedActions.filter(
+    (item) => ["display_name", "next"].includes(item.targetKey),
+  );
+  correction.fields[0].testValue = "FORMWEAVE TEST REPAIRED";
+  correction.proposedActions.find(
+    (item) => item.targetKey === "display_name",
+  ).value = "FORMWEAVE TEST REPAIRED";
+  const observed = observation();
+  observed.runtimeValidationFeedback = {
+    priorProposalId: prior.proposalId,
+    priorProposal: prior,
+    issues: [
+      {
+        targetKey: "display_name",
+        problem: "The primary action requires correction.",
+      },
+    ],
+    instruction: "Correct only the listed target.",
+  };
+
+  const normalized = canonicalizeSemanticProposal(
+    correction,
+    null,
+    observed,
+  );
+
+  assert.equal(normalized.proposal.fields.length, prior.fields.length);
+  assert.equal(
+    normalized.proposal.mechanics.fieldTargets.length,
+    prior.mechanics.fieldTargets.length,
+  );
+  assert.equal(
+    normalized.proposal.fields.find(
+      (item) => item.key === "display_name",
+    ).testValue,
+    "FORMWEAVE TEST REPAIRED",
+  );
+  assert.ok(
+    normalized.proposal.fields.some((item) => item.key === "document"),
+  );
+  assert.ok(
+    normalized.proposal.proposedActions.some(
+      (item) => item.targetKey === "document",
+    ),
+  );
+  assert.ok(
+    normalized.normalizations.some(
+      (item) =>
+        item.kind === "compose_targeted_repair_with_prior_candidate",
+    ),
+  );
+  validateSemanticProposal(normalized.proposal);
+});
+
 test("Gate 2 proposal validation is typed and expand-only", () => {
   const value = proposal();
   assert.equal(validateSemanticProposal(value), value);
@@ -379,6 +1096,37 @@ test("Gate 2 proposal validation is typed and expand-only", () => {
         state: { ...value.state, visibleControlKeys: ["password", "display_name"] },
       }),
     /sorted and unique/,
+  );
+});
+
+test("canonicalization drops redundant immutable contract declarations", () => {
+  const raw = proposal();
+  const existing = {
+    fields: [structuredClone(raw.fields.find((item) => item.key === "display_name"))],
+    sections: [],
+    guidance: [],
+    states: [],
+  };
+  const normalized = canonicalizeSemanticProposal(raw, existing, null);
+  assert.equal(
+    normalized.proposal.fields.some((item) => item.key === "display_name"),
+    false,
+  );
+  assert.equal(
+    normalized.proposal.mechanics.fieldTargets.some(
+      (item) => item.fieldKey === "display_name",
+    ),
+    false,
+  );
+  assert.equal(
+    normalized.proposal.proposedActions.some(
+      (item) => item.targetKey === "display_name",
+    ),
+    false,
+  );
+  assert.ok(normalized.proposal.state.visibleControlKeys.includes("display_name"));
+  assert.doesNotThrow(() =>
+    validateSemanticProposal(normalized.proposal, existing),
   );
 });
 
@@ -445,6 +1193,323 @@ test("model proposal canonicalization fixes only set ordering and opaque IDs", (
       (item) => item.kind === "align_with_declared_progression",
     ),
   );
+});
+
+test("canonicalization removes dangling state section references", () => {
+  const raw = proposal();
+  raw.state.sectionKeys = ["applicant", "missing_section"];
+
+  const normalized = canonicalizeSemanticProposal(raw);
+
+  assert.deepEqual(normalized.proposal.state.sectionKeys, ["applicant"]);
+  assert.ok(
+    normalized.normalizations.some(
+      (item) =>
+        item.kind === "drop_unknown_section_references" &&
+        item.path === "$.state.sectionKeys",
+    ),
+  );
+  assert.doesNotThrow(() => validateSemanticProposal(normalized.proposal));
+});
+
+test("canonicalization fails closed when an observed terminal submit is called advance", () => {
+  const raw = proposal();
+  const observed = observation();
+  observed.actions[0] = {
+    ...observed.actions[0],
+    rawType: "submit",
+    rawText: "Submit Request",
+    formMethod: "POST",
+  };
+
+  const normalized = canonicalizeSemanticProposal(raw, null, observed);
+
+  assert.equal(normalized.proposal.state.kind, "terminal");
+  assert.equal(normalized.proposal.state.progression.kind, "terminal_submit");
+  assert.equal(
+    normalized.proposal.mechanics.progressionTarget.kind,
+    "terminal_submit",
+  );
+  assert.equal(
+    normalized.proposal.proposedActions.find(
+      (action) => action.targetKey === raw.state.progression.key,
+    ).kind,
+    "terminal_submit",
+  );
+  assert.ok(
+    normalized.normalizations.some(
+      (item) => item.kind === "align_with_observed_terminal_submit",
+    ),
+  );
+  assert.doesNotThrow(() => validateSemanticProposal(normalized.proposal));
+});
+
+test("canonicalization merges duplicate model fields for one observed radio group", () => {
+  const raw = proposal();
+  const observed = observation();
+  observed.controls.push(
+    {
+      factId: "field_4",
+      tag: "input",
+      rawType: "radio",
+      name: "services_for",
+      id: "services_for_self",
+      rawLabel: "Myself",
+      required: false,
+      options: [{ value: "Myself", label: "Myself" }],
+      selectorCandidates: [
+        "#services_for_self",
+        'input[name="services_for"][type="radio"]',
+      ],
+    },
+    {
+      factId: "field_5",
+      tag: "input",
+      rawType: "radio",
+      name: "services_for",
+      id: "services_for_other",
+      rawLabel: "Someone else",
+      required: false,
+      options: [{ value: "Someone else", label: "Someone else" }],
+      selectorCandidates: [
+        "#services_for_other",
+        'input[name="services_for"][type="radio"]',
+      ],
+    },
+  );
+  raw.fields.push(
+    field({
+      key: "services_for",
+      rawLabel: "Myself",
+      controlType: "radio",
+      factId: "field_4",
+      selector: "#services_for_self",
+      testValue: true,
+      options: [{ value: "Myself", label: "Myself" }],
+    }),
+    field({
+      key: "services_for",
+      rawLabel: "Someone else",
+      controlType: "radio",
+      factId: "field_5",
+      selector: "#services_for_other",
+      testValue: false,
+      options: [{ value: "Someone else", label: "Someone else" }],
+    }),
+  );
+  raw.mechanics.fieldTargets.push(
+    { fieldKey: "services_for", selectors: ["#services_for_self"] },
+    { fieldKey: "services_for", selectors: ["#services_for_other"] },
+  );
+  raw.sections[0].fieldKeys.push("services_for");
+  raw.state.visibleControlKeys.push("services_for");
+  raw.proposedActions.push({
+    proposalId: "action_services_for",
+    kind: "field_actuation",
+    targetKey: "services_for",
+    value: true,
+    rationale: "Choose one observed radio option.",
+  });
+
+  const normalized = canonicalizeSemanticProposal(raw, null, observed);
+  const radio = normalized.proposal.fields.find(
+    (candidate) => candidate.key === "services_for",
+  );
+
+  assert.deepEqual(radio.sourceFactIds, ["field_4", "field_5"]);
+  assert.deepEqual(radio.options, [
+    { value: "Myself", label: "Myself" },
+    { value: "Someone else", label: "Someone else" },
+  ]);
+  assert.equal(radio.testValue, "Myself");
+  assert.deepEqual(
+    normalized.proposal.mechanics.fieldTargets.find(
+      (target) => target.fieldKey === "services_for",
+    ).selectors,
+    ['input[name="services_for"][type="radio"]'],
+  );
+  assert.equal(
+    normalized.proposal.proposedActions.find(
+      (action) => action.targetKey === "services_for",
+    ).value,
+    "Myself",
+  );
+  assert.ok(
+    normalized.normalizations.some(
+      (item) => item.kind === "merge_observed_radio_group",
+    ),
+  );
+  assert.doesNotThrow(() => validateSemanticProposal(normalized.proposal));
+});
+
+test("canonicalization completes a partially modeled radio group from observed options", () => {
+  const raw = proposal();
+  const observed = observation();
+  const options = [
+    ["field_4", "Flyer", "Flyer"],
+    ["field_5", "Friend", "Friend"],
+    ["field_6", "gf_other_choice", "Other"],
+  ];
+  for (const [factId, value, label] of options) {
+    observed.controls.push({
+      factId,
+      tag: "input",
+      rawType: "radio",
+      name: "input_16",
+      id: `${factId}_id`,
+      rawLabel: label,
+      groupLegend: "How did you hear about us?",
+      required: true,
+      visible: true,
+      options: [{ value, label }],
+      selectorCandidates: [
+        `#${factId}_id`,
+        'input[name="input_16"][type="radio"]',
+      ],
+    });
+  }
+  raw.fields.push(
+    field({
+      key: "referral_source",
+      rawLabel: "How did you hear about us?",
+      controlType: "radio",
+      factId: "field_4",
+      selector: "#field_4_id",
+      testValue: "Flyer",
+      options: [
+        { value: "Flyer", label: "Flyer" },
+        { value: "Friend", label: "Friend" },
+      ],
+    }),
+  );
+  raw.fields.at(-1).sourceFactIds.push("field_5");
+  raw.mechanics.fieldTargets.push({
+    fieldKey: "referral_source",
+    selectors: ["#field_4_id"],
+  });
+  raw.sections[0].fieldKeys.push("referral_source");
+  raw.state.visibleControlKeys.push("referral_source");
+  raw.proposedActions.push({
+    proposalId: "action_referral_source",
+    kind: "field_actuation",
+    targetKey: "referral_source",
+    value: "Flyer",
+    rationale: "Choose one observed referral source.",
+  });
+
+  const normalized = canonicalizeSemanticProposal(raw, null, observed);
+  const radio = normalized.proposal.fields.find(
+    (candidate) => candidate.key === "referral_source",
+  );
+
+  assert.deepEqual(radio.sourceFactIds, ["field_4", "field_5", "field_6"]);
+  assert.deepEqual(radio.options, [
+    { value: "Flyer", label: "Flyer" },
+    { value: "Friend", label: "Friend" },
+    { value: "gf_other_choice", label: "Other" },
+  ]);
+  assert.equal(radio.rawLabel, "How did you hear about us?");
+  assert.equal(radio.testValue, "Flyer");
+  assert.deepEqual(
+    normalized.proposal.mechanics.fieldTargets.find(
+      (target) => target.fieldKey === "referral_source",
+    ).selectors,
+    ['input[name="input_16"][type="radio"]'],
+  );
+  assert.ok(
+    normalized.normalizations.some(
+      (item) => item.kind === "complete_observed_radio_group",
+    ),
+  );
+  assert.deepEqual(
+    radioGroupProposalIssues(normalized.proposal, observed),
+    [],
+  );
+  assert.doesNotThrow(() => validateSemanticProposal(normalized.proposal));
+});
+
+test("canonicalization merges one raw radio group even when option fields use different semantic keys", () => {
+  const raw = proposal();
+  const observed = observation();
+  const options = [
+    ["radio_housed", "housing_yes", "yes", "I am housed"],
+    ["radio_unhoused", "housing_no", "no", "I am unhoused"],
+    ["radio_unsure", "housing_unsure", "unsure", "I am not sure"],
+  ];
+  for (const [factId, key, value, label] of options) {
+    observed.controls.push({
+      factId,
+      tag: "input",
+      rawType: "radio",
+      name: "housing_status",
+      id: factId,
+      rawLabel: label,
+      groupLegend: "What is your current housing situation?",
+      required: true,
+      visible: true,
+      options: [{ value, label }],
+      selectorCandidates: [
+        `#${factId}`,
+        'input[name="housing_status"][type="radio"]',
+      ],
+    });
+    raw.fields.push(
+      field({
+        key,
+        rawLabel: label,
+        controlType: "radio",
+        factId,
+        selector: `#${factId}`,
+        testValue: value,
+        options: [{ value, label }],
+      }),
+    );
+    raw.mechanics.fieldTargets.push({ fieldKey: key, selectors: [`#${factId}`] });
+    raw.sections[0].fieldKeys.push(key);
+    raw.state.visibleControlKeys.push(key);
+    raw.proposedActions.push({
+      proposalId: `action_${key}`,
+      kind: "field_actuation",
+      targetKey: key,
+      value,
+      rationale: "Choose the observed radio option.",
+    });
+  }
+
+  const normalized = canonicalizeSemanticProposal(raw, null, observed);
+  const radio = normalized.proposal.fields.find(
+    (candidate) => candidate.key === "housing_yes",
+  );
+
+  assert.deepEqual(radio.sourceFactIds, [
+    "radio_housed",
+    "radio_unhoused",
+    "radio_unsure",
+  ]);
+  assert.deepEqual(radio.options, [
+    { value: "yes", label: "I am housed" },
+    { value: "no", label: "I am unhoused" },
+    { value: "unsure", label: "I am not sure" },
+  ]);
+  assert.equal(
+    normalized.proposal.fields.some(
+      (candidate) => ["housing_no", "housing_unsure"].includes(candidate.key),
+    ),
+    false,
+  );
+  assert.equal(
+    normalized.proposal.mechanics.fieldTargets.filter(
+      (target) => target.fieldKey === "housing_yes",
+    ).length,
+    1,
+  );
+  assert.deepEqual(radioGroupProposalIssues(normalized.proposal, observed), []);
+  assert.ok(
+    normalized.normalizations.some(
+      (item) => item.kind === "merge_observed_radio_group_by_raw_name",
+    ),
+  );
+  assert.doesNotThrow(() => validateSemanticProposal(normalized.proposal));
 });
 
 test("canonicalization removes action controls, unsafe references, and model-authored probes", () => {
@@ -550,6 +1615,150 @@ test("non-model safety accepts crawl-safe uploads and rejects disallowed protect
   assert.equal(result.safe, false);
 });
 
+test("non-model safety inventories disabled controls without actuating them", () => {
+  const proposed = proposal();
+  const observed = observation();
+  const displayNameFact = observed.controls.find(
+    (control) => control.factId === "field_0",
+  );
+  displayNameFact.visible = true;
+  displayNameFact.disabled = true;
+
+  const result = validateProposalSafety({
+    proposal: proposed,
+    observation: observed,
+  });
+
+  assert.ok(
+    result.rejections.some(
+      (item) =>
+        item.proposalId === "action_name" && item.code === "outside_contract",
+    ),
+  );
+  assert.equal(
+    result.acceptedActions.some((item) => item.proposalId === "action_name"),
+    false,
+  );
+});
+
+test("an optional empty choice inventory is unavailable without rejecting safe siblings", () => {
+  const proposed = proposal();
+  proposed.fields = [
+    proposed.fields.find((item) => item.key === "display_name"),
+    {
+      ...field({
+        key: "preferred_language",
+        rawLabel: "Preferred language",
+        controlType: "select",
+        factId: "field_empty_select",
+        selector: "#preferred_language",
+        testValue: "FW",
+        options: [],
+      }),
+      required: false,
+    },
+  ];
+  proposed.sections[0].fieldKeys = ["display_name", "preferred_language"];
+  proposed.state.visibleControlKeys = ["display_name", "preferred_language"];
+  proposed.mechanics.fieldTargets = [
+    { fieldKey: "display_name", selectors: ["#display_name"] },
+    { fieldKey: "preferred_language", selectors: ["#preferred_language"] },
+  ];
+  proposed.proposedActions = [
+    proposed.proposedActions.find((item) => item.proposalId === "action_name"),
+    {
+      proposalId: "action_preferred_language",
+      kind: "field_actuation",
+      targetKey: "preferred_language",
+      value: "FW",
+      rationale: "Exercise the observed select if it has a real option.",
+    },
+    proposed.proposedActions.find((item) => item.proposalId === "action_next"),
+  ];
+  const observed = observation();
+  observed.controls = [
+    observed.controls.find((item) => item.factId === "field_0"),
+    {
+      factId: "field_empty_select",
+      tag: "select",
+      rawType: null,
+      name: "preferred_language",
+      id: "preferred_language",
+      rawLabel: "Preferred language",
+      required: false,
+      visible: true,
+      disabled: false,
+      readOnly: false,
+      options: [],
+      selectorCandidates: ["#preferred_language"],
+    },
+  ];
+
+  const result = validateProposalSafety({ proposal: proposed, observation: observed });
+
+  assert.equal(result.safe, true);
+  assert.deepEqual(
+    result.acceptedActions.map((item) => item.proposalId),
+    ["action_name", "action_next"],
+  );
+  assert.deepEqual(
+    result.unavailableActions.map((item) => ({
+      proposalId: item.proposalId,
+      code: item.code,
+    })),
+    [{
+      proposalId: "action_preferred_language",
+      code: "option_values_unavailable",
+    }],
+  );
+  assert.deepEqual(result.rejections, []);
+});
+
+test("input-less semantic controls are retained as non-actuated structural fields", () => {
+  const fields = virtualInventoryFields(
+    {
+      controls: [{
+        factId: "virtual_field_0",
+        rawType: "custom",
+        name: "satisfaction",
+        id: "satisfaction",
+        rawLabel: "How satisfied are you?",
+        required: false,
+        visible: true,
+        disabled: false,
+        readOnly: false,
+        options: [
+          { value: "1", label: "1 star" },
+          { value: "5", label: "5 stars" },
+        ],
+        selectorCandidates: ["#satisfaction"],
+        documentOrdinal: 14,
+        virtual: true,
+        actuationEligible: false,
+      }],
+    },
+    new Set(),
+    0,
+  );
+
+  assert.equal(fields.length, 1);
+  assert.equal(fields[0].controlType, "custom");
+  assert.equal(fields[0].actuate, false);
+  assert.equal(fields[0].skipReason, "virtual_control_unavailable");
+  assert.equal(fields[0].documentOrdinal, 14);
+  assert.deepEqual(fields[0].options.map((item) => item.value), ["1", "5"]);
+  assert.deepEqual(
+    terminalEligibilityIssues({ states: [{ fields }] }),
+    [],
+  );
+  assert.deepEqual(
+    terminalEligibilityIssues({
+      states: [{ fields: [{ ...fields[0], required: true }] }],
+    }).map((issue) => issue.code),
+    ["required_control_unavailable"],
+  );
+});
+
 test("government identifiers are sensitive data, not login credentials", () => {
   assert.equal(
     classifyProtectedField({
@@ -576,6 +1785,46 @@ test("government identifiers are sensitive data, not login credentials", () => {
       fact: { rawType: "password", name: "password" },
     }),
     "credential_interaction",
+  );
+});
+
+test("payment protection covers autocomplete and sibling-section expiration fields", () => {
+  assert.equal(
+    classifyProtectedField({
+      field: { key: "expires", rawLabel: "Expiration", controlType: "text" },
+      fact: {
+        rawType: "text",
+        rawLabel: "Expiration (MM/YY)",
+        autocomplete: "cc-exp",
+      },
+    }),
+    "payment_interaction",
+  );
+  assert.equal(
+    classifyProtectedField({
+      field: { key: "expires", rawLabel: "Expiration", controlType: "text" },
+      fact: {
+        rawType: "text",
+        rawLabel: "Expiration (MM/YY)",
+        sectionText: "Processing fee Card Number Expiration Security Code",
+      },
+    }),
+    "payment_interaction",
+  );
+  assert.equal(
+    classifyProtectedField({
+      field: {
+        key: "benefit_expiration",
+        rawLabel: "Benefit expiration date",
+        controlType: "date",
+      },
+      fact: {
+        rawType: "date",
+        rawLabel: "Benefit expiration date",
+        sectionText: "Eligibility dates",
+      },
+    }),
+    null,
   );
 });
 
@@ -816,6 +2065,36 @@ test("partial generated journeys retain prior states, fields, and evidence", () 
   assert.equal(result.haltReason, "Protected required field.");
 });
 
+test("pre-actuation reporting never invents one failure per planned field", () => {
+  const plan = {
+    proposalId: "proposal_reporting",
+    scriptVersion: 1,
+    fields: [
+      { key: "field_01", label: "Field 01", rationale: "Observed field." },
+      { key: "field_02", label: "Field 02", rationale: "Observed field." },
+    ],
+  };
+  assert.deepEqual(generatedFieldActions(plan, [], "state_01"), []);
+
+  const attempted = generatedFieldActions(
+    plan,
+    [
+      {
+        field: plan.fields[0],
+        outcome: {
+          verified: false,
+          failureCode: "actuation_unverified",
+          detail: "Readback did not verify.",
+        },
+      },
+    ],
+    "state_01",
+  );
+  assert.equal(attempted.length, 1);
+  assert.equal(attempted[0].label, "Field 01");
+  assert.equal(attempted[0].failureCode, "actuation_unverified");
+});
+
 test("visible progress labels distinguish canonical and mid-flow entry", () => {
   assert.equal(
     inferJourneyEntryMode({
@@ -925,6 +2204,37 @@ test("collapsed informational disclosures are explored before unrelated progress
   assert.equal(issues[0].type, "pending_disclosure");
 });
 
+test("fields behind the selected disclosure are deferred to the re-sensed state", () => {
+  const issues = disclosureBlockedFieldIssues(
+    {
+      state: {
+        progression: { key: "open_details", kind: "advance" },
+        visibleControlKeys: ["visible_name", "hidden_need"],
+      },
+      fields: [
+        { key: "visible_name", sourceFactIds: ["field_visible"] },
+        { key: "hidden_need", sourceFactIds: ["field_hidden"] },
+      ],
+      mechanics: {
+        progressionTarget: { sourceFactId: "action_disclosure" },
+      },
+    },
+    {
+      actions: [
+        {
+          factId: "action_disclosure",
+          disclosureControl: true,
+          disclosureExpanded: false,
+          blockedControlFactIds: ["field_hidden"],
+        },
+      ],
+    },
+  );
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].type, "field_blocked_by_pending_disclosure");
+  assert.equal(issues[0].targetKey, "hidden_need");
+});
+
 test("an exhausted disclosure cannot be reused as a progression action", () => {
   const issues = exhaustedDisclosureProgressionIssues(
     {
@@ -994,6 +2304,72 @@ test("format-strict postal values use a reserved synthetic code without invalid 
       strictReferenceFact,
     ),
     false,
+  );
+});
+
+test("synthetic email authority requires a browser-valid reserved address", () => {
+  const emailField = {
+    key: "email",
+    rawLabel: "Email Address",
+    controlType: "email",
+    options: [],
+  };
+  assert.equal(
+    isConspicuouslySynthetic("FORMWEAVE TEST@example.invalid", emailField),
+    false,
+  );
+  assert.equal(
+    isConspicuouslySynthetic("formweave.test@example.invalid", emailField),
+    true,
+  );
+  assert.equal(
+    conspicuouslySyntheticFallback(emailField),
+    "formweave.test@example.invalid",
+  );
+});
+
+test("canonical reconciliation uses exact identity plus option context", () => {
+  assert.equal(
+    reconcileCanonicalProfileKey({ key: "num_children" }),
+    "num_children",
+  );
+  assert.equal(
+    reconcileCanonicalProfileKey({
+      key: "current_situation",
+      label: "Current Situation",
+      options: [
+        { value: "unhoused", label: "Currently unhoused" },
+        { value: "housed", label: "Currently housed" },
+      ],
+    }),
+    "housing_status",
+  );
+  assert.equal(
+    reconcileCanonicalProfileKey({
+      key: "current_situation",
+      label: "Current Situation",
+      options: [{ value: "working", label: "Currently working" }],
+    }),
+    "unmappable",
+  );
+  assert.equal(
+    reconcileCanonicalProfileKey({
+      key: "aid_type",
+      label: "Type of Help Needed",
+      options: [
+        { value: "rent", label: "Rent" },
+        { value: "food", label: "Food" },
+      ],
+    }),
+    "services_requested",
+  );
+  assert.equal(
+    reconcileCanonicalProfileKey({
+      key: "unmapped_field",
+      label: "Unmapped field",
+      options: 3,
+    }),
+    "unmappable",
   );
 });
 
@@ -1646,11 +3022,12 @@ test("semantic model input contains live sensing context and records provenance"
   assert.match(inputText, /Do not propose choice_probe actions/i);
   assert.match(
     inputText,
-    /opens each recognized collapsed details, accordion, expando/i,
+    /Every visible collapsed details, accordion, expando/i,
   );
   assert.match(inputText, /Cookie and consent-management banners are session traversal infrastructure/i);
-  assert.match(inputText, /one second of varied-easing mouse movement/i);
-  assert.match(inputText, /never describe this preparation as CAPTCHA/i);
+  assert.match(inputText, /fixed pointer sweep/i);
+  assert.match(inputText, /generated per-site handler must implement and verify/i);
+  assert.match(inputText, /never describe preparation as CAPTCHA/i);
   assert.match(inputText, /serves OneDegree's resource-access mission/i);
   assert.match(
     inputText,

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "name": "development-run-complexity7-batch-05",
+  "seed": "formweave-development-run-2026-08-10:batch-05",
+  "batchSize": 7,
+  "batchCount": 1,
+  "trials": 1,
+  "selectionAlgorithm": "complexity-stratified-v1",
+  "protocolBase": "https://testforms.dbolab.io/api/v1",
+  "appApiOrigin": "http://127.0.0.1:8788",
+  "executionGoal": "submit",
+  "appExecutionMode": "fixture_submit",
+  "browserMode": "headless",
+  "timeoutMs": 900000,
+  "freshGenerationRequired": true,
+  "scenarioKeys": [
+    "site_b_legalaid/primary",
+    "site_s_variants/v1",
+    "site_n_payment/primary",
+    "site_af_branch_cards/primary",
+    "site_al_ledger_drift/v3_required",
+    "site_an_uw_housing/primary",
+    "site_ah_member_gate/primary"
+  ]
+}

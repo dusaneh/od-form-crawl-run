@@ -334,12 +334,17 @@ for generated scripts, semantic contracts, the executor, and their boundaries.
   hover and lazy-load behavior before examination; it must not be represented
   or used as CAPTCHA or bot-detection evasion.
 - `F1.6.6.1` Before each novel-state examination, reconnaissance performs a
-  fixed pointer sweep and incrementally scrolls the full main document, every
-  reachable child frame, and relevant nested scroll containers to trigger
-  legitimate lazy rendering, intersection observers, and scroll-bound
-  instructions. Scrolls are bounded, reversible where practical, audited, and
-  followed by a stable-state examination; inaccessible cross-origin frames are
-  reported explicitly.
+  fixed pointer sweep and incrementally scrolls the full main document and
+  every reachable child frame to trigger legitimate lazy rendering and
+  intersection observers. Scrolls are bounded, reversible where practical,
+  audited, and followed by a stable-state examination; inaccessible
+  cross-origin frames are reported explicitly.
+- `F1.6.6.2` A nested scroll region that can gate an application control is
+  not generic page-onset physics. Reconnaissance records it as a raw
+  `scrollRegions` fact without scrolling it. When reaching its end is required
+  to enable or complete an identified field or action, that sequence belongs
+  to the generated per-form handler, is persisted before execution, and must
+  verify both the scroll endpoint and the dependent control state.
 - `F1.6.7` Every automatic action records category, label, strategy,
   timestamp, before/after observed runtime state identity per `F13.3`, outcome,
   and an append-only event. It is recorded as `landed` only after the resulting

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "name": "devrun-20260811-threegate7-rotating-05",
+  "seed": "formweave-threegate-2026-08-11:rotating-05",
+  "batchSize": 7,
+  "batchCount": 1,
+  "trials": 1,
+  "selectionAlgorithm": "complexity-stratified-v1",
+  "protocolBase": "https://testforms.dbolab.io/api/v1",
+  "appApiOrigin": "http://127.0.0.1:8788",
+  "executionGoal": "submit",
+  "appExecutionMode": "fixture_submit",
+  "browserMode": "headless",
+  "timeoutMs": 900000,
+  "freshGenerationRequired": true,
+  "scenarioKeys": [
+    "site_am_gethelp360/primary",
+    "site_o_invisible_captcha/primary",
+    "site_d_food/primary",
+    "site_ai_fee_verify/primary",
+    "site_ae_deep_portal/primary",
+    "site_an_uw_housing/primary",
+    "site_ad_wizard_links/primary"
+  ]
+}

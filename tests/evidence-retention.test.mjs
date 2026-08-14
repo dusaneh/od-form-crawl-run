@@ -72,3 +72,11 @@ test("transient choice probes omit screenshots unless their actuation failed", (
     true,
   );
 });
+
+test("pre-actuation failure evidence is captured and retained as the failure boundary", () => {
+  const failure = state(1, "pre_actuation_failure");
+  const retained = selectRetainedEvidence([failure], { halted: true });
+  assert.equal(shouldCaptureStateScreenshot("pre_actuation_failure", []), true);
+  assert.deepEqual(retained.map((item) => item.id), [failure.id]);
+  assert.equal(retained[0].evidenceRole, "pre_action");
+});

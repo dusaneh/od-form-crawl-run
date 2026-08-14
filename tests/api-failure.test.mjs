@@ -166,3 +166,67 @@ test("HTTP and execution failures include nested response issues", () => {
     "locator_unresolved",
   ]);
 });
+
+test("pre-actuation validation failures explain that zero fields were attempted", () => {
+  const failure = apiFailureFrom(200, {
+    run: {
+      status: "awaiting_review",
+      findings: [
+        {
+          tone: "danger",
+          code: "semantic_validation_blocked",
+          title: "Semantic validation blocked form actuation",
+          detail:
+            "No form field was attempted. Counts: 4 planned, 0 attempted, 0 verified, 0 attempted failures.",
+        },
+      ],
+    },
+  });
+
+  assert.ok(failure);
+  assert.equal(failure.code, "semantic_validation_blocked");
+  assert.equal(
+    failure.issues[0].title,
+    "The semantic plan did not match the observed form",
+  );
+  assert.match(failure.issues[0].detail, /no form field was attempted/i);
+});
+
+test("page failure stages and root issues are translated without invented field failures", () => {
+  const failure = apiFailureFrom(200, {
+    run: {
+      status: "failed",
+      report: {
+        pages: [
+          {
+            title: "Observed form",
+            failureStage: "actuator_preflight_failed",
+            blockedBeforeActuation: true,
+            fieldsPlanned: 5,
+            fieldsAttempted: 0,
+            fieldsVerified: 0,
+            haltReason: "The handler could not prove the selected target.",
+            failureIssues: [
+              {
+                code: "locator_unresolved",
+                targetKey: "field_03",
+                detail: "The selected control did not resolve uniquely.",
+              },
+            ],
+          },
+        ],
+      },
+    },
+  });
+
+  assert.ok(failure);
+  assert.deepEqual(failure.issues.map((issue) => issue.code), [
+    "actuator_preflight_failed",
+    "locator_unresolved",
+  ]);
+  assert.match(failure.issues[0].title, /site actuator/i);
+  assert.doesNotMatch(
+    failure.issues.map((issue) => issue.detail).join(" "),
+    /field_01|field_02|field_04|field_05/,
+  );
+});

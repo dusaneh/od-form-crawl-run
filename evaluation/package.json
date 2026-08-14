@@ -1,0 +1,28 @@
+{
+  "name": "formweave-evaluation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "api:audit": "node adaptive/start-audit-api.mjs",
+    "plan": "node adaptive/adaptive-batch-runner.mjs --plan-only",
+    "run": "node adaptive/adaptive-batch-runner.mjs",
+    "score": "node adaptive/adaptive-batch-scorer.mjs",
+    "compare": "node adaptive/adaptive-batch-compare.mjs",
+    "experiment:plan": "node experiment/run-experiment.mjs --plan-only",
+    "experiment:run": "node experiment/run-experiment.mjs",
+    "experiment:finalize": "node experiment/finalize-analysis.mjs",
+    "experiment:compare": "node experiment/compare-experiments.mjs",
+    "experiment:rescore": "node experiment/rescore-experiment.mjs",
+    "experiment:preservation-review": "node experiment/build-preservation-review.mjs",
+    "experiment:registry": "node experiment/rebuild-registry.mjs",
+    "experiment:trend": "node experiment/build-development-trend.mjs",
+    "dashboard:data": "node dashboard/build-dashboard-data.mjs",
+    "dashboard": "node dashboard/server.mjs",
+    "test": "node --test adaptive/tests/*.test.mjs experiment/tests/*.test.mjs",
+    "validate:spec": "node spec/validate-examples.mjs"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  }
+}

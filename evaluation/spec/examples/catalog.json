@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "catalog_revision": "sha256:example-catalog",
+  "generated_at": "2026-08-09T12:00:00Z",
+  "sites": [
+    {
+      "site_id": "site_ai_fee_verify",
+      "display_name": "Sunrise Transitional Services",
+      "enabled": true,
+      "feature_tags": [
+        "interactive_captcha",
+        "invisible_captcha",
+        "payment_field",
+        "vision_escalation"
+      ],
+      "scenarios": [
+        {
+          "scenario_id": "primary",
+          "title": "Standard Application",
+          "enabled": true,
+          "entry_url": "https://testforms.dbolab.io/site_ai_fee_verify/intake",
+          "ground_truth_url": "https://testforms.dbolab.io/api/v1/sites/site_ai_fee_verify/scenarios/primary/ground-truth",
+          "fixture_revision": "sha256:example-site-ai-primary-fixture",
+          "submission_capture": true,
+          "sampling_tags": ["primary"]
+        },
+        {
+          "scenario_id": "challenge",
+          "title": "Verified Application",
+          "enabled": true,
+          "entry_url": "https://testforms.dbolab.io/site_ai_fee_verify/intake_challenge",
+          "ground_truth_url": "https://testforms.dbolab.io/api/v1/sites/site_ai_fee_verify/scenarios/challenge/ground-truth",
+          "fixture_revision": "sha256:example-site-ai-challenge-fixture",
+          "submission_capture": true,
+          "sampling_tags": ["alternate_flow"]
+        }
+      ]
+    }
+  ]
+}

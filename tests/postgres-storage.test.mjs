@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   FormWeaveDatabase,
+  jsonbParameter,
   planFromSource,
   sha256,
   stableJson,
@@ -42,6 +43,14 @@ test("PostgreSQL script records preserve readable plans and exact source hashes"
   assert.deepEqual(planFromSource(source), plan);
   assert.match(sha256(source), /^[0-9a-f]{64}$/);
   assert.match(sha256(stableJson(plan)), /^[0-9a-f]{64}$/);
+});
+
+test("PostgreSQL JSONB parameters preserve arrays as JSON instead of PostgreSQL arrays", () => {
+  assert.equal(jsonbParameter(["keyboard", "pointer"]), '["keyboard","pointer"]');
+  assert.deepEqual(
+    JSON.parse(jsonbParameter({ issueIds: ["issue_1"], timings: { totalMs: 12 } })),
+    { issueIds: ["issue_1"], timings: { totalMs: 12 } },
+  );
 });
 
 test("PostgreSQL migration covers JSON, immutable scripts, and binary objects", async () => {
@@ -99,6 +108,27 @@ test("audit-category migration accepts retained LLM telemetry", async () => {
   );
   assert.match(migration, /DROP CONSTRAINT IF EXISTS formweave_audit_events_category_check/i);
   assert.match(migration, /'execution',[\s\S]*'llm'/i);
+});
+
+test("semantic and actuator artifacts are stored readably and append-only", async () => {
+  const migration = await readFile(
+    path.join(
+      projectRoot,
+      "db",
+      "migrations",
+      "008_semantic_actuator_artifacts.sql",
+    ),
+    "utf8",
+  );
+  assert.match(migration, /formweave_semantic_candidates/i);
+  assert.match(migration, /proposal jsonb NOT NULL/i);
+  assert.match(migration, /formweave_actuator_modules/i);
+  assert.match(migration, /source_text text NOT NULL/i);
+  assert.match(migration, /formweave_repair_attempts/i);
+  assert.match(migration, /formweave_validation_runs/i);
+  assert.match(migration, /formweave_artifact_releases/i);
+  assert.match(migration, /formweave_actuator_modules_immutable/i);
+  assert.match(migration, /formweave_artifact_releases_immutable/i);
 });
 
 test("PostgreSQL pools tolerate slow managed-database connection startup", async () => {

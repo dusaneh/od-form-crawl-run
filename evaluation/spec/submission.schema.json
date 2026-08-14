@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://testforms.dbolab.io/schemas/captured-submission-v1.json",
+  "title": "Testforms captured submission v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evaluation_id",
+    "submission_id",
+    "received_at",
+    "site_id",
+    "scenario_id",
+    "source_url",
+    "fixture_revision",
+    "serialization",
+    "fields",
+    "success_marker_observed"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "evaluation_id": { "type": "string", "pattern": "^eval_[A-Za-z0-9_-]{12,}$" },
+    "submission_id": { "type": "string", "minLength": 8 },
+    "received_at": { "type": "string", "format": "date-time" },
+    "site_id": { "type": "string", "pattern": "^site_[a-z0-9_]+$" },
+    "scenario_id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "source_url": { "type": "string", "format": "uri" },
+    "fixture_revision": { "type": "string", "minLength": 1 },
+    "serialization": { "const": "application/x-www-form-urlencoded" },
+    "fields": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          }
+        ]
+      }
+    },
+    "success_marker_observed": { "type": "boolean" }
+  }
+}

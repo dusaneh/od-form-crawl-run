@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -17,39 +17,44 @@ import { generateSemanticProposal } from "./semantic/semantic-generator.mjs";
 import { writeSemanticGenerationRecord } from "./semantic/semantic-record-store.mjs";
 import { generateDynamicsAssessment } from "./semantic/dynamics-assessment.mjs";
 import {
+  buildTransitionStateDelta,
+  contextualDynamicsFallback,
+  enforceStateDeltaAssessment,
+} from "./semantic/state-delta.mjs";
+import {
+  classifyProgressionActionOutcome,
+  excludedProgressionFactIssues,
+  noEffectReplanEligibility,
+  noEffectReplanFeedback,
+  progressionActionExclusion,
+  shouldSkipNoEffectProgressionReplay,
+} from "./semantic/action-outcome.mjs";
+import {
   generateSubmissionResultAssessment,
   verifyStoredSubmissionResultCriteria,
 } from "./semantic/submission-result-assessment.mjs";
 import { shouldCaptureStateScreenshot } from "./evidence-retention.mjs";
 import { detectCaptcha } from "./traversal-automation.mjs";
 import { expectedDependencyProbeValues } from "./traversal-special-rules.mjs";
+import {
+  generateValidateStateActuator,
+  StateActuatorPipelineError,
+} from "./actuator/state-actuator-pipeline.mjs";
+import { loadActuatorBundleInMemory } from "./actuator/bundle-store.mjs";
+import { createActuatorRuntime } from "./actuator/actuator-runtime.mjs";
+import { reconcileCanonicalProfileKey } from "./semantic/canonical-profile.mjs";
+import {
+  canonicalDescriptiveSensitivity,
+  REPORTING_TAXONOMY_VERSION,
+} from "./semantic/reporting-taxonomy.mjs";
 
-const GENERATED_FORM_SCRIPT_VERSION = 16;
+const GENERATED_FORM_SCRIPT_VERSION = 26;
 const MAX_GENERATED_STATES = 12;
 const MAX_SAME_PAGE_BRANCH_DEPTH = 1;
-const CANONICAL_PROFILE_KEYS = new Set([
-  "address_line_1",
-  "address_line_2",
-  "annual_income",
-  "city",
-  "date_of_birth",
-  "disability_status",
-  "email",
-  "first_name",
-  "full_name",
-  "household_size",
-  "housing_status",
-  "immigration_status",
-  "last_name",
-  "middle_name",
-  "monthly_income",
-  "phone",
-  "postal_code",
-  "services_requested",
-  "ssn_last4",
-  "state",
-  "veteran_status",
-]);
+const MAX_NONTERMINAL_NO_EFFECT_REPLANS = 1;
+const ACTUATOR_MODES = new Set(["compatibility", "shadow", "enforced"]);
+const ACTUATOR_RUNTIME_BY_PLAN = new WeakMap();
+const SHADOW_ACTUATOR_CIRCUIT_BY_PAGE = new WeakMap();
 
 export function policySensitivityDecision(field, fact = null) {
   const corpus = [
@@ -160,6 +165,60 @@ export function policySensitiveField(field, fact = null) {
   return policySensitivityDecision(field, fact).sensitive;
 }
 
+export function descriptiveSensitivityDecision(field, fact = null) {
+  const canonicalKey = reconcileCanonicalProfileKey({
+    ...field,
+    name: field?.rawIdentity?.name || fact?.name || field?.name,
+    id: field?.rawIdentity?.id || fact?.id || field?.id,
+  });
+  const corpus = [
+    field?.key,
+    field?.rawLabel,
+    field?.label,
+    fact?.name,
+    fact?.id,
+    fact?.rawLabel,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const canonicalDecision = canonicalDescriptiveSensitivity(canonicalKey);
+  if (
+    canonicalKey === "disability_status" &&
+    ["number", "radio", "select"].includes(field?.controlType) &&
+    /\b(?:rating|status|percent|percentage)\b/.test(corpus)
+  ) {
+    return {
+      sensitive: false,
+      code: "descriptive_disability_classification",
+      source: "shared_reporting_policy",
+      taxonomyVersion: REPORTING_TAXONOMY_VERSION,
+      rationale:
+        "A structured disability status or rating remains runtime-protected but is reported as a classification rather than free-form medical content.",
+    };
+  }
+  if (canonicalDecision) {
+    return {
+      sensitive: canonicalDecision.sensitive,
+      code: canonicalDecision.sensitive
+        ? `descriptive_sensitive_${canonicalKey}`
+        : `descriptive_non_sensitive_${canonicalKey}`,
+      source: "shared_reporting_policy",
+      taxonomyVersion: canonicalDecision.taxonomyVersion,
+      rationale:
+        "The canonical field identity has a stable descriptive sensitivity classification.",
+    };
+  }
+  return {
+    sensitive: field?.semanticSensitive ?? field?.sensitive ?? false,
+    code: "descriptive_semantic_classification",
+    source: "semantic_contract",
+    taxonomyVersion: REPORTING_TAXONOMY_VERSION,
+    rationale:
+      "The descriptive classification follows the semantic contract when no narrower shared reporting rule applies.",
+  };
+}
+
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -181,6 +240,15 @@ function observedControlIdentity(fact) {
     return `name:${fact.name}|type:${fact.rawType || fact.tag || ""}|value:${optionValue}`;
   }
   return `selector:${fact?.selectorCandidates?.[0] || fact?.factId || ""}`;
+}
+
+export function shouldRecordPassiveReadback(assessment, stateDelta) {
+  return Boolean(
+    assessment?.outcome === "independent" &&
+      stateDelta?.hasRenderedReflection === true &&
+      Array.isArray(stateDelta.reflections) &&
+      stateDelta.reflections.length > 0,
+  );
 }
 
 function newlyVisibleControls(beforeObservation, afterObservation) {
@@ -233,9 +301,14 @@ function scalarKey(value) {
   return `${typeof value}:${String(value)}`;
 }
 
+function isQuarantinedPlanTarget(plan, targetKey) {
+  return new Set(plan?.actuator?.quarantinedTargetKeys || []).has(targetKey);
+}
+
 export function choiceProbeCoverageIssues(plan) {
   const issues = [];
   for (const field of plan.fields || []) {
+    if (isQuarantinedPlanTarget(plan, field.key)) continue;
     const expected = expectedDependencyProbeValues(field);
     if (expected.length === 0) continue;
     const expectedKeys = new Set(expected.map(scalarKey));
@@ -319,6 +392,9 @@ export function proposalFactBindingIssues(
         (selector) => !selectedSelectors.has(selector),
       )
     ) {
+      const selectedScrollRegion = (observation?.scrollRegions || []).find(
+        (region) => region.factId === selectedFactId,
+      );
       issues.push({
         type: "progression_fact_binding",
         targetKey: proposal?.state?.progression?.key || "progression",
@@ -331,8 +407,9 @@ export function proposalFactBindingIssues(
             rawText: action.rawText,
             selectors: action.selectorCandidates || [],
           })),
-        instruction:
-          "Choose one intended visible action fact, copy its factId into mechanics.progressionTarget.sourceFactId, and keep selectors from that same fact. Deterministic compilation will select the unique structural locator for the chosen fact.",
+        instruction: selectedScrollRegion
+          ? "A scroll region is a field prerequisite, never a form progression. Remove it from state.progression, proposed progression actions, and mechanics.progressionTarget. Model the disabled dependent field in this state so its generated actuator can scroll the observed region before field actuation, then choose an actual visible action fact for progression (or the observed final submit as terminal_submit)."
+          : "Choose one intended visible action fact, copy its factId into mechanics.progressionTarget.sourceFactId, and keep selectors from that same fact. Deterministic compilation will select the unique structural locator for the chosen fact.",
       });
     }
   }
@@ -493,6 +570,51 @@ export function pendingDisclosureIssues(proposal, observation) {
         "Replace the current progression with one LLM-authored advance targeting a pending collapsed disclosure's unique structural selector. Every visible collapsed disclosure must be opened once even when no applicant control is known to be inside it, because it may reveal guidance or submission criteria. The next state will be re-sensed before any other progression or terminal decision.",
     },
   ];
+}
+
+export function disclosureBlockedFieldIssues(proposal, observation) {
+  if (!proposal?.state?.progression) return [];
+  const selectedFactId = proposal?.mechanics?.progressionTarget?.sourceFactId || "";
+  const selected = (observation?.actions || []).find(
+    (action) =>
+      action.factId === selectedFactId &&
+      action.disclosureControl === true &&
+      action.disclosureExpanded !== true,
+  );
+  const pending = selected
+    ? [selected]
+    : (observation?.actions || []).filter(
+        (action) =>
+          action.visible &&
+          action.disclosureControl === true &&
+          action.disclosureExpanded !== true,
+      );
+  const blockedByFact = new Map();
+  for (const disclosure of pending) {
+    for (const factId of disclosure.blockedControlFactIds || []) {
+      blockedByFact.set(factId, disclosure.factId);
+    }
+  }
+  const blocked = new Set(blockedByFact.keys());
+  if (blocked.size === 0) return [];
+  return (proposal.fields || [])
+    .filter((field) =>
+      (field.sourceFactIds || []).some((factId) => blocked.has(factId)),
+    )
+    .map((field) => ({
+      type: "field_blocked_by_pending_disclosure",
+      targetKey: field.key,
+      problem:
+        "The current state declares a field that is still hidden behind its selected collapsed disclosure.",
+      blockedControlFactIds: (field.sourceFactIds || []).filter((factId) =>
+        blocked.has(factId),
+      ),
+      disclosureFactId: blockedByFact.get(
+        (field.sourceFactIds || []).find((factId) => blocked.has(factId)),
+      ),
+      instruction:
+        "Remove this field from the current proposal fields, state.visibleControlKeys, mechanics.fieldTargets, proposed field_actuation actions, and section question membership. Do not actuate it in the disclosure-opening state. It will be observed and generated after the disclosure advance is verified and the page is re-sensed.",
+    }));
 }
 
 export function exhaustedDisclosureProgressionIssues(proposal, observation) {
@@ -833,11 +955,142 @@ function fieldActionMap(proposal, safety) {
   );
 }
 
+function systemInventoryFields(observation, claimedFactIds, stateOrdinal) {
+  return (observation.controls || [])
+    .filter(
+      (fact) =>
+        String(fact.rawType || "").toLowerCase() === "hidden" &&
+        !claimedFactIds.has(fact.factId),
+    )
+    .map((fact, index) => ({
+      key: `system_${safeSegment(fact.name || fact.id || "control")}_${safeSegment(fact.factId || index)}`,
+      label: fact.rawLabel || "",
+      controlType: "hidden",
+      options: [],
+      observedOptions: [],
+      validation: {},
+      browserConstraints: {
+        rawType: "hidden",
+        placeholder: "",
+        autocomplete: fact.autocomplete || "",
+        inputMode: "",
+        multiple: false,
+        disabled: fact.disabled === true,
+        readOnly: fact.readOnly === true,
+      },
+      upload: {},
+      required: false,
+      semanticSensitive: false,
+      sensitive: false,
+      sensitivityDecision: {
+        sensitive: false,
+        source: "administrative_hidden_control",
+        reasons: [],
+      },
+      administrative: true,
+      sectionKey: null,
+      guidanceRefs: [],
+      testValue: null,
+      probeValues: [],
+      probeRationales: [],
+      actuate: false,
+      skipReason: "system_control",
+      selectors: fact.selectorCandidates || [],
+      sourceFactIds: [fact.factId],
+      stateOrdinal,
+      documentOrdinal: Number.isFinite(fact.documentOrdinal)
+        ? fact.documentOrdinal
+        : Number.MAX_SAFE_INTEGER - 1000 + index,
+      rawIdentity: {
+        id: fact.id || "",
+        name: fact.name || "",
+      },
+      legalAcceptanceType: "",
+      safetyAuthority: "protected_not_actuated",
+      rationale:
+        "Administrative hidden control retained in structural inventory without applicant actuation or value capture.",
+    }));
+}
+
+export function virtualInventoryFields(
+  observation,
+  claimedFactIds,
+  stateOrdinal,
+) {
+  return (observation.controls || [])
+    .filter(
+      (fact) =>
+        fact.virtual === true &&
+        fact.actuationEligible === false &&
+        !claimedFactIds.has(fact.factId),
+    )
+    .map((fact, index) => ({
+      key: `virtual_${safeSegment(fact.name || fact.id || "control")}_${safeSegment(fact.factId || index)}`,
+      label: fact.rawLabel || fact.name || fact.id || "Custom control",
+      controlType: "custom",
+      options: fact.options || [],
+      observedOptions: fact.options || [],
+      validation: {},
+      browserConstraints: {
+        rawType: fact.rawType || "custom",
+        placeholder: "",
+        autocomplete: "",
+        inputMode: "",
+        multiple: false,
+        disabled: fact.disabled === true,
+        readOnly: fact.readOnly === true,
+      },
+      upload: {},
+      required: fact.required === true,
+      semanticSensitive: false,
+      descriptiveSensitivityDecision: {
+        sensitive: false,
+        code: "descriptive_virtual_control",
+        source: "structural_inventory",
+        rationale:
+          "The virtual control is retained as semantic structure without inferring protected content.",
+      },
+      sensitive: false,
+      sensitivityDecision: policySensitivityDecision(
+        {
+          key: fact.name || fact.id || fact.factId,
+          rawLabel: fact.rawLabel || "",
+          controlType: "custom",
+          sensitive: false,
+        },
+        fact,
+      ),
+      administrative: false,
+      sectionKey: null,
+      guidanceRefs: [],
+      testValue: null,
+      probeValues: [],
+      probeRationales: [],
+      actuate: false,
+      skipReason: "virtual_control_unavailable",
+      selectors: fact.selectorCandidates || [],
+      sourceFactIds: [fact.factId],
+      stateOrdinal,
+      documentOrdinal: Number.isFinite(fact.documentOrdinal)
+        ? fact.documentOrdinal
+        : Number.MAX_SAFE_INTEGER - 500 + index,
+      rawIdentity: {
+        id: fact.id || "",
+        name: fact.name || "",
+      },
+      legalAcceptanceType: "",
+      safetyAuthority: "structural_inventory_only",
+      rationale:
+        "Input-less semantic control retained in the contract without inventing an actuator.",
+    }));
+}
+
 function generatedStatePlan({
   proposal,
   observation,
   safety,
   provenance,
+  stateOrdinal = 0,
 }) {
   const actions = fieldActionMap(proposal, safety);
   const targets = new Map(
@@ -848,6 +1101,12 @@ function generatedStatePlan({
   );
   const facts = new Map(
     observation.controls.map((fact) => [fact.factId, fact]),
+  );
+  const factOrdinals = new Map(
+    observation.controls.map((fact, index) => [
+      fact.factId,
+      Number.isFinite(fact.documentOrdinal) ? fact.documentOrdinal : index,
+    ]),
   );
   const proposedByTarget = new Map(
     proposal.proposedActions
@@ -865,6 +1124,16 @@ function generatedStatePlan({
           )
         : null;
       const proposed = proposedByTarget.get(field.key);
+      const rejectedDisposition = proposed
+        ? safety.rejections.find(
+            (item) => item.proposalId === proposed.proposalId,
+          )
+        : null;
+      const unavailableDisposition = proposed
+        ? (safety.unavailableActions || []).find(
+            (item) => item.proposalId === proposed.proposalId,
+          )
+        : null;
       const sourceFacts = field.sourceFactIds
         .map((id) => facts.get(id))
         .filter(Boolean);
@@ -893,6 +1162,17 @@ function generatedStatePlan({
             acceptedDisposition?.crawlModelingAuthority ||
             "";
       const sensitivityDecision = policySensitivityDecision(field, rawFact);
+      const descriptiveDecision = descriptiveSensitivityDecision(
+        {
+          ...field,
+          semanticSensitive: field.sensitive,
+          rawIdentity: {
+            id: rawFact?.id || "",
+            name: rawFact?.name || "",
+          },
+        },
+        rawFact,
+      );
       const actuate = Boolean(action) && !optionValuesUnavailable;
       const planFieldIdentity = {
         ...field,
@@ -944,10 +1224,16 @@ function generatedStatePlan({
               }
             : {},
         required: field.required,
+        semanticSensitive: field.sensitive,
+        descriptiveSensitivityDecision: descriptiveDecision,
         sensitive: sensitivityDecision.sensitive,
         sensitivityDecision,
         administrative: field.administrative,
         sectionKey: field.sectionKey,
+        structuralSectionText: rawFact.sectionText || "",
+        repeatableSection: rawFact.repeatableKey || "",
+        repeatableLabel: rawFact.repeatableLabel || "",
+        addRowControl: rawFact.addRowControl || "",
         guidanceRefs: field.guidanceRefs,
         testValue:
           field.controlType === "file" && action
@@ -965,9 +1251,18 @@ function generatedStatePlan({
           ? "option_values_unavailable"
           : action
             ? null
-            : proposed?.kind || "model_action_missing",
+            : unavailableDisposition?.code ||
+              rejectedDisposition?.code ||
+              proposed?.kind ||
+              "model_action_missing",
         selectors: targets.get(field.key)?.selectors || [],
         sourceFactIds: field.sourceFactIds,
+        stateOrdinal,
+        documentOrdinal: Math.min(
+          ...field.sourceFactIds.map(
+            (factId) => factOrdinals.get(factId) ?? Number.MAX_SAFE_INTEGER,
+          ),
+        ),
         rawIdentity: {
           id: rawFact?.id || "",
           name: rawFact?.name || "",
@@ -981,6 +1276,13 @@ function generatedStatePlan({
         rationale: action?.rationale || proposed?.rationale || "Captured only.",
       };
     }).filter(Boolean);
+  const claimedFactIds = new Set(
+    proposal.fields.flatMap((field) => field.sourceFactIds || []),
+  );
+  fields.push(
+    ...systemInventoryFields(observation, claimedFactIds, stateOrdinal),
+    ...virtualInventoryFields(observation, claimedFactIds, stateOrdinal),
+  );
   const progressionAction = proposal.proposedActions.find(
     (action) =>
       action.targetKey === proposal.state.progression.key &&
@@ -1103,8 +1405,11 @@ async function planResolutionIssues(
         "legal_acceptance_interaction",
         "login_interaction",
         "option_values_unavailable",
+        "outside_contract",
         "payment_interaction",
+        "system_control",
         "upload_interaction",
+        "virtual_control_unavailable",
       ].includes(field.skipReason)
     ) {
       issues.push({
@@ -1176,6 +1481,250 @@ async function permitBrowserSubmit(page, durationMs = 10_000) {
     .catch(() => {});
 }
 
+function normalizedActuatorMode(value) {
+  const mode = String(value || "compatibility").trim().toLowerCase();
+  if (!ACTUATOR_MODES.has(mode)) {
+    throw new TypeError(
+      `Unknown actuator mode "${mode}"; expected compatibility, shadow, or enforced.`,
+    );
+  }
+  return mode;
+}
+
+function shadowActuatorCircuitFor(page) {
+  let circuit = SHADOW_ACTUATOR_CIRCUIT_BY_PAGE.get(page);
+  if (!circuit) {
+    circuit = { open: false, openedAt: null, reason: "", issues: [], warnings: [] };
+    SHADOW_ACTUATOR_CIRCUIT_BY_PAGE.set(page, circuit);
+  }
+  return circuit;
+}
+
+function recordShadowActuatorWarning(page, { stateKey, stage, issues = [], detail = "" }) {
+  const circuit = shadowActuatorCircuitFor(page);
+  const rows = issues.length
+    ? issues
+    : [{ code: stage, targetKey: stateKey, detail }];
+  for (const issue of rows) {
+    const warning = {
+      code: String(issue.code || stage || "actuator_shadow_failed"),
+      targetKey: String(issue.targetKey || stateKey || "state"),
+      detail: String(issue.detail || detail || "Shadow actuator validation failed."),
+      stage: String(stage || "actuator_shadow_failed"),
+    };
+    const key = `${warning.stage}:${warning.code}:${warning.targetKey}:${warning.detail}`;
+    if (!circuit.warnings.some((item) => item.key === key)) {
+      circuit.warnings.push({ key, ...warning });
+    }
+  }
+}
+
+function shadowActuatorWarnings(page) {
+  return shadowActuatorCircuitFor(page).warnings.map(({ key: _key, ...warning }) => warning);
+}
+
+function actuatorFailureStage(error) {
+  const supplied = String(error?.failureStage || "");
+  if (
+    [
+      "semantic_generation_failed",
+      "semantic_validation_blocked",
+      "actuator_generation_failed",
+      "actuator_shadow_circuit_open",
+      "actuator_validation_blocked",
+      "actuator_preflight_failed",
+      "runtime_actuation_failed",
+      "environment_failed",
+      "drift_suspected",
+    ].includes(supplied)
+  ) {
+    return supplied;
+  }
+  const code = String(error?.code || "");
+  if (/^ACTUATOR_(?:SOURCE|SYNTAX|IMPORT|EXPORT|TOP_LEVEL|COMPLEXITY|CAPABILITY|COVERAGE|HANDLER)/.test(code)) {
+    return "actuator_validation_blocked";
+  }
+  return "actuator_generation_failed";
+}
+
+function fileBuffer(value) {
+  if (Buffer.isBuffer(value)) return value;
+  if (value?.type === "Buffer" && Array.isArray(value.data)) {
+    return Buffer.from(value.data);
+  }
+  return null;
+}
+
+async function authorizedFilePayload(plan, fileToken) {
+  const field = (plan.fields || []).find(
+    (candidate) => candidate.key === String(fileToken || ""),
+  );
+  if (!field || field.controlType !== "file" || !field.actuate) {
+    throw new Error("The file token is not authorized by this semantic plan.");
+  }
+  if (field.providedFile) {
+    const buffer = fileBuffer(field.providedFile.buffer);
+    if (!buffer) throw new Error("The approved file payload is unavailable.");
+    return {
+      name: field.providedFile.name,
+      mimeType: field.providedFile.mimeType,
+      buffer,
+    };
+  }
+  const generated = generatedUploadPayload(field.upload || {});
+  if (!generated.ok) throw new Error(generated.detail);
+  return {
+    name: generated.name,
+    mimeType: generated.mimeType,
+    buffer: generated.buffer,
+  };
+}
+
+function actuatorCommand(plan, {
+  targetKind,
+  targetKey,
+  operation,
+  value,
+  mode = "validation_replay",
+  progressionPermission = "forbidden",
+}) {
+  return {
+    protocolVersion: 1,
+    invocationId: `runtime_${randomUUID().replaceAll("-", "")}`,
+    releaseId: plan.actuator.releaseId,
+    semanticVersion: plan.actuator.semanticVersion,
+    actuatorVersion: plan.actuator.bundle.bundleVersion,
+    stateKey: plan.state.key,
+    targetKind,
+    targetKey,
+    operation,
+    value,
+    mode,
+    directive: { progressionPermission },
+  };
+}
+
+async function actuatorRuntimeForPlan(
+  page,
+  plan,
+  { terminalSubmissionAuthorized = false } = {},
+) {
+  if (plan.actuator?.executionMode !== "enforced") return null;
+  if (!plan.actuator.bundle || !plan.actuator.semanticProposal) {
+    throw new Error(
+      `Enforced state ${plan.state?.key || "unknown"} has no validated actuator bundle.`,
+    );
+  }
+  if (
+    ![
+      "preflight_validated",
+      "preflight_validated_with_quarantine",
+    ].includes(plan.actuator.certificationStatus)
+  ) {
+    throw new Error(
+      `Enforced state ${plan.state?.key || "unknown"} has not passed browser preflight.`,
+    );
+  }
+  const cacheKey = terminalSubmissionAuthorized ? "terminal" : "standard";
+  const cache = ACTUATOR_RUNTIME_BY_PLAN.get(plan) || {};
+  let pending = cache[cacheKey];
+  if (pending) return pending;
+  pending = (async () => {
+    const loaded = await loadActuatorBundleInMemory({
+      bundle: plan.actuator.bundle,
+      semanticProposal: plan.actuator.semanticProposal,
+    });
+    const runtime = createActuatorRuntime({
+      page,
+      semanticProposal: plan.actuator.semanticProposal,
+      bundle: loaded.bundle,
+      handlers: loaded.handlers,
+      releaseId: plan.actuator.releaseId,
+      semanticVersion: plan.actuator.semanticVersion,
+      protectedTargetKeys: (plan.fields || [])
+        .filter((field) => !field.actuate)
+        .map((field) => field.key),
+      fileProvider: (token) => authorizedFilePayload(plan, token),
+      terminalSubmissionAuthorized,
+    });
+    await runtime.prepare();
+    const prepareHandler = loaded.bundle.handlers.find(
+      (handler) =>
+        handler.targetKind === "state" &&
+        handler.targetKey === plan.state.key &&
+        handler.operations.includes("prepare_state"),
+    );
+    if (prepareHandler) {
+      const prepared = await runtime.invoke(
+        actuatorCommand(plan, {
+          targetKind: "state",
+          targetKey: plan.state.key,
+          operation: "prepare_state",
+          value: null,
+        }),
+      );
+      if (!prepared.verified) {
+        throw new Error(
+          prepared.detail || `State preparation failed for ${plan.state.key}.`,
+        );
+      }
+    }
+    return runtime;
+  })();
+  cache[cacheKey] = pending;
+  ACTUATOR_RUNTIME_BY_PLAN.set(plan, cache);
+  try {
+    return await pending;
+  } catch (error) {
+    delete cache[cacheKey];
+    if (Object.keys(cache).length === 0) ACTUATOR_RUNTIME_BY_PLAN.delete(plan);
+    throw error;
+  }
+}
+
+async function actuatePlanField({ page, toolbox, plan, field, value, mode }) {
+  const runtime = await actuatorRuntimeForPlan(page, plan);
+  if (!runtime) {
+    return field.controlType === "file"
+      ? field.providedFile
+        ? toolbox.uploadProvidedFile(
+            { selectors: field.selectors },
+            field.providedFile,
+          )
+        : toolbox.uploadGeneratedFile(
+            { selectors: field.selectors },
+            field.upload,
+          )
+      : toolbox.writeControl(
+          { selectors: field.selectors },
+          field.controlType,
+          field.options.map((option) => option.value),
+          value,
+        );
+  }
+  const result = await runtime.invoke(
+    actuatorCommand(plan, {
+      targetKind: "field",
+      targetKey: field.key,
+      operation: "set_field",
+      value:
+        field.controlType === "file"
+          ? { fileToken: field.key }
+          : value,
+      mode,
+    }),
+  );
+  return {
+    attempted: result.attempted,
+    verified: result.verified,
+    skipped: !result.attempted,
+    failureCode: result.failureCode,
+    detail: result.detail || "",
+    readback: result.normalizedReadback,
+    actuatorResult: result,
+  };
+}
+
 async function enterPlanFields({
   page,
   toolbox,
@@ -1186,7 +1735,46 @@ async function enterPlanFields({
   valueMode = "synthetic",
 }) {
   const results = [];
+  const quarantinedTargetKeys = new Set(
+    plan.actuator?.quarantinedTargetKeys || [],
+  );
   for (const field of plan.fields) {
+    if (quarantinedTargetKeys.has(field.key)) {
+      if (field.required) {
+        throw new Error(
+          `Required field ${field.key} cannot be quarantined from execution.`,
+        );
+      }
+      const result = {
+        field,
+        outcome: {
+          verified: false,
+          skipped: true,
+          failureCode: "optional_target_quarantined",
+          detail:
+            "The optional target exhausted one isolated preflight repair; certified sibling fields remain executable.",
+        },
+      };
+      results.push(result);
+      await onEvent?.(
+        "field_entry_skipped",
+        `Skipped quarantined optional field ${field.label} while preserving certified sibling execution.`,
+        {
+          fieldKey: field.key,
+          label: field.label,
+          control: field.controlType,
+          source,
+          required: false,
+          sensitive: field.sensitive,
+          sensitivityDecision: field.sensitivityDecision || null,
+          adminAssisted: field.administrative,
+          classification: "llm_generated",
+          rationale: field.rationale,
+          failureCode: "optional_target_quarantined",
+        },
+      );
+      continue;
+    }
     if (!field.actuate) {
       const result = {
         field,
@@ -1260,22 +1848,14 @@ async function enterPlanFields({
       "same-origin",
       `generated field action ${field.key}`,
       () =>
-        field.controlType === "file"
-          ? field.providedFile
-            ? toolbox.uploadProvidedFile(
-                { selectors: field.selectors },
-                field.providedFile,
-              )
-            : toolbox.uploadGeneratedFile(
-                { selectors: field.selectors },
-                field.upload,
-              )
-          : toolbox.writeControl(
-              { selectors: field.selectors },
-              field.controlType,
-              field.options.map((option) => option.value),
-              field.testValue,
-            ),
+        actuatePlanField({
+          page,
+          toolbox,
+          plan,
+          field,
+          value: field.testValue,
+          mode: valueMode === "approved_live" ? "real_data" : "validation_replay",
+        }),
     );
     const result = { field, outcome };
     results.push(result);
@@ -1301,7 +1881,9 @@ async function enterPlanFields({
               ? "[REDACTED]"
               : "[PROVIDED]"
             : field.testValue,
-        ...(outcome.readback ? { readback: outcome.readback } : {}),
+        ...(outcome.readback && valueMode !== "approved_live"
+          ? { readback: outcome.readback }
+          : {}),
         ...(outcome.detail ? { error: outcome.detail } : {}),
       },
     );
@@ -1329,10 +1911,31 @@ async function advanceWithPlan({
     authorizeWrites,
     "same-origin",
     `LLM-authored advance ${plan.progression.key}`,
-    () =>
-      toolbox.clickAction({
-        selectors: plan.progression.selectors,
-      }),
+    async () => {
+      const runtime = await actuatorRuntimeForPlan(page, plan);
+      if (!runtime) {
+        return toolbox.clickAction({
+          selectors: plan.progression.selectors,
+        });
+      }
+      const outcome = await runtime.invoke(
+        actuatorCommand(plan, {
+          targetKind: "action",
+          targetKey: plan.progression.key,
+          operation: "execute_action",
+          value: null,
+          mode: "validation_replay",
+          progressionPermission: "allowed",
+        }),
+      );
+      return {
+        clicked: outcome.verified && outcome.stateChanged,
+        verified: outcome.verified,
+        failureCode: outcome.failureCode,
+        detail: outcome.detail || "",
+        actuatorResult: outcome,
+      };
+    },
   );
   await toolbox.settle();
   await onEvent?.(
@@ -1352,14 +1955,27 @@ async function advanceWithPlan({
   return result;
 }
 
+function verifiedFieldTestValue(field, outcome) {
+  if (field?.controlType !== "file" || outcome?.verified !== true) {
+    return field?.testValue;
+  }
+  return (
+    outcome?.readback?.name ||
+    outcome?.readback?.filename ||
+    (typeof outcome?.readback === "string" ? outcome.readback : null) ||
+    field?.testValue
+  );
+}
+
 function evidenceValue(result, source) {
   const { field, outcome } = result;
+  const retainedValue = verifiedFieldTestValue(field, outcome);
   return {
     fieldKey: field.key,
     label: field.label,
     control: field.controlType,
-    value: String(field.testValue ?? ""),
-    testValue: field.testValue,
+    value: String(retainedValue ?? ""),
+    testValue: retainedValue,
     source,
     required: field.required,
     sensitive: field.sensitive,
@@ -1378,6 +1994,99 @@ function evidenceValue(result, source) {
   };
 }
 
+function sensitiveMaskCandidates(fieldResults, additional = []) {
+  const values = [
+    ...fieldResults
+      .filter(
+        (result) =>
+          result?.outcome?.verified === true &&
+          policySensitiveField(result.field),
+      )
+      .map((result) => ({
+        fieldKey: result.field.key,
+        label: result.field.label,
+        value: verifiedFieldTestValue(result.field, result.outcome),
+      })),
+    ...additional,
+  ];
+  return [
+    ...new Map(
+      values
+        .filter((item) => String(item?.value ?? "").trim().length >= 2)
+        .map((item) => [`${item.fieldKey}:${String(item.value)}`, item]),
+    ).values(),
+  ];
+}
+
+async function markSensitiveEvidence(page, candidates) {
+  if (candidates.length === 0) return [];
+  return page.evaluate((entries) => {
+    const attribute = "data-formweave-sensitive-mask";
+    const compact = (value) =>
+      String(value || "")
+        .normalize("NFKC")
+        .toLocaleLowerCase("en-US")
+        .replace(/[^a-z0-9]/g, "");
+    const visible = (element) => {
+      const style = getComputedStyle(element);
+      return (
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        element.getClientRects().length > 0
+      );
+    };
+    const records = [];
+    for (const entry of entries) {
+      const needle = compact(entry.value);
+      if (needle.length < 4) continue;
+      const controls = Array.from(
+        document.querySelectorAll("input, textarea, select"),
+      ).filter(
+        (element) =>
+          visible(element) && compact(element.value).includes(needle),
+      );
+      const textElements = Array.from(document.body?.querySelectorAll("*") || [])
+        .filter(
+          (element) =>
+            !["SCRIPT", "STYLE", "NOSCRIPT"].includes(element.tagName) &&
+            visible(element) &&
+            compact(element.innerText).includes(needle),
+        )
+        .filter(
+          (element) =>
+            !Array.from(element.children).some(
+              (child) => visible(child) && compact(child.innerText).includes(needle),
+            ),
+        );
+      const matches = [...new Set([...controls, ...textElements])];
+      for (const element of matches) {
+        element.setAttribute(attribute, entry.fieldKey || "sensitive");
+      }
+      if (matches.length > 0) {
+        records.push({
+          fieldKey: entry.fieldKey || "sensitive",
+          label: entry.label || entry.fieldKey || "Sensitive value",
+          surface: controls.length > 0 ? "control_or_text" : "visible_text",
+          color: "#000000",
+          matches: matches.length,
+        });
+      }
+    }
+    return records;
+  }, candidates);
+}
+
+async function clearSensitiveEvidenceMarks(page) {
+  await page
+    .locator("[data-formweave-sensitive-mask]")
+    .evaluateAll((elements) => {
+      for (const element of elements) {
+        element.removeAttribute("data-formweave-sensitive-mask");
+      }
+    })
+    .catch(() => {});
+}
+
 async function captureEvidence({
   page,
   plan,
@@ -1386,11 +2095,31 @@ async function captureEvidence({
   kind,
   label,
   onEvent,
+  sensitiveMaskValues = [],
 }) {
   const retainableScreenshot = shouldCaptureStateScreenshot(kind, fieldResults);
-  const screenshot = retainableScreenshot
-    ? await page.screenshot({ fullPage: true, type: "png" })
-    : null;
+  const maskCandidates = sensitiveMaskCandidates(
+    fieldResults,
+    sensitiveMaskValues,
+  );
+  const sensitiveMasks = retainableScreenshot
+    ? await markSensitiveEvidence(page, maskCandidates)
+    : [];
+  let screenshot = null;
+  try {
+    screenshot = retainableScreenshot
+      ? await page.screenshot({
+          fullPage: true,
+          type: "png",
+          mask: sensitiveMasks.length
+            ? [page.locator("[data-formweave-sensitive-mask]")]
+            : [],
+          maskColor: "#000000",
+        })
+      : null;
+  } finally {
+    await clearSensitiveEvidenceMarks(page);
+  }
   const values = fieldResults
     .filter((result) => result.outcome.verified)
     .map((result) =>
@@ -1407,6 +2136,11 @@ async function captureEvidence({
       progression: plan.progression.key,
     }),
   ).slice(0, 16);
+  const nativeFormCount = await page.locator("form").count().catch(() => 0);
+  const semanticFormCount =
+    nativeFormCount || (plan.fields || []).some((field) => !field.administrative)
+      ? Math.max(nativeFormCount, 1)
+      : 0;
   const state = {
     id: `generated_${String(sequence).padStart(2, "0")}_${safeSegment(kind)}`,
     sequence,
@@ -1421,7 +2155,9 @@ async function captureEvidence({
       )
       .count()
       .catch(() => 0),
+    forms: semanticFormCount,
     values,
+    sensitiveMasks,
     ...(screenshot
       ? {
           screenshot,
@@ -1442,6 +2178,7 @@ async function captureEvidence({
       fingerprint: identity,
       fieldsVisible: state.fieldsVisible,
       values,
+      sensitiveMasks: sensitiveMasks.length,
       screenshotCaptured: Boolean(screenshot),
     },
   );
@@ -1478,42 +2215,6 @@ function compactDynamicsObservation(observation) {
   };
 }
 
-function normalizedDynamicsText(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-function afterStateContainsExactEnteredEcho(dynamicsInput) {
-  const afterText = normalizedDynamicsText([
-    dynamicsInput.after?.accessibilitySnapshot,
-    ...(dynamicsInput.after?.guidance || []).map((item) => item.rawText),
-    ...(dynamicsInput.after?.sections || []).map((item) => item.rawText),
-  ].filter(Boolean).join(" "));
-  return (dynamicsInput.enteredValues || []).some((entry) => {
-    const label = normalizedDynamicsText(entry.label || entry.fieldKey);
-    const value = normalizedDynamicsText(entry.value);
-    if (!label || !value || ["true", "false"].includes(value)) return false;
-    let offset = afterText.indexOf(label);
-    while (offset >= 0) {
-      const nearby = afterText.slice(
-        offset + label.length,
-        offset + label.length + 120,
-      );
-      if (
-        new RegExp(
-          `(?:^|\\s)${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|$)`,
-        ).test(nearby)
-      ) {
-        return true;
-      }
-      offset = afterText.indexOf(label, offset + label.length);
-    }
-    return false;
-  });
-}
-
 async function assessDynamics({
   transitionKind,
   beforeCapture,
@@ -1547,6 +2248,12 @@ async function assessDynamics({
     rawType: control.rawType,
     required: control.required,
   }));
+  const stateDelta = buildTransitionStateDelta({
+    transitionKind,
+    before: beforeCapture.observation,
+    after: afterCapture.observation,
+    enteredValues,
+  });
   let dynamicsInput = {
     schemaVersion: 1,
     transitionKind,
@@ -1557,6 +2264,7 @@ async function assessDynamics({
     after: compactDynamicsObservation(afterCapture.observation),
     newlyVisibleControls: newlyVisible,
     changedVisibleControls: changedVisible,
+    stateDelta,
   };
   let generated;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -1603,13 +2311,11 @@ async function assessDynamics({
       continue;
     }
     let contextualIssue = "";
+    let contextualFallbackOutcome = "uncertain";
     const assessmentText = [
       generated.assessment.rationale,
       ...(generated.assessment.evidence || []),
     ].join(" ");
-    const assessmentEvidenceText = (
-      generated.assessment.evidence || []
-    ).join(" ");
     if (
       transitionKind === "same_page_visibility_change" &&
       trigger?.fieldKey &&
@@ -1617,6 +2323,7 @@ async function assessDynamics({
     ) {
       contextualIssue =
         "A choice_probe changed an applicant answer, so the resulting reveal cannot be classified as an unconditional disclosure. Reclassify it as same_page_branch, same_page_companion, validation_only, cosmetic, or uncertain from the rendered evidence.";
+      contextualFallbackOutcome = "uncertain";
     } else if (
       transitionKind === "page_advance" &&
       enteredValues.length === 0 &&
@@ -1624,34 +2331,17 @@ async function assessDynamics({
     ) {
       contextualIssue =
         "No applicant value preceded this page advance, so the observed transition cannot be an answer-conditioned cross-page dependency. Reclassify it as independent or uncertain from the rendered evidence.";
+      contextualFallbackOutcome = "independent";
     } else if (
       transitionKind === "page_advance" &&
       generated.assessment.outcome === "cross_page_dependency" &&
-      /\b(?:different|differs?) from (?:the )?entered\b|\bdoes not match (?:the )?entered\b|\bmismatch(?:es|ed)?\b.{0,50}\bentered\b/i.test(
+      /\b(?:different|differs?) from (?:the )?entered\b|\bdoes not match (?:the )?entered\b|\bmismatch(?:es|ed)?\b.{0,50}\bentered\b|\bconflicts? with (?:the )?entered\b|\bcontradicts? (?:the )?entered\b|\b(?:hard[- ]coded|fixed) value\b.{0,80}\b(?:entered|actual)\b/i.test(
         assessmentText,
       )
     ) {
       contextualIssue =
         "The assessment explicitly says the rendered value differs from the entered value. That contradicts an answer echo and cannot support cross-page dependency. Reclassify the ordinary next page as independent unless separate raw evidence shows changed questions, requiredness, or routing.";
-    } else if (
-      transitionKind === "page_advance" &&
-      generated.assessment.outcome === "cross_page_dependency" &&
-      (/\b(?:echo|echoed|readback|read back|told us|earlier answer|references? (?:the )?(?:prior|earlier)|prior (?:answer|value))\b/i.test(
-        assessmentText,
-      ) ||
-        /\b(?:different from|does not match|mismatch(?:es|ed)?)\b.{0,50}\bentered\b/i.test(
-          assessmentText,
-        )) &&
-      !/\b(?:changed requiredness|conditional control|skipped page|added page|changed (?:the )?(?:question|meaning)|which questions|follow-up (?:field|question)|question (?:appears|is required)|only (?:appears|required) (?:if|when))\b/i.test(
-        assessmentEvidenceText,
-      ) &&
-      (!afterStateContainsExactEnteredEcho(dynamicsInput) ||
-        /\b(?:echo|echoed|readback|read back|told us|references? (?:the )?(?:prior|earlier))\b/i.test(
-          assessmentEvidenceText,
-        ))
-    ) {
-      contextualIssue =
-        "The assessment cited only a prior-answer echo/readback, without raw evidence that the earlier answer changed later questions, requiredness, or routing. A readback alone is independent; a different or hard-coded value is not an echo at all. Reclassify the ordinary next page as independent unless separate concrete conditional evidence is visible.";
+      contextualFallbackOutcome = "independent";
     } else if (
       newlyVisible.length === 0 &&
       changedVisible.length === 0 &&
@@ -1663,6 +2353,7 @@ async function assessDynamics({
     ) {
       contextualIssue =
         "No newly visible or materially changed control was observed, so a supported same-page reveal classification is inconsistent with the captured facts.";
+      contextualFallbackOutcome = "cosmetic";
     }
     if (!contextualIssue) break;
     await onEvent?.(
@@ -1676,9 +2367,26 @@ async function assessDynamics({
       },
     );
     if (attempt === 2) {
-      throw new Error(
-        `Dynamics assessment remained inconsistent after repair: ${contextualIssue}`,
+      const priorOutcome = generated.assessment.outcome;
+      generated = {
+        ...generated,
+        assessment: contextualDynamicsFallback(generated.assessment, {
+          transitionKind,
+          outcome: contextualFallbackOutcome,
+          issue: contextualIssue,
+        }),
+      };
+      await onEvent?.(
+        "dynamics_contextual_fallback_applied",
+        "Typed runtime evidence conservatively replaced a repeated contradictory dynamics label while retaining the observed journey artifact.",
+        {
+          transitionKind,
+          priorOutcome,
+          outcome: contextualFallbackOutcome,
+          issue: contextualIssue,
+        },
       );
+      break;
     }
     dynamicsInput = {
       ...dynamicsInput,
@@ -1690,6 +2398,32 @@ async function assessDynamics({
       },
     };
   }
+  const enforced = enforceStateDeltaAssessment(
+    generated.assessment,
+    stateDelta,
+  );
+  if (enforced.overridden) {
+    await onEvent?.(
+      "dynamics_state_delta_override",
+        "Typed post-transition evidence corrected a dynamics classification that was not supported by the observed transition contract.",
+      {
+        transitionKind,
+        assessmentId: generated.assessment.assessmentId,
+        priorOutcome: generated.assessment.outcome,
+        outcome: enforced.assessment.outcome,
+        stateDelta,
+      },
+    );
+  }
+  generated = {
+    ...generated,
+    assessment: enforced.assessment,
+    stateDelta,
+    provenance: {
+      ...generated.provenance,
+      stateDeltaEnforced: enforced.overridden,
+    },
+  };
   await mkdir(dynamicsRoot, { recursive: true });
   await writeFile(
     path.join(dynamicsRoot, `${safeSegment(recordId)}.json`),
@@ -1705,6 +2439,7 @@ async function assessDynamics({
         beforeScreenshotSha256:
           beforeCapture.observation.screenshot.sha256,
         afterScreenshotSha256: afterCapture.observation.screenshot.sha256,
+        stateDelta,
       },
       assessment: generated.assessment,
       provenance: generated.provenance,
@@ -1724,6 +2459,18 @@ function probeFieldResult(field, value, outcome) {
   };
 }
 
+export function scopedControlsInDocumentOrder(controls = [], scopedFactIds = []) {
+  const scopedFacts = new Set(scopedFactIds);
+  return controls
+    .map((control, documentOrdinal) => ({
+      ...control,
+      documentOrdinal: Number.isFinite(control.documentOrdinal)
+        ? control.documentOrdinal
+        : documentOrdinal,
+    }))
+    .filter((control) => scopedFacts.has(control.factId));
+}
+
 async function scopedBranchCapture(
   page,
   capture,
@@ -1736,9 +2483,9 @@ async function scopedBranchCapture(
       [...revealedControls, ...changedControls].map((control) => control.factId),
     ),
   ].sort();
-  const scopedFacts = new Set(scopedSourceFactIds);
-  const scopedControls = capture.observation.controls.filter((control) =>
-    scopedFacts.has(control.factId),
+  const scopedControls = scopedControlsInDocumentOrder(
+    capture.observation.controls,
+    scopedSourceFactIds,
   );
   const boxes = [];
   for (const control of scopedControls) {
@@ -1797,6 +2544,7 @@ async function scopedBranchCapture(
 
 async function generateAndExecuteBranchVariant({
   page,
+  runId,
   toolbox,
   capture,
   revealedControls,
@@ -1812,6 +2560,9 @@ async function generateAndExecuteBranchVariant({
   dynamicsRoot,
   recordId,
   evidenceSequenceStart,
+  actuatorRepository = null,
+  actuatorMode = "compatibility",
+  stateOrdinal = 0,
 }) {
   let scopedCapture = await scopedBranchCapture(
     page,
@@ -1845,8 +2596,8 @@ async function generateAndExecuteBranchVariant({
   let generated;
   let safety;
   let plan;
-  const maxBranchRepairAttempts = 2;
-  const branchRepairDeadlineAt = Date.now() + 120_000;
+  const maxBranchRepairAttempts = 3;
+  const branchRepairDeadlineAt = Date.now() + 180_000;
   for (
     let repairAttempt = 1;
     repairAttempt <= maxBranchRepairAttempts;
@@ -1855,7 +2606,7 @@ async function generateAndExecuteBranchVariant({
     const remainingSemanticMs = branchRepairDeadlineAt - Date.now();
     if (remainingSemanticMs <= 1_000) {
       throw new Error(
-        "First-level branch semantic validation exceeded its two-minute repair budget. No branch action was executed.",
+        "First-level branch semantic validation exceeded its repair budget. No branch action was executed.",
       );
     }
     generated = await generateSemanticProposal(scopedCapture, {
@@ -1874,6 +2625,7 @@ async function generateAndExecuteBranchVariant({
       observation: scopedCapture.observation,
       safety,
       provenance: generated.provenance,
+      stateOrdinal,
     });
     plan = {
       ...plan,
@@ -1957,6 +2709,119 @@ async function generateAndExecuteBranchVariant({
       `The LLM omitted branch-variant actions for: ${omittedFields.map((field) => field.label).join(", ")}.`,
     );
   }
+  if (actuatorMode !== "compatibility") {
+    try {
+      const actuatorArtifactId = `form_${sha256(`actuator-branch:${scopedCapture.observation.url}:${recordId}`).slice(0, 24)}`;
+      const actuatorResult = await generateValidateStateActuator({
+        page,
+        artifactId: actuatorArtifactId,
+        sequence: 1,
+        semanticProposal: generated.proposal,
+        plan,
+        observation: scopedCapture.observation,
+        screenshot: scopedCapture.screenshot,
+        storeRoot: path.join(generatedRoot, "actuator-candidates"),
+        repository: actuatorRepository,
+        preflightMode: actuatorMode === "enforced" ? "browser" : "static",
+        shadowCircuit:
+          actuatorMode === "shadow" ? shadowActuatorCircuitFor(page) : null,
+        restoreAfterPreflight: false,
+        fileProvider: (token, activePlan) =>
+          authorizedFilePayload(activePlan, token),
+        evidenceSink: actuatorEvidenceSink({
+          runId,
+          generatedRoot,
+          repository: actuatorRepository,
+        }),
+        onEvent,
+        validateSemanticCandidate: async ({ proposal: candidateProposal }) => {
+          const candidateSafety = validateProposalSafety({
+            proposal: candidateProposal,
+            observation: scopedCapture.observation,
+            existingContract,
+            fixtureAuthorities,
+          });
+          let candidatePlan = generatedStatePlan({
+            proposal: candidateProposal,
+            observation: scopedCapture.observation,
+            safety: candidateSafety,
+            provenance: generated.provenance,
+            stateOrdinal,
+          });
+          candidatePlan = {
+            ...candidatePlan,
+            variantOnly: true,
+            branchTrigger: trigger,
+            samePageBranchDepth: 1,
+          };
+          assertExecutablePlanSafety(candidatePlan);
+          const issues = [
+            ...proposalFactBindingIssues(
+              candidateProposal,
+              scopedCapture.observation,
+              { includeProgression: false },
+            ),
+            ...radioGroupProposalIssues(
+              candidateProposal,
+              scopedCapture.observation,
+            ),
+            ...sourceFactOwnershipIssues(
+              candidateProposal,
+              scopedCapture.observation,
+            ),
+            ...progressionActionContractIssues(candidateProposal),
+            ...(await planResolutionIssues(toolbox, candidatePlan, {
+              validateProgression: false,
+            })),
+            ...candidateSafety.rejections
+              .filter((rejection) => rejection.code === "unsafe_value")
+              .map((rejection) => ({
+                code: rejection.code,
+                targetKey: rejection.proposalId,
+                detail: rejection.detail,
+              })),
+          ];
+          if (issues.length > 0) {
+            throw new StateActuatorPipelineError(
+              "A repaired branch semantic candidate failed validation.",
+              { stage: "semantic_validation_blocked", issues },
+            );
+          }
+          safety = candidateSafety;
+          return { proposal: candidateProposal, plan: candidatePlan };
+        },
+      });
+      generated = { ...generated, proposal: actuatorResult.proposal };
+      plan = {
+        ...actuatorResult.plan,
+        actuator: {
+          ...actuatorResult.plan.actuator,
+          executionMode: actuatorMode,
+        },
+      };
+    } catch (error) {
+      if (actuatorMode !== "shadow") throw error;
+      const failureStage = actuatorFailureStage(error);
+      const issues = Array.isArray(error?.issues) ? error.issues : [];
+      recordShadowActuatorWarning(page, {
+        stateKey: plan?.state?.key || "branch_variant",
+        stage: failureStage,
+        issues,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      await onEvent?.(
+        "actuator_shadow_failed",
+        "The branch-variant actuator did not validate in shadow mode; the proven branch traversal remains active.",
+        {
+          branchVariant: true,
+          trigger,
+          failureStage,
+          issues,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+  }
   const semanticRecord = await writeSemanticGenerationRecord({
     dataRoot: generatedRoot,
     runId: recordId,
@@ -2001,6 +2866,10 @@ async function generateAndExecuteBranchVariant({
     branchDepth: 1,
     recordPrefix: `${recordId}_nested`,
     onSupportedVariant: null,
+    actuatorRepository,
+    actuatorMode,
+    runId,
+    stateOrdinal,
   });
   if (!nestedProbes.complete) {
     throw new Error(
@@ -2091,6 +2960,7 @@ async function generateAndExecuteBranchVariant({
 
 async function executeChoiceProbes({
   page,
+  runId,
   toolbox,
   plan,
   beforeCapture,
@@ -2106,6 +2976,9 @@ async function executeChoiceProbes({
   recordPrefix,
   fixtureAuthorities = null,
   onSupportedVariant = generateAndExecuteBranchVariant,
+  actuatorRepository = null,
+  actuatorMode = "compatibility",
+  stateOrdinal = 0,
 }) {
   const coverage = [];
   const evidence = [];
@@ -2119,7 +2992,13 @@ async function executeChoiceProbes({
   let haltReason = "";
   let probeBaseline = beforeCapture;
   for (const field of plan.fields) {
-    if (!field.actuate || !field.probeValues?.length) continue;
+    if (
+      !field.actuate ||
+      !field.probeValues?.length ||
+      isQuarantinedPlanTarget(plan, field.key)
+    ) {
+      continue;
+    }
     let selectedReveal = null;
     const fieldBaseline = probeBaseline;
     for (const [probeIndex, value] of field.probeValues.entries()) {
@@ -2142,12 +3021,14 @@ async function executeChoiceProbes({
         "same-origin",
         `deterministic choice probe ${field.key}=${String(value)}`,
         () =>
-          toolbox.writeControl(
-            { selectors: field.selectors },
-            field.controlType,
-            field.options.map((option) => option.value),
+          actuatePlanField({
+            page,
+            toolbox,
+            plan,
+            field,
             value,
-          ),
+            mode: "probe",
+          }),
       );
       await toolbox.settle();
       let assessment = null;
@@ -2283,6 +3164,7 @@ async function executeChoiceProbes({
         try {
           const variant = await onSupportedVariant({
             page,
+            runId,
             toolbox,
             capture: afterCapture,
             revealedControls: revealed,
@@ -2305,6 +3187,9 @@ async function executeChoiceProbes({
             recordId: `${recordPrefix}_${safeSegment(field.key)}_${probeIndex + 1}_variant`,
             evidenceSequenceStart:
               evidenceSequenceStart + evidence.length,
+            actuatorRepository,
+            actuatorMode,
+            stateOrdinal,
           });
           row.variantPlan = variant.plan;
           row.variantProposalId = variant.proposal.proposalId;
@@ -2338,7 +3223,25 @@ async function executeChoiceProbes({
             },
           );
         } catch (error) {
-          haltReason = `First-level variant ${field.label}: ${String(value)} could not be generated and verified: ${error instanceof Error ? error.message : String(error)}`;
+          const rootFailureStage = actuatorFailureStage(error);
+          const rootDetail =
+            error instanceof Error ? error.message : String(error);
+          haltReason = `First-level variant ${field.label}: ${String(value)} could not be generated and verified: ${rootDetail}`;
+          row.status = "failed";
+          row.classification = "probe_variant_failed";
+          row.failureCode = "probe_actuation_failed";
+          row.detail = rootDetail;
+          row.rootFailureStage = rootFailureStage;
+          row.rootIssues = Array.isArray(error?.issues) ? error.issues : [];
+          await onEvent?.("probe_actuation_failed", haltReason, {
+            fieldKey: field.key,
+            value,
+            failureCode: "probe_actuation_failed",
+            rootFailureStage,
+            rootIssues: row.rootIssues,
+            detail: rootDetail,
+            evidenceId: probeEvidence.id,
+          });
         }
       }
       coverage.push(row);
@@ -2438,6 +3341,7 @@ async function replayChoiceProbes({
   let fieldsEntered = 0;
   let entryFailures = 0;
   for (const [index, expected] of plan.choiceCoverage.entries()) {
+    if (isQuarantinedPlanTarget(plan, expected.fieldKey)) continue;
     const field = plan.fields.find((item) => item.key === expected.fieldKey);
     if (!field) {
       throw new Error(
@@ -2449,12 +3353,14 @@ async function replayChoiceProbes({
       "same-origin",
       `retained deterministic choice probe ${field.key}=${String(expected.value)}`,
       () =>
-        toolbox.writeControl(
-          { selectors: field.selectors },
-          field.controlType,
-          field.options.map((option) => option.value),
-          expected.value,
-        ),
+        actuatePlanField({
+          page,
+          toolbox,
+          plan,
+          field,
+          value: expected.value,
+          mode: "probe",
+        }),
     );
     await toolbox.settle();
     const after = await captureNovelStateInput({
@@ -2513,6 +3419,7 @@ async function replayChoiceProbes({
       strategy: "retained deterministic exhaustive option probe",
       timestamp: new Date().toISOString(),
       classification: "deterministic_replay",
+      branchClassification: expected.classification,
       rationale:
         expected.assessment?.rationale ||
         "Replayed an option probe derived from the observed option inventory.",
@@ -2773,10 +3680,23 @@ async function clearInactiveBranchVariantFields({
   return [...cleared];
 }
 
+export function reportedFieldSensitivity(field) {
+  return (
+    field?.descriptiveSensitivityDecision?.sensitive ??
+    descriptiveSensitivityDecision(field).sensitive
+  );
+}
+
 function observedField(field, plan, result, stateKey) {
   const section = (plan.sections || []).find(
     (item) => item.key === field.sectionKey,
   );
+  const structuralSectionText =
+    section?.label || field.structuralSectionText || "";
+  const structuralSectionId = structuralSectionText
+    ? field.sectionKey ||
+      `structural_${String(field.stateOrdinal || 0).padStart(3, "0")}_${safeSegment(structuralSectionText.toLowerCase())}`
+    : "";
   return {
     key: field.key,
     name: field.rawIdentity.name,
@@ -2784,9 +3704,17 @@ function observedField(field, plan, result, stateKey) {
     label: field.label,
     control: field.controlType,
     required: field.required,
-    sensitive: field.sensitive,
+    sensitive: reportedFieldSensitivity(field),
+    descriptiveSensitivityDecision:
+      field.descriptiveSensitivityDecision ||
+      descriptiveSensitivityDecision(field),
     sensitivityDecision: field.sensitivityDecision || null,
-    hidden: false,
+    runtimeProtectionDecision: field.sensitivityDecision || null,
+    stateOrdinal: Number(field.stateOrdinal || 0),
+    documentOrdinal: Number.isFinite(field.documentOrdinal)
+      ? field.documentOrdinal
+      : Number.MAX_SAFE_INTEGER,
+    hidden: field.controlType === "hidden",
     options: field.options.length,
     optionSet: field.options,
     optionValues: field.options.map((option) => option.value),
@@ -2806,15 +3734,16 @@ function observedField(field, plan, result, stateKey) {
         field.legalAcceptanceType,
       ),
     legalAcceptanceType: field.legalAcceptanceType || "",
-    canonicalProfileKey: CANONICAL_PROFILE_KEYS.has(field.key)
-      ? field.key
-      : "unmappable",
-    sectionText: section?.label || "",
-    sectionId: field.sectionKey || "",
+    canonicalProfileKey: reconcileCanonicalProfileKey(field),
+    sectionText: structuralSectionText,
+    sectionId: structuralSectionId,
     guidanceIds: field.guidanceRefs || [],
     questionRef: field.key,
     formId: stateKey,
-    testValue: field.testValue,
+    repeatableSection: field.repeatableSection || "",
+    repeatableLabel: field.repeatableLabel || "",
+    addRowControl: field.addRowControl || "",
+    testValue: verifiedFieldTestValue(field, result?.outcome),
     testValueSource: `generated:${plan.proposalId}`,
     entryStatus: result?.outcome.verified ? "entered" : "not_attempted",
     entryError: result?.outcome.detail || "",
@@ -2822,9 +3751,14 @@ function observedField(field, plan, result, stateKey) {
   };
 }
 
-function generatedFieldActions(plan, fieldResults, stateId) {
-  return plan.fields.map((field) => {
-    const result = fieldResults.find((item) => item.field.key === field.key);
+export function generatedFieldActions(plan, fieldResults, stateId) {
+  const plannedFields = new Map(
+    (plan?.fields || []).map((field) => [field.key, field]),
+  );
+  return (fieldResults || [])
+    .filter((result) => result?.outcome?.skipped !== true)
+    .map((result) => {
+    const field = plannedFields.get(result?.field?.key) || result.field;
     return {
       category: "field_entry",
       label: field.label,
@@ -2833,15 +3767,15 @@ function generatedFieldActions(plan, fieldResults, stateId) {
       classification: "llm_generated_probe",
       rationale: field.rationale,
       source: `generated:${plan.proposalId}@${plan.scriptVersion}`,
-      testValue: field.testValue,
-      outcome: result?.outcome.verified ? "landed" : "could_not_test",
+      testValue: verifiedFieldTestValue(field, result.outcome),
+      outcome: result.outcome.verified ? "landed" : "could_not_test",
       stateId,
-      ...(!result?.outcome.verified
+      ...(!result.outcome.verified
         ? {
             failureCode:
-              result?.outcome.failureCode || field.skipReason || "could_not_test",
+              result.outcome.failureCode || field.skipReason || "could_not_test",
             error:
-              result?.outcome.detail ||
+              result.outcome.detail ||
               "The generated field action could not be verified.",
           }
         : {}),
@@ -2868,18 +3802,160 @@ function countEntryFailures(fieldResults) {
   ).length;
 }
 
+export function fieldActionMetrics(actions = []) {
+  const fieldActions = actions.filter(
+    (action) => action.category === "field_entry",
+  );
+  const verified = fieldActions.filter(
+    (action) => action.outcome === "landed",
+  ).length;
+  const failures = fieldActions.filter(
+    (action) => action.outcome === "could_not_test",
+  ).length;
+  return {
+    fieldsPlanned: fieldActions.length,
+    fieldsAttempted: fieldActions.length,
+    fieldsVerified: verified,
+    attemptedFieldFailures: failures,
+  };
+}
+
+function observedFieldPhysicalKey(field = {}) {
+  const stateOrdinal = Number.isFinite(field.stateOrdinal)
+    ? field.stateOrdinal
+    : 0;
+  const frame = String(field.frameUrl || "top");
+  const control = String(field.control || field.controlType || "unknown");
+  const id = String(field.id || "").trim();
+  const selectors = [field.selector, ...(field.selectorCandidates || [])]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .sort();
+  if (id) return `${stateOrdinal}|${frame}|id:${id}|${control}`;
+  if (selectors.length > 0) {
+    return `${stateOrdinal}|${frame}|selector:${selectors[0]}|${control}`;
+  }
+  const name = String(field.name || field.key || "").trim();
+  const ordinal = Number.isFinite(field.documentOrdinal)
+    ? field.documentOrdinal
+    : "unknown";
+  return `${stateOrdinal}|${frame}|name:${name}|${control}|ordinal:${ordinal}`;
+}
+
+function observedFieldQuality(field = {}) {
+  return (
+    (field.entryStatus === "entered" ? 16 : 0) +
+    (field.canonicalProfileKey && field.canonicalProfileKey !== "unmappable"
+      ? 8
+      : 0) +
+    (field.descriptiveSensitivityDecision ? 4 : 0) +
+    ((field.selectorCandidates || []).length > 0 ? 2 : 0) +
+    ((field.optionSet || []).length > 0 ? 1 : 0)
+  );
+}
+
+export function mergeObservedFields(fields = []) {
+  const merged = new Map();
+  for (const field of fields) {
+    const key = observedFieldPhysicalKey(field);
+    const current = merged.get(key);
+    if (!current) {
+      merged.set(key, field);
+      continue;
+    }
+    const preferred =
+      observedFieldQuality(field) > observedFieldQuality(current)
+        ? field
+        : current;
+    const fallback = preferred === field ? current : field;
+    merged.set(key, {
+      ...fallback,
+      ...preferred,
+      selectorCandidates: [
+        ...new Set([
+          ...(current.selectorCandidates || []),
+          ...(field.selectorCandidates || []),
+        ]),
+      ],
+      guidanceIds: [
+        ...new Set([
+          ...(current.guidanceIds || []),
+          ...(field.guidanceIds || []),
+        ]),
+      ],
+      physicalIdentity: key,
+    });
+  }
+  return [...merged.values()].sort(
+    (left, right) =>
+      Number(left.stateOrdinal || 0) - Number(right.stateOrdinal || 0) ||
+      Number(left.documentOrdinal || 0) - Number(right.documentOrdinal || 0),
+  );
+}
+
 export function mergeTraversalResults(...parts) {
   const available = parts.filter(Boolean);
   const last = available.at(-1) || {};
+  const countFieldActions = (part, predicate = () => true) =>
+    (part.actions || []).filter(
+      (action) => action.category === "field_entry" && predicate(action),
+    ).length;
   const journeyUrls = [
     ...new Set(available.flatMap((part) => part.journeyUrls || [])),
   ];
   return {
     actions: available.flatMap((part) => part.actions || []),
     evidence: available.flatMap((part) => part.evidence || []),
-    observedFields: available.flatMap((part) => part.observedFields || []),
+    observedFields: mergeObservedFields(
+      available.flatMap((part) => part.observedFields || []),
+    ),
+    actuatorWarnings: [
+      ...new Map(
+        available
+          .flatMap((part) => part.actuatorWarnings || [])
+          .map((warning) => [
+            `${warning.stage}:${warning.code}:${warning.targetKey}:${warning.detail}`,
+            warning,
+          ]),
+      ).values(),
+    ],
     fieldsEntered: available.reduce(
       (sum, part) => sum + (part.fieldsEntered || 0),
+      0,
+    ),
+    fieldsPlanned: available.reduce(
+      (sum, part) =>
+        sum +
+        (Number.isFinite(part.fieldsPlanned)
+          ? part.fieldsPlanned
+          : (part.observedFields || []).length),
+      0,
+    ),
+    fieldsAttempted: available.reduce(
+      (sum, part) =>
+        sum +
+        (Number.isFinite(part.fieldsAttempted)
+          ? part.fieldsAttempted
+          : countFieldActions(part)),
+      0,
+    ),
+    fieldsVerified: available.reduce(
+      (sum, part) =>
+        sum +
+        (Number.isFinite(part.fieldsVerified)
+          ? part.fieldsVerified
+          : part.fieldsEntered || 0),
+      0,
+    ),
+    attemptedFieldFailures: available.reduce(
+      (sum, part) =>
+        sum +
+        (Number.isFinite(part.attemptedFieldFailures)
+          ? part.attemptedFieldFailures
+          : countFieldActions(
+              part,
+              (action) => action.outcome === "could_not_test",
+            )),
       0,
     ),
     entryFailures: available.reduce(
@@ -2909,6 +3985,9 @@ export function mergeTraversalResults(...parts) {
     reconScriptVersion: last.reconScriptVersion || 0,
     generatedArtifact: last.generatedArtifact || null,
     browserMode: last.browserMode,
+    invisibleCaptchaDetected: available.some(
+      (part) => part.invisibleCaptchaDetected === true,
+    ),
     journeyUrls,
     entryMode: last.entryMode || available[0]?.entryMode || "unknown",
     entryDetail:
@@ -2917,6 +3996,10 @@ export function mergeTraversalResults(...parts) {
       (part) => part.journeyComplete !== false,
     ),
     haltReason: last.haltReason || "",
+    failureStage: last.failureStage || "",
+    blockedBeforeActuation:
+      last.blockedBeforeActuation === true,
+    failureIssues: available.flatMap((part) => part.failureIssues || []),
   };
 }
 
@@ -2934,6 +4017,23 @@ function generatedBranchStateCount(plan) {
 export function terminalEligibilityIssues(completePlan) {
   const issues = [];
   for (const state of completePlan?.states || []) {
+    for (const field of state.fields || []) {
+      if (
+        field.required === true &&
+        field.actuate !== true &&
+        [
+          "option_values_unavailable",
+          "virtual_control_unavailable",
+        ].includes(field.skipReason)
+      ) {
+        issues.push({
+          code: "required_control_unavailable",
+          stateKey: state.state?.key || "",
+          fieldKey: field.key,
+          detail: `Required control ${field.key} has no verified actuation strategy.`,
+        });
+      }
+    }
     if (
       Number(state.samePageBranchDepth || 0) >
       MAX_SAME_PAGE_BRANCH_DEPTH
@@ -2945,10 +4045,12 @@ export function terminalEligibilityIssues(completePlan) {
       });
     }
     const expectedRows = state.fields.flatMap((field) =>
-      expectedDependencyProbeValues(field).map((value) => ({
-        fieldKey: field.key,
-        value,
-      })),
+      isQuarantinedPlanTarget(state, field.key)
+        ? []
+        : expectedDependencyProbeValues(field).map((value) => ({
+            fieldKey: field.key,
+            value,
+          })),
     );
     for (const expected of expectedRows) {
       const observed = (state.choiceCoverage || []).find(
@@ -3028,13 +4130,51 @@ async function couldNotTestGeneratedState({
   stateExaminations = 0,
   priorResult = null,
   journeyUrls = [],
+  failureStage = "",
+  issues = [],
 }) {
+  const attemptedResults = (fieldResults || []).filter(
+    (result) => result?.outcome?.skipped !== true,
+  );
+  const verifiedResults = attemptedResults.filter(
+    (result) => result?.outcome?.verified === true,
+  );
+  const failedResults = attemptedResults.filter(
+    (result) => result?.outcome?.verified !== true,
+  );
+  const blockedBeforeActuation = attemptedResults.length === 0;
+  const resolvedFailureStage =
+    failureStage ||
+    (blockedBeforeActuation
+      ? "semantic_validation_blocked"
+      : "runtime_actuation_failed");
+  const failureIssues = (issues || []).map((issue, index) => ({
+    code: String(
+      issue?.code ||
+        issue?.type ||
+        issue?.failureCode ||
+        resolvedFailureStage,
+    ),
+    targetKey: String(issue?.targetKey || issue?.fieldKey || ""),
+    detail: String(
+      issue?.detail || issue?.problem || issue?.error || detail,
+    ),
+    issueId: String(issue?.issueId || `issue_${index + 1}`),
+    controlType: String(
+      issue?.controlType ||
+        plan.fields.find(
+          (field) =>
+            field.key === String(issue?.targetKey || issue?.fieldKey || ""),
+        )?.controlType ||
+        "",
+    ),
+  }));
   const evidence = await captureEvidence({
     page,
     plan,
     fieldResults,
     sequence: (priorResult?.evidence?.length || 0) + 1,
-    kind: "populated",
+    kind: blockedBeforeActuation ? "pre_actuation_failure" : "populated",
     label: `Generated traversal halted safely: ${detail}`,
     onEvent,
   });
@@ -3045,6 +4185,15 @@ async function couldNotTestGeneratedState({
     {
       stateKey: plan.state.key,
       evidenceId: evidence.id,
+      failureStage: resolvedFailureStage,
+      blockedBeforeActuation,
+      counts: {
+        planned: plan.fields.length,
+        attempted: attemptedResults.length,
+        verified: verifiedResults.length,
+        failed: failedResults.length,
+      },
+      issues: failureIssues,
       failures: actions
         .filter((action) => action.outcome === "could_not_test")
         .map((action) => ({
@@ -3058,8 +4207,11 @@ async function couldNotTestGeneratedState({
     actions,
     evidence: [evidence],
     observedFields: generatedObservedFields(plan, fieldResults),
-    fieldsEntered: fieldResults.filter((result) => result.outcome.verified)
-      .length,
+    fieldsEntered: verifiedResults.length,
+    fieldsPlanned: plan.fields.length,
+    fieldsAttempted: attemptedResults.length,
+    fieldsVerified: verifiedResults.length,
+    attemptedFieldFailures: failedResults.length,
     entryFailures: countEntryFailures(fieldResults),
     branchStates: 0,
     stateExaminations,
@@ -3073,6 +4225,9 @@ async function couldNotTestGeneratedState({
     journeyUrls,
     journeyComplete: false,
     haltReason: detail,
+    failureStage: resolvedFailureStage,
+    blockedBeforeActuation,
+    failureIssues,
   };
   return mergeTraversalResults(priorResult, currentResult);
 }
@@ -3210,10 +4365,33 @@ async function submitCrawlTerminal({
     authorizeWrites,
     "final-action",
     `${approvedLive ? "approved live" : "explicit synthetic crawl"} submit ${plan.progression.key}`,
-    () =>
-      toolbox.clickAction({
-        selectors: plan.progression.selectors,
-      }),
+    async () => {
+      const runtime = await actuatorRuntimeForPlan(page, plan, {
+        terminalSubmissionAuthorized: true,
+      });
+      if (!runtime) {
+        return toolbox.clickAction({
+          selectors: plan.progression.selectors,
+        });
+      }
+      const outcome = await runtime.invoke(
+        actuatorCommand(plan, {
+          targetKind: "action",
+          targetKey: plan.progression.key,
+          operation: "execute_action",
+          value: null,
+          mode: approvedLive ? "real_data" : "fixture",
+          progressionPermission: "allowed",
+        }),
+      );
+      return {
+        clicked: outcome.verified,
+        verified: outcome.verified,
+        failureCode: outcome.failureCode,
+        detail: outcome.detail || "",
+        actuatorResult: outcome,
+      };
+    },
     new URL(page.url()).origin,
   );
   await toolbox.settle();
@@ -3571,6 +4749,7 @@ async function replayStoredFormScript({
     for (const field of plan.fields) {
       const result = results.find((item) => item.field.key === field.key);
       observedFields.push(observedField(field, plan, result, plan.state.key));
+      if (result?.outcome.skipped === true) continue;
       actions.push({
         category: "field_entry",
         label: field.label,
@@ -3589,8 +4768,12 @@ async function replayStoredFormScript({
           : {}),
       });
     }
-    const evidenceKind = plan.progression.dynamicContinuation
-      ? "branch"
+    const noEffectContinuation =
+      shouldSkipNoEffectProgressionReplay(plan);
+    const evidenceKind = noEffectContinuation
+      ? "populated"
+      : plan.progression.dynamicContinuation
+        ? "branch"
       : plan.progression.kind === "terminal_submit"
         ? executionMode === "fixture_submit"
           ? "pre_advance"
@@ -3602,8 +4785,10 @@ async function replayStoredFormScript({
       fieldResults: results,
       sequence: evidence.length + 1,
       kind: evidenceKind,
-      label: plan.progression.dynamicContinuation
-        ? `Conditional state revealed by ${plan.state.description}`
+      label: noEffectContinuation
+        ? `Verified fields retained before replanning ${plan.state.description}`
+        : plan.progression.dynamicContinuation
+          ? `Conditional state revealed by ${plan.state.description}`
         : plan.progression.kind === "terminal_submit"
           ? "Completed generated values at the terminal boundary"
           : `Completed generated values for ${plan.state.description}`,
@@ -3644,6 +4829,21 @@ async function replayStoredFormScript({
     fieldsEntered += selectedVariants.fieldsEntered;
     entryFailures += selectedVariants.entryFailures;
     if (plan.progression.dynamicContinuation) {
+      if (noEffectContinuation) {
+        actions.push({
+          category: "semantic_replan_continuation",
+          label: plan.progression.key,
+          strategy: "stored typed action-outcome contract",
+          timestamp: new Date().toISOString(),
+          classification: "deterministic_replay",
+          rationale:
+            "The previously observed action produced no effect, so replay preserves verified fields and skips that discarded action before the replacement state.",
+          source: `generated:${completePlan.artifactId}@${completePlan.scriptVersion}`,
+          outcome: "skipped",
+          stateId: populatedEvidence.id,
+        });
+        continue;
+      }
       if (plan.progression.samePageRevealAction) {
         const advanced = await advanceWithPlan({
           page,
@@ -3782,6 +4982,7 @@ async function replayStoredFormScript({
     evidence,
     observedFields,
     fieldsEntered,
+    ...fieldActionMetrics(actions),
     entryFailures,
     branchStates: generatedBranchStateCount(completePlan),
     stateExaminations: 0,
@@ -3818,6 +5019,129 @@ async function replayStoredFormScript({
   };
 }
 
+function statePlansWithActuators(completePlan) {
+  const rows = [];
+  const visit = (plan) => {
+    if (plan?.actuator) rows.push(plan);
+    for (const coverage of plan?.choiceCoverage || []) {
+      if (coverage.variantPlan) visit(coverage.variantPlan);
+    }
+  };
+  for (const plan of completePlan?.states || []) visit(plan);
+  return rows;
+}
+
+function actuatorEvidenceSink({ runId, generatedRoot, repository }) {
+  return async ({ kind, metadata, page }) => {
+    if (
+      kind === "actuator_before" ||
+      (kind === "actuator_after" && metadata?.status === "verified")
+    ) {
+      return `observation:${encodeURIComponent(kind)}/${Date.now()}/${sha256(`${page.url()}:${JSON.stringify(metadata || {})}`)}`;
+    }
+    const bytes = await page.screenshot({ fullPage: true, type: "png" });
+    const digest = sha256(bytes);
+    const name = `${Date.now()}_${randomUUID().replaceAll("-", "")}_${safeSegment(kind)}.png`;
+    const relative = path.join("actuator-evidence", name);
+    const destination = path.join(generatedRoot, relative);
+    await mkdir(path.dirname(destination), { recursive: true });
+    await writeFile(destination, bytes, { flag: "wx" });
+    if (repository?.putObject) {
+      await repository.putObject({
+        ownerType: "run",
+        ownerId: runId,
+        objectKey: `generated/${relative.replaceAll("\\", "/")}`,
+        bytes,
+        contentType: "image/png",
+        metadata: {
+          kind,
+          stateKey: String(metadata?.stateKey || ""),
+          targetKey: String(metadata?.targetKey || ""),
+          operation: String(metadata?.operation || ""),
+        },
+      });
+    }
+    return `run:${runId}/${relative.replaceAll("\\", "/")}#sha256=${digest}`;
+  };
+}
+
+async function publishValidatedActuatorReleases({
+  repository,
+  completePlan,
+  evidence,
+  onEvent,
+}) {
+  if (
+    !repository?.publishArtifactRelease ||
+    !repository?.putValidationRun ||
+    !repository?.nextArtifactReleaseVersion
+  ) {
+    return [];
+  }
+  const published = [];
+  for (const plan of statePlansWithActuators(completePlan)) {
+    const actuator = plan.actuator;
+    if (actuator.certificationStatus !== "preflight_validated") continue;
+    const artifactId = actuator.bundle.artifactId;
+    const publicationValidation = {
+      validationId: `publication_${randomUUID().replaceAll("-", "")}`,
+      phase: "publication",
+      outcome: "passed",
+      issues: [],
+      evidenceRefs: (evidence || [])
+        .map((item) => item?.id)
+        .filter(Boolean),
+      timings: {
+        finishedAt: new Date().toISOString(),
+      },
+    };
+    await repository.putValidationRun({
+      artifactId,
+      semanticCandidateId: actuator.semanticCandidateId,
+      actuatorBundleId: actuator.bundle.bundleId,
+      validation: publicationValidation,
+      validatorVersions: {
+        generatedScript: GENERATED_FORM_SCRIPT_VERSION,
+        actuatorInterface: actuator.bundle.interfaceVersion,
+      },
+    });
+    const prior = repository.getLatestArtifactRelease
+      ? await repository.getLatestArtifactRelease(artifactId)
+      : null;
+    const release = {
+      schemaVersion: 1,
+      releaseId: actuator.releaseId,
+      artifactId,
+      releaseVersion:
+        await repository.nextArtifactReleaseVersion(artifactId),
+      semanticCandidateId: actuator.semanticCandidateId,
+      semanticVersion: actuator.semanticVersion,
+      semanticHash: actuator.semanticHash,
+      actuatorBundleId: actuator.bundle.bundleId,
+      actuatorVersion: actuator.bundle.bundleVersion,
+      actuatorHash: actuator.bundleHash,
+      validationIds: [actuator.validationId, publicationValidation.validationId],
+      supersedesReleaseId: prior?.releaseId || null,
+      certificationStatus: "certified",
+    };
+    await repository.publishArtifactRelease(release);
+    published.push(release);
+    await onEvent?.(
+      "actuator_release_published",
+      `Published certified per-site actuator release ${release.releaseId} for ${plan.state.key}.`,
+      {
+        stateKey: plan.state.key,
+        artifactId,
+        releaseId: release.releaseId,
+        releaseVersion: release.releaseVersion,
+        semanticVersion: release.semanticVersion,
+        actuatorVersion: release.actuatorVersion,
+      },
+    );
+  }
+  return published;
+}
+
 export async function generateAndReplayForm({
   page,
   runId,
@@ -3828,7 +5152,10 @@ export async function generateAndReplayForm({
   browserMode,
   authorizeWrites,
   onEvent,
+  actuatorRepository = null,
+  actuatorMode = "compatibility",
 }) {
+  actuatorMode = normalizedActuatorMode(actuatorMode);
   if ((await visibleGenerationSurfaceCount(page)) === 0) return null;
   const initialUrl = page.url();
   const generatedRoot = path.join(runDirectory, "generated");
@@ -3873,6 +5200,21 @@ export async function generateAndReplayForm({
             selectorCandidates: [],
           },
         ];
+    if (actuatorMode === "enforced") {
+      for (const statePlan of retained.plan.states || []) {
+        if (
+          statePlan.actuator?.executionMode !== "enforced" ||
+          statePlan.actuator?.certificationStatus !== "preflight_validated"
+        ) {
+          issues.push({
+            targetKey: statePlan.state?.key || "state",
+            problem:
+              "The retained state has no browser-preflight-validated per-site actuator for enforced execution.",
+            selectorCandidates: [],
+          });
+        }
+      }
+    }
     for (const statePlan of retained.plan.states || []) {
       issues.push(
         ...replayAuthorityIssues(
@@ -3942,6 +5284,8 @@ export async function generateAndReplayForm({
   const generatedEvents = [];
   const journeyUrls = new Set([initialUrl]);
   let samePageBranchDepth = 0;
+  let nonterminalNoEffectReplans = 0;
+  let pendingProgressionReplan = null;
   let entry = {
     mode: "unknown",
     detail: "The initial state has not been examined yet.",
@@ -3977,7 +5321,34 @@ export async function generateAndReplayForm({
       existingContract,
       priorStates: generationStates.map((item) => item.proposal.state),
     });
+    if (pendingProgressionReplan) {
+      captured = {
+        ...captured,
+        observation: {
+          ...captured.observation,
+          runtimeValidationFeedback: noEffectReplanFeedback(
+            pendingProgressionReplan,
+          ),
+        },
+      };
+    }
     const challenge = await detectCaptcha(page);
+    if (challenge.nonInteractiveDetected) {
+      generationJourney = {
+        ...generationJourney,
+        invisibleCaptchaDetected: true,
+      };
+      await onEvent?.(
+        "invisible_captcha",
+        "A non-interactive score-based CAPTCHA signal was observed; traversal may continue without solving a challenge.",
+        {
+          sequence,
+          evidence: challenge.evidence,
+          frameUrl: challenge.frameUrl,
+          policy: "detect_and_continue",
+        },
+      );
+    }
     if (challenge.detected) {
       const detail =
         "An interactive CAPTCHA or human-verification challenge was detected after navigation. No challenge answer or subsequent form action was attempted.";
@@ -4111,8 +5482,8 @@ export async function generateAndReplayForm({
     let safety;
     let plan;
     const repairHistory = [];
-    const maxRepairAttempts = 2;
-    const semanticRepairDeadlineAt = Date.now() + 120_000;
+    const maxRepairAttempts = 3;
+    const semanticRepairDeadlineAt = Date.now() + 180_000;
     for (
       let repairAttempt = 1;
       repairAttempt <= maxRepairAttempts;
@@ -4121,7 +5492,7 @@ export async function generateAndReplayForm({
       const remainingSemanticMs = semanticRepairDeadlineAt - Date.now();
       if (remainingSemanticMs <= 1_000 && plan) {
         const detail =
-          "Semantic script validation exceeded its two-minute repair budget. The rendered observation was retained and no form action was executed.";
+          "Semantic script validation exceeded its repair budget. The rendered observation was retained and no form action was executed.";
         await onEvent?.("generated_script_validation_exhausted", detail, {
           sequence,
           repairAttempt,
@@ -4137,6 +5508,13 @@ export async function generateAndReplayForm({
           journeyUrls: [...journeyUrls, page.url()],
           stateExaminations: sequence,
           detail,
+          failureStage: "semantic_validation_blocked",
+          issues: repairHistory.at(-1)?.issues || [
+            {
+              code: "semantic_repair_budget_exhausted",
+              detail,
+            },
+          ],
         });
       }
       generated = await generateSemanticProposal(captured, {
@@ -4155,6 +5533,7 @@ export async function generateAndReplayForm({
         observation: captured.observation,
         safety,
         provenance: generated.provenance,
+        stateOrdinal: sequence - 1,
       });
       assertExecutablePlanSafety(plan);
       const resolutionIssues = await planResolutionIssues(toolbox, plan);
@@ -4176,9 +5555,17 @@ export async function generateAndReplayForm({
           generated.proposal,
           captured.observation,
         ),
+        ...disclosureBlockedFieldIssues(
+          generated.proposal,
+          captured.observation,
+        ),
         ...exhaustedDisclosureProgressionIssues(
           generated.proposal,
           captured.observation,
+        ),
+        ...excludedProgressionFactIssues(
+          generated.proposal,
+          pendingProgressionReplan?.exclusion,
         ),
       ];
       const valueSafetyIssues = safety.rejections
@@ -4257,6 +5644,8 @@ export async function generateAndReplayForm({
           journeyUrls: [...journeyUrls, page.url()],
           stateExaminations: sequence,
           detail,
+          failureStage: "semantic_validation_blocked",
+          issues: repairIssues,
         });
       }
       repairHistory.push({
@@ -4278,6 +5667,271 @@ export async function generateAndReplayForm({
           },
         },
       };
+    }
+    if (actuatorMode !== "compatibility") {
+      const actuatorArtifactId = `form_${sha256(`actuator-state:${initialUrl}:${plan.state.key}`).slice(0, 24)}`;
+      try {
+        const actuatorResult = await generateValidateStateActuator({
+          page,
+          artifactId: actuatorArtifactId,
+          sequence,
+          semanticProposal: generated.proposal,
+          plan,
+          observation: captured.observation,
+          screenshot: captured.screenshot,
+          storeRoot: path.join(generatedRoot, "actuator-candidates"),
+          repository: actuatorRepository,
+          preflightMode: actuatorMode === "enforced" ? "browser" : "static",
+          shadowCircuit:
+            actuatorMode === "shadow" ? shadowActuatorCircuitFor(page) : null,
+          restoreAfterPreflight: async ({ runtime }) => {
+            await runtime.rebaseline(initialUrl);
+            for (const priorState of generationStates) {
+              const replayToolbox = new PhysicsToolbox(page);
+              await replayToolbox.prepare();
+              const replayedFields = await enterPlanFields({
+                page,
+                toolbox: replayToolbox,
+                plan: priorState.plan,
+                authorizeWrites,
+                onEvent: null,
+                source: "actuator_preflight_checkpoint_restore",
+                valueMode: "synthetic",
+              });
+              const requiredFailure = replayedFields.find(
+                ({ field, outcome }) => field.required && !outcome.verified,
+              );
+              if (requiredFailure) {
+                throw new StateActuatorPipelineError(
+                  `Could not restore verified state ${priorState.plan.state.key} after actuator preflight.`,
+                  {
+                    stage: "actuator_preflight_restore_failed",
+                    issues: [
+                      {
+                        issueId: `issue_${priorState.plan.state.key}_restore_failed`,
+                        code:
+                          requiredFailure.outcome.failureCode ||
+                          "actuation_unverified",
+                        targetKey: requiredFailure.field.key,
+                        detail:
+                          requiredFailure.outcome.detail ||
+                          "A required prior-state field could not be replayed.",
+                      },
+                    ],
+                  },
+                );
+              }
+              if (shouldSkipNoEffectProgressionReplay(priorState.plan)) {
+                await clearInactiveBranchVariantFields({
+                  toolbox: replayToolbox,
+                  plan: priorState.plan,
+                  onEvent: null,
+                });
+                await populateSelectedBranchVariants({
+                  page,
+                  toolbox: replayToolbox,
+                  plan: priorState.plan,
+                  authorizeWrites,
+                  onEvent: null,
+                  evidenceSequenceStart: 1,
+                  source:
+                    "actuator_preflight_no_effect_checkpoint_restore",
+                });
+              } else {
+                const replayedAdvance = await advanceWithPlan({
+                  page,
+                  toolbox: replayToolbox,
+                  plan: priorState.plan,
+                  authorizeWrites,
+                  onEvent: null,
+                });
+                if (!replayedAdvance.clicked) {
+                  throw new StateActuatorPipelineError(
+                    `Could not restore the verified transition from ${priorState.plan.state.key} after actuator preflight.`,
+                    {
+                      stage: "actuator_preflight_restore_failed",
+                      issues: [
+                        {
+                          issueId: `issue_${priorState.plan.state.key}_transition_restore_failed`,
+                          code:
+                            replayedAdvance.failureCode ||
+                            "state_change_unverified",
+                          targetKey: priorState.plan.progression.key,
+                          detail:
+                            replayedAdvance.detail ||
+                            "The prior verified transition could not be replayed.",
+                        },
+                      ],
+                    },
+                  );
+                }
+              }
+            }
+            await onEvent?.(
+              "actuator_preflight_checkpoint_restored",
+              `Restored the verified journey checkpoint for state ${sequence} after isolated actuator preflight.`,
+              {
+                sequence,
+                replayedStates: generationStates.length,
+                url: page.url(),
+              },
+            );
+          },
+          fileProvider: (token, activePlan) =>
+            authorizedFilePayload(activePlan, token),
+          evidenceSink: actuatorEvidenceSink({
+            runId,
+            generatedRoot,
+            repository: actuatorRepository,
+          }),
+          onEvent: async (kind, message, metadata) => {
+            const event = {
+              at: new Date().toISOString(),
+              kind,
+              metadata,
+            };
+            stateEvents.push(event);
+            generatedEvents.push(event);
+            await onEvent?.(kind, message, metadata);
+          },
+          validateSemanticCandidate: async ({ proposal: candidateProposal }) => {
+            const candidateSafety = validateProposalSafety({
+              proposal: candidateProposal,
+              observation: captured.observation,
+              existingContract,
+              fixtureAuthorities,
+            });
+            const candidatePlan = generatedStatePlan({
+              proposal: candidateProposal,
+              observation: captured.observation,
+              safety: candidateSafety,
+              provenance: generated.provenance,
+              stateOrdinal: sequence - 1,
+            });
+            assertExecutablePlanSafety(candidatePlan);
+            const repairIssues = [
+              ...proposalFactBindingIssues(
+                candidateProposal,
+                captured.observation,
+              ),
+              ...radioGroupProposalIssues(
+                candidateProposal,
+                captured.observation,
+              ),
+              ...sourceFactOwnershipIssues(
+                candidateProposal,
+                captured.observation,
+              ),
+              ...progressionActionContractIssues(candidateProposal),
+              ...pendingDisclosureIssues(
+                candidateProposal,
+                captured.observation,
+              ),
+              ...exhaustedDisclosureProgressionIssues(
+                candidateProposal,
+                captured.observation,
+              ),
+              ...excludedProgressionFactIssues(
+                candidateProposal,
+                pendingProgressionReplan?.exclusion,
+              ),
+              ...(await planResolutionIssues(toolbox, candidatePlan)),
+              ...candidateSafety.rejections
+                .filter((rejection) => {
+                  if (rejection.code === "unsafe_value") return true;
+                  const action = candidateProposal.proposedActions.find(
+                    (candidate) =>
+                      candidate.proposalId === rejection.proposalId,
+                  );
+                  return (
+                    action?.kind === "field_actuation" &&
+                    [
+                      "captcha_interaction",
+                      "credential_interaction",
+                      "legal_acceptance_interaction",
+                      "login_interaction",
+                      "payment_interaction",
+                      "upload_interaction",
+                    ].includes(rejection.code)
+                  );
+                })
+                .map((rejection) => ({
+                  code: rejection.code,
+                  targetKey: rejection.proposalId,
+                  detail: rejection.detail,
+                })),
+            ];
+            if (repairIssues.length > 0) {
+              throw new StateActuatorPipelineError(
+                "A repaired semantic candidate failed full semantic validation.",
+                {
+                  stage: "semantic_validation_blocked",
+                  issues: repairIssues,
+                },
+              );
+            }
+            safety = candidateSafety;
+            return { proposal: candidateProposal, plan: candidatePlan };
+          },
+        });
+        generated = {
+          ...generated,
+          proposal: actuatorResult.proposal,
+        };
+        plan = {
+          ...actuatorResult.plan,
+          actuator: {
+            ...actuatorResult.plan.actuator,
+            executionMode: actuatorMode,
+          },
+        };
+      } catch (error) {
+        const failureStage = actuatorFailureStage(error);
+        const issues = Array.isArray(error?.issues)
+          ? error.issues
+          : [
+              {
+                code: failureStage,
+                targetKey: plan?.state?.key || "state",
+                detail: error instanceof Error ? error.message : String(error),
+              },
+            ];
+        if (actuatorMode === "shadow") {
+          recordShadowActuatorWarning(page, {
+            stateKey: plan.state.key,
+            stage: failureStage,
+            issues,
+            detail: error instanceof Error ? error.message : String(error),
+          });
+          await onEvent?.(
+            "actuator_shadow_failed",
+            "The candidate per-site actuator did not validate in shadow mode; the proven traversal path remains active.",
+            { sequence, stateKey: plan.state.key, failureStage, issues },
+          );
+        } else {
+          const detail =
+            "Per-site actuator generation or preflight failed before any state field was executed in enforced mode.";
+          await onEvent?.(failureStage, detail, {
+            sequence,
+            stateKey: plan.state.key,
+            issues,
+          });
+          return couldNotTestGeneratedState({
+            page,
+            plan,
+            fieldResults: [],
+            onEvent,
+            priorResult: generationJourney,
+            journeyUrls: [...journeyUrls, page.url()],
+            entryMode: entry.mode,
+            entryDetail: entry.detail,
+            stateExaminations: sequence,
+            detail,
+            failureStage,
+            issues,
+          });
+        }
+      }
     }
     const stateRecordId = `state_${String(sequence).padStart(3, "0")}`;
     const recordPath = await writeSemanticGenerationRecord({
@@ -4321,6 +5975,23 @@ export async function generateAndReplayForm({
         path: stored.directory,
       },
     );
+    if (pendingProgressionReplan) {
+      await onEvent?.(
+        "nonterminal_no_effect_replan_succeeded",
+        "Bounded state planning selected a different grounded progression after the prior action produced no observable effect.",
+        {
+          sequence,
+          priorProposalId:
+            pendingProgressionReplan.priorProposal?.proposalId,
+          proposalId: generated.proposal.proposalId,
+          excludedProgression: pendingProgressionReplan.exclusion,
+          selectedProgression:
+            progressionActionExclusion(generated.proposal),
+          attemptsUsed: nonterminalNoEffectReplans,
+        },
+      );
+      pendingProgressionReplan = null;
+    }
     const inaccessibleChoices = inaccessibleChoiceGroups(
       captured.observation,
     );
@@ -4347,6 +6018,14 @@ export async function generateAndReplayForm({
         entryDetail: entry.detail,
         stateExaminations: sequence,
         detail,
+        failureStage: "actuator_preflight_failed",
+        issues: inaccessibleChoices.map((group) => ({
+          code: "locator_unresolved",
+          targetKey: group.fieldKey || group.key || "",
+          detail:
+            group.detail ||
+            "The choice control could not be resolved uniquely before probing.",
+        })),
       });
     }
     if (
@@ -4439,6 +6118,7 @@ export async function generateAndReplayForm({
     }
     const probeExecution = await executeChoiceProbes({
       page,
+      runId,
       toolbox,
       plan: stored.plan,
       beforeCapture: captured,
@@ -4453,6 +6133,9 @@ export async function generateAndReplayForm({
       evidenceSequenceStart: generationJourney.evidence.length + 1,
       branchDepth: samePageBranchDepth,
       recordPrefix: `${stateRecordId}_choice`,
+      actuatorRepository,
+      actuatorMode,
+      stateOrdinal: sequence - 1,
     });
     if (probeExecution.coverage.length > 0) {
       generationJourney = mergeTraversalResults(generationJourney, {
@@ -4463,6 +6146,7 @@ export async function generateAndReplayForm({
             strategy: "stored deterministic exhaustive option probe",
             timestamp: new Date().toISOString(),
             classification: "deterministic",
+            branchClassification: row.classification,
             rationale:
               row.assessment?.rationale ||
               "The generated script retained this deterministic option probe.",
@@ -4559,6 +6243,19 @@ export async function generateAndReplayForm({
         detail:
           probeExecution.haltReason ||
           "Required option coverage was incomplete. No progression or submission was attempted.",
+        failureStage: probeExecution.coverage.some(
+          (row) => row.failureCode === "probe_actuation_failed",
+        )
+          ? "probe_actuation_failed"
+          : "actuator_preflight_failed",
+        issues: probeExecution.coverage
+          .filter((row) => row.status !== "verified")
+          .map((row) => ({
+            code: row.failureCode || "choice_probe_incomplete",
+            targetKey: row.fieldKey,
+            detail: row.detail || probeExecution.haltReason,
+            rootFailureStage: row.rootFailureStage || null,
+          })),
       });
     }
     const generationFieldResults = await enterPlanFields({
@@ -4655,6 +6352,7 @@ export async function generateAndReplayForm({
       journeyComplete: true,
       entryMode: entry.mode,
       entryDetail: entry.detail,
+      actuatorWarnings: shadowActuatorWarnings(page),
     });
     const postActuation = await captureNovelStateInput({
       page,
@@ -4692,6 +6390,7 @@ export async function generateAndReplayForm({
             fieldKey: result.field.key,
             label: result.field.label,
             value: result.field.testValue,
+            sensitive: policySensitiveField(result.field),
           })),
         branchDepth: nextBranchDepth,
         onEvent,
@@ -4822,6 +6521,7 @@ export async function generateAndReplayForm({
       });
       break;
     }
+    const validationMessagesBefore = await toolbox.validationMessages();
     const advanced = await advanceWithPlan({
       page,
       toolbox,
@@ -4841,12 +6541,32 @@ export async function generateAndReplayForm({
       existingContract,
       priorStates: generationStates.map((item) => item.proposal.state),
     });
+    const validationMessagesAfter = await toolbox.validationMessages();
     const unexpectedResult = await assessUnexpectedResultPage({
       page,
       captured: afterAdvanceCapture,
       onEvent,
     });
     if (unexpectedResult) {
+      const actionOutcome = classifyProgressionActionOutcome({
+        progressionKind: plan.progression.kind,
+        beforeObservation: postActuation.observation,
+        afterObservation: afterAdvanceCapture.observation,
+        terminalAssessment: unexpectedResult.assessment,
+        validationMessagesBefore,
+        validationMessagesAfter,
+      });
+      await onEvent?.(
+        "progression_action_outcome_classified",
+        "The executed action produced an explicit terminal result.",
+        {
+          stateKey: plan.state.key,
+          progressionKey: plan.progression.key,
+          actionOutcome,
+          resultAssessmentId:
+            unexpectedResult.assessment.assessmentId,
+        },
+      );
       const terminalPlan = {
         ...stored.plan,
         samePageBranchDepth,
@@ -4858,6 +6578,7 @@ export async function generateAndReplayForm({
           reclassifiedFromAdvance: true,
           resultAssessmentId:
             unexpectedResult.assessment.assessmentId,
+          observedOutcome: actionOutcome,
         },
       };
       const terminalStored = await writeAndLoadPlan(
@@ -5000,33 +6721,75 @@ export async function generateAndReplayForm({
             fieldKey: result.field.key,
             label: result.field.label,
             value: result.field.testValue,
+            sensitive: policySensitiveField(result.field),
           })),
         branchDepth: nextBranchDepth,
         onEvent,
         dynamicsRoot,
         recordId: `${stateRecordId}_same_page_advance`,
       });
+      const actionOutcome = classifyProgressionActionOutcome({
+        progressionKind: plan.progression.kind,
+        beforeObservation: postActuation.observation,
+        afterObservation: afterAdvanceCapture.observation,
+        revealedControls: revealed,
+        changedControls: changed,
+        dynamicsOutcome: samePageDynamics.assessment.outcome,
+        validationMessagesBefore,
+        validationMessagesAfter,
+      });
+      await onEvent?.(
+        "progression_action_outcome_classified",
+        `The executed nonterminal action produced the typed outcome ${actionOutcome.outcome}.`,
+        {
+          stateKey: plan.state.key,
+          progressionKey: plan.progression.key,
+          actionOutcome,
+          dynamicsAssessmentId:
+            samePageDynamics.assessment.assessmentId,
+        },
+      );
       const postAdvanceEvidence = await captureEvidence({
         page,
         plan: stored.plan,
         fieldResults: [],
         sequence: generationJourney.evidence.length + 1,
         kind: "post_advance",
-        label: `Same-page state reached after ${plan.progression.key}`,
+        label:
+          actionOutcome.outcome === "no_effect"
+            ? `Unchanged state observed after ${plan.progression.key}`
+            : `Same-page state reached after ${plan.progression.key}`,
         onEvent,
+        sensitiveMaskValues: generationFieldResults
+          .filter(
+            (result) =>
+              result.outcome.verified && policySensitiveField(result.field),
+          )
+          .map((result) => ({
+            fieldKey: result.field.key,
+            label: result.field.label,
+            value: result.field.testValue,
+          })),
       });
       generationJourney = mergeTraversalResults(generationJourney, {
         actions: [
           {
-            category: "form_advance",
+            category:
+              actionOutcome.outcome === "no_effect"
+                ? "local_action_no_effect"
+                : "form_advance",
             label: plan.progression.key,
             strategy: "stored LLM-authored progression action",
             timestamp: new Date().toISOString(),
             classification: "llm_generated_probe",
             rationale: plan.progression.rationale,
             source: `generated:${plan.proposalId}@${plan.scriptVersion}`,
-            outcome: "landed",
+            outcome:
+              actionOutcome.outcome === "no_effect"
+                ? "could_not_test"
+                : "landed",
             stateId: populatedEvidence.id,
+            actionOutcome,
           },
         ],
         evidence: [postAdvanceEvidence],
@@ -5055,6 +6818,124 @@ export async function generateAndReplayForm({
       const resolvedBranchDepth = conditionalReveal
         ? nextBranchDepth
         : samePageBranchDepth;
+      if (actionOutcome.outcome === "no_effect") {
+        const noEffectPlan = {
+          ...stored.plan,
+          samePageBranchDepth,
+          samePageAssessment: samePageDynamics.assessment,
+          progression: {
+            ...stored.plan.progression,
+            observedOutcome: actionOutcome,
+            noEffectContinuation: true,
+            replayDisposition: "skip_observed_no_effect",
+          },
+        };
+        const noEffectStored = await writeAndLoadPlan(
+          statePlansRoot,
+          `${stateRecordId}_no_effect`,
+          assertExecutablePlanSafety(noEffectPlan),
+          {
+            schemaVersion: 1,
+            kind: "generated_state_script_with_no_effect_progression",
+            runId,
+            stateSequence: sequence,
+            stateKey: noEffectPlan.state.key,
+            scriptVersion: GENERATED_FORM_SCRIPT_VERSION,
+            proposalId: noEffectPlan.proposalId,
+            model: noEffectPlan.model,
+            promptVersion: noEffectPlan.promptVersion,
+            sourceHash: sha256(planSource(noEffectPlan)),
+            generatedAt: new Date().toISOString(),
+            semanticRecord: recordPath,
+            dynamicsAssessmentId:
+              samePageDynamics.assessment.assessmentId,
+            actionOutcome: actionOutcome.outcome,
+          },
+        );
+        const eligibility = noEffectReplanEligibility({
+          outcome: actionOutcome,
+          plan: noEffectStored.plan,
+          fieldResults: generationFieldResults,
+          attemptsUsed: nonterminalNoEffectReplans,
+          maxAttempts: MAX_NONTERMINAL_NO_EFFECT_REPLANS,
+        });
+        if (eligibility.eligible) {
+          nonterminalNoEffectReplans += 1;
+          const exclusion = progressionActionExclusion(
+            generated.proposal,
+          );
+          pendingProgressionReplan = {
+            priorProposal: generated.proposal,
+            outcome: actionOutcome,
+            exclusion,
+            attemptsUsed: nonterminalNoEffectReplans,
+            maxAttempts: MAX_NONTERMINAL_NO_EFFECT_REPLANS,
+          };
+          generationStates.push({
+            proposal: generated.proposal,
+            branchVariantProposals:
+              probeExecution.variantProposals,
+            branchVariantProvenance:
+              probeExecution.variantProvenance,
+            observation: captured.observation,
+            provenance: generated.provenance,
+            safety,
+            plan: noEffectStored.plan,
+            sourceHash: noEffectStored.sourceHash,
+            dynamicContinuation: true,
+          });
+          await onEvent?.(
+            "nonterminal_no_effect_replan_requested",
+            "The nonterminal action produced no observable effect, so control returned once to bounded semantic planning with that action excluded.",
+            {
+              sequence,
+              stateKey: plan.state.key,
+              progressionKey: plan.progression.key,
+              exclusion,
+              attemptsUsed: nonterminalNoEffectReplans,
+              maxAttempts:
+                MAX_NONTERMINAL_NO_EFFECT_REPLANS,
+              actionOutcome,
+            },
+          );
+          continue;
+        }
+        const detail =
+          "The nonterminal action produced no observable effect and the bounded replan budget is exhausted. The unchanged action will not be clicked again.";
+        await onEvent?.(
+          "nonterminal_no_effect_replan_exhausted",
+          detail,
+          {
+            sequence,
+            stateKey: plan.state.key,
+            progressionKey: plan.progression.key,
+            reason: eligibility.reason,
+            attemptsUsed: nonterminalNoEffectReplans,
+            maxAttempts: MAX_NONTERMINAL_NO_EFFECT_REPLANS,
+            actionOutcome,
+          },
+        );
+        return couldNotTestGeneratedState({
+          page,
+          plan: noEffectStored.plan,
+          fieldResults: [],
+          onEvent,
+          priorResult: generationJourney,
+          journeyUrls: [...journeyUrls],
+          entryMode: entry.mode,
+          entryDetail: entry.detail,
+          stateExaminations: sequence,
+          detail,
+          failureStage: "progression_replan_exhausted",
+          issues: [
+            {
+              code: "nonterminal_no_effect_replan_exhausted",
+              targetKey: plan.progression.key,
+              detail,
+            },
+          ],
+        });
+      }
       if (
         !supported ||
         resolvedBranchDepth > MAX_SAME_PAGE_BRANCH_DEPTH
@@ -5154,6 +7035,22 @@ export async function generateAndReplayForm({
       });
       continue;
     }
+    const pageAdvanceOutcome = classifyProgressionActionOutcome({
+      progressionKind: plan.progression.kind,
+      beforeObservation: postActuation.observation,
+      afterObservation: afterAdvanceCapture.observation,
+      validationMessagesBefore,
+      validationMessagesAfter,
+    });
+    await onEvent?.(
+      "progression_action_outcome_classified",
+      `The executed nonterminal action produced the typed outcome ${pageAdvanceOutcome.outcome}.`,
+      {
+        stateKey: plan.state.key,
+        progressionKey: plan.progression.key,
+        actionOutcome: pageAdvanceOutcome,
+      },
+    );
     const crossPageDynamics = await assessDynamics({
       transitionKind: "page_advance",
       beforeCapture: postActuation,
@@ -5169,6 +7066,7 @@ export async function generateAndReplayForm({
           fieldKey: result.field.key,
           label: result.field.label,
           value: result.field.testValue,
+          sensitive: policySensitiveField(result.field),
         })),
       branchDepth: samePageBranchDepth,
       onEvent,
@@ -5183,6 +7081,16 @@ export async function generateAndReplayForm({
       kind: "post_advance",
       label: `State reached after ${plan.progression.key}`,
       onEvent,
+      sensitiveMaskValues: generationFieldResults
+        .filter(
+          (result) =>
+            result.outcome.verified && policySensitiveField(result.field),
+        )
+        .map((result) => ({
+          fieldKey: result.field.key,
+          label: result.field.label,
+          value: result.field.testValue,
+        })),
     });
     generationJourney = mergeTraversalResults(generationJourney, {
       actions: [
@@ -5212,9 +7120,36 @@ export async function generateAndReplayForm({
       entryMode: entry.mode,
       entryDetail: entry.detail,
     });
+    if (
+      shouldRecordPassiveReadback(
+        crossPageDynamics.assessment,
+        crossPageDynamics.stateDelta,
+      )
+    ) {
+      generationJourney = {
+        ...generationJourney,
+        branchStates: generationJourney.branchStates + 1,
+      };
+      await onEvent?.(
+        "passive_readback_observed",
+        "The successor rendered a verified prior value as a non-blocking readback without changing the form contract.",
+        {
+          stateKey: plan.state.key,
+          progressionKey: plan.progression.key,
+          stateDelta: crossPageDynamics.stateDelta,
+          resolvedClassification: "passive_readback",
+        },
+      );
+    }
     if (crossPageDynamics.assessment.outcome !== "independent") {
       const detected =
         crossPageDynamics.assessment.outcome === "cross_page_dependency";
+      if (detected) {
+        generationJourney = {
+          ...generationJourney,
+          branchStates: generationJourney.branchStates + 1,
+        };
+      }
       const detail = detected
         ? "The LLM detected cross-page conditional behavior. Phase 1 records but does not execute cross-page branches."
         : "The LLM could not rule out cross-page conditional behavior. Phase 1 halts before new-page actuation.";
@@ -5248,6 +7183,10 @@ export async function generateAndReplayForm({
       ...stored.plan,
       samePageBranchDepth,
       crossPageAssessment: crossPageDynamics.assessment,
+      progression: {
+        ...stored.plan.progression,
+        observedOutcome: pageAdvanceOutcome,
+      },
     };
     const transitionStored = await writeAndLoadPlan(
       statePlansRoot,
@@ -5430,6 +7369,7 @@ export async function generateAndReplayForm({
       observedFields.push(
         observedField(field, plan, result, plan.state.key),
       );
+      if (result?.outcome.skipped === true) continue;
       actions.push({
         category: "field_entry",
         label: field.label,
@@ -5448,9 +7388,13 @@ export async function generateAndReplayForm({
           : {}),
       });
     }
+    const noEffectContinuation =
+      shouldSkipNoEffectProgressionReplay(plan);
     const evidenceKind =
-      plan.progression.dynamicContinuation
-        ? "branch"
+      noEffectContinuation
+        ? "populated"
+        : plan.progression.dynamicContinuation
+          ? "branch"
         : plan.progression.kind === "terminal_submit"
         ? executionMode === "fixture_submit"
           ? "pre_advance"
@@ -5463,8 +7407,10 @@ export async function generateAndReplayForm({
       sequence: evidence.length + 1,
       kind: evidenceKind,
       label:
-        plan.progression.dynamicContinuation
-          ? `Conditional state revealed by ${plan.state.description}`
+        noEffectContinuation
+          ? `Verified fields retained before replanning ${plan.state.description}`
+          : plan.progression.dynamicContinuation
+            ? `Conditional state revealed by ${plan.state.description}`
           : plan.progression.kind === "terminal_submit"
           ? "Completed generated values at the terminal boundary"
           : `Completed generated values for ${plan.state.description}`,
@@ -5505,6 +7451,21 @@ export async function generateAndReplayForm({
     fieldsEntered += selectedVariants.fieldsEntered;
     entryFailures += selectedVariants.entryFailures;
     if (plan.progression.dynamicContinuation) {
+      if (noEffectContinuation) {
+        actions.push({
+          category: "semantic_replan_continuation",
+          label: plan.progression.key,
+          strategy: "stored typed action-outcome contract",
+          timestamp: new Date().toISOString(),
+          classification: "deterministic_replay",
+          rationale:
+            "The previously observed action produced no effect, so replay preserves verified fields and skips that discarded action before the replacement state.",
+          source: `generated:${completePlan.artifactId}@${completePlan.scriptVersion}`,
+          outcome: "skipped",
+          stateId: populatedEvidence.id,
+        });
+        continue;
+      }
       if (plan.progression.samePageRevealAction) {
         const advanced = await advanceWithPlan({
           page,
@@ -5642,13 +7603,20 @@ export async function generateAndReplayForm({
   }
 
   if (replayFailure) {
+    const retainedBranchStates = Math.max(
+      generationJourney.branchStates || 0,
+      generatedBranchStateCount(finalStored.plan),
+    );
     return mergeTraversalResults(generationJourney, {
       actions,
       evidence,
       observedFields,
       fieldsEntered,
       entryFailures,
-      branchStates: generatedBranchStateCount(finalStored.plan),
+      branchStates: Math.max(
+        0,
+        retainedBranchStates - (generationJourney.branchStates || 0),
+      ),
       stateExaminations: completePlan.provenance.length,
       submissionsAttempted,
       submissionsSucceeded,
@@ -5676,13 +7644,23 @@ export async function generateAndReplayForm({
     });
   }
 
+  const actuatorReleases = await publishValidatedActuatorReleases({
+    repository: actuatorRepository,
+    completePlan: finalStored.plan,
+    evidence,
+    onEvent,
+  });
   const result = {
     actions,
     evidence,
     observedFields,
     fieldsEntered,
+    ...fieldActionMetrics(actions),
     entryFailures,
-    branchStates: generatedBranchStateCount(finalStored.plan),
+    branchStates: Math.max(
+      generationJourney.branchStates || 0,
+      generatedBranchStateCount(finalStored.plan),
+    ),
     stateExaminations: completePlan.provenance.length,
     submissionsAttempted,
     submissionsSucceeded,
@@ -5702,6 +7680,14 @@ export async function generateAndReplayForm({
       modelCalls: completePlan.provenance.length,
       modelCallsThisRun: completePlan.provenance.length,
       states: completePlan.states.length,
+      actuatorMode,
+      actuatorReleases: actuatorReleases.map((release) => ({
+        artifactId: release.artifactId,
+        releaseId: release.releaseId,
+        releaseVersion: release.releaseVersion,
+        semanticVersion: release.semanticVersion,
+        actuatorVersion: release.actuatorVersion,
+      })),
       lifecycle: "generated_and_validated",
     },
     browserMode,
@@ -5710,6 +7696,7 @@ export async function generateAndReplayForm({
     haltReason: "",
     entryMode: entry.mode,
     entryDetail: entry.detail,
+    actuatorWarnings: shadowActuatorWarnings(page),
   };
   let publicationCandidate = finalStored;
   if (submissionResult?.verified && submissionResult.criteria) {

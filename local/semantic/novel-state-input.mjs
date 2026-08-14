@@ -160,6 +160,34 @@ export async function captureNovelStateInput({
       }
       return "";
     };
+    const repeatableOf = (element) => {
+      const container = element.closest(
+        '[data-repeatable], [data-repeater], .repeater, .repeatable, [class*="repeater" i]',
+      );
+      if (!container) return null;
+      const heading = container.querySelector(
+        ":scope > legend, :scope > h1, :scope > h2, :scope > h3, :scope > h4",
+      );
+      const addControl = [...container.querySelectorAll('button, [role="button"], input[type="button"]')]
+        .find((candidate) => /\b(?:add|another|more|new)\b/i.test(clean(candidate.textContent || candidate.value)));
+      return {
+        key: clean(
+          container.getAttribute("data-repeatable") ||
+            container.getAttribute("data-repeater") ||
+            container.id ||
+            heading?.textContent ||
+            "repeatable_group",
+        ),
+        label: clean(heading?.textContent || container.getAttribute("aria-label") || ""),
+        addControlText: clean(addControl?.textContent || addControl?.value || ""),
+      };
+    };
+    const documentOrder = new Map(
+      [...document.querySelectorAll("*")].map((element, index) => [
+        element,
+        index,
+      ]),
+    );
 
     const controlElements = [
       ...document.querySelectorAll("input, select, textarea"),
@@ -167,12 +195,12 @@ export async function captureNovelStateInput({
       (element) =>
         !(
           element instanceof HTMLInputElement &&
-          ["button", "hidden", "image", "reset", "submit"].includes(
+          ["button", "image", "reset", "submit"].includes(
             element.type.toLowerCase(),
           )
         ),
     );
-    const controls = controlElements.map((element, index) => {
+    const nativeControls = controlElements.map((element, index) => {
       const optionFacts =
         element instanceof HTMLSelectElement
           ? [...element.options].map((option) => ({
@@ -190,6 +218,7 @@ export async function captureNovelStateInput({
             : [];
       const fieldset = element.closest("fieldset");
       const groupContainer = element.closest("fieldset, [role=group]");
+      const repeatable = repeatableOf(element);
       return {
         factId: `field_${index}`,
         tag: element.tagName.toLowerCase(),
@@ -248,13 +277,140 @@ export async function captureNovelStateInput({
             : false,
         options: optionFacts,
         sectionText: sectionOf(element),
+        repeatableKey: repeatable?.key || "",
+        repeatableLabel: repeatable?.label || "",
+        addRowControl: repeatable?.addControlText || "",
         selectorCandidates: selectors(element),
+        documentOrdinal:
+          documentOrder.get(element) ?? Number.MAX_SAFE_INTEGER,
       };
     });
 
+    const virtualContainers = [...document.querySelectorAll("*")].filter(
+      (element) => {
+        if (!visible(element)) return false;
+        if (element.matches("input, select, textarea, button, a, label")) {
+          return false;
+        }
+        if (element.querySelector("input, select, textarea")) return false;
+        const role = clean(element.getAttribute("role")).toLowerCase();
+        const hasIdentity = Boolean(
+          element.id ||
+            element.getAttribute("aria-label") ||
+            element.getAttribute("aria-labelledby") ||
+            ["group", "listbox", "radiogroup", "slider"].includes(role),
+        );
+        if (!hasIdentity) return false;
+        const valueChildren = [
+          ...element.querySelectorAll(
+            ":scope > [data-value], :scope > [data-v], :scope > [role=option], :scope > [aria-valuenow], :scope > * > [data-value], :scope > * > [data-v], :scope > * > [role=option]",
+          ),
+        ].filter(visible);
+        const values = valueChildren
+          .map((child) =>
+            child.getAttribute("data-value") ??
+            child.getAttribute("data-v") ??
+            child.getAttribute("aria-valuenow") ??
+            child.getAttribute("value"),
+          )
+          .filter((value) => value !== null && clean(value) !== "");
+        return values.length >= 2 && new Set(values.map(clean)).size >= 2;
+      },
+    );
+    const virtualControls = virtualContainers.map((element, index) => {
+      const optionElements = [
+        ...element.querySelectorAll(
+          ":scope > [data-value], :scope > [data-v], :scope > [role=option], :scope > [aria-valuenow], :scope > * > [data-value], :scope > * > [data-v], :scope > * > [role=option]",
+        ),
+      ].filter(visible);
+      const options = optionElements.flatMap((child) => {
+        const value =
+          child.getAttribute("data-value") ??
+          child.getAttribute("data-v") ??
+          child.getAttribute("aria-valuenow") ??
+          child.getAttribute("value");
+        if (value === null || clean(value) === "") return [];
+        const rawOptionLabel = clean(
+          child.getAttribute("aria-label") ||
+            child.getAttribute("title") ||
+            child.textContent,
+        );
+        const numericRating = /^\d+(?:\.\d+)?$/.test(clean(value));
+        const glyphOnly =
+          rawOptionLabel !== "" &&
+          !/[A-Za-z0-9]/.test(rawOptionLabel);
+        return [{
+          value: String(value),
+          label:
+            numericRating && (glyphOnly || rawOptionLabel === "")
+              ? `${value} ${String(value) === "1" ? "star" : "stars"}`
+              : rawOptionLabel || String(value),
+        }];
+      });
+      let precedingHeading = "";
+      let cursor = element.previousElementSibling;
+      while (cursor && !precedingHeading) {
+        if (/^H[1-6]$/.test(cursor.tagName)) {
+          precedingHeading = clean(cursor.textContent);
+          break;
+        }
+        cursor = cursor.previousElementSibling;
+      }
+      const rawLabel = clean(
+        precedingHeading ||
+          element.getAttribute("aria-label") ||
+          (element.getAttribute("aria-labelledby") || "")
+            .split(/\s+/)
+            .filter(Boolean)
+            .map((id) => document.getElementById(id)?.textContent || "")
+            .join(" ") ||
+          element.id,
+      );
+      return {
+        factId: `virtual_field_${index}`,
+        tag: element.tagName.toLowerCase(),
+        rawType: "custom",
+        name: element.getAttribute("name") || element.id || null,
+        id: element.id || null,
+        rawLabel,
+        groupLegend: "",
+        description: describedBy(element),
+        placeholder: null,
+        autocomplete: null,
+        inputMode: null,
+        pattern: null,
+        min: null,
+        max: null,
+        step: null,
+        minLength: null,
+        maxLength: null,
+        accept: null,
+        multiple: false,
+        maxFiles: null,
+        maxFileSize: null,
+        required:
+          element.getAttribute("aria-required") === "true" ||
+          element.hasAttribute("required"),
+        visible: true,
+        groupContainerVisible: true,
+        disabled: element.getAttribute("aria-disabled") === "true",
+        readOnly: false,
+        options,
+        sectionText: sectionOf(element),
+        selectorCandidates: selectors(element),
+        documentOrdinal:
+          documentOrder.get(element) ?? Number.MAX_SAFE_INTEGER,
+        virtual: true,
+        actuationEligible: false,
+      };
+    });
+    const controls = [...nativeControls, ...virtualControls].sort(
+      (left, right) => left.documentOrdinal - right.documentOrdinal,
+    );
+
     const actions = [
       ...document.querySelectorAll(
-        "button, input[type=submit], input[type=button], summary, [role=button], a[href]",
+        "button, input[type=submit], input[type=button], summary, [role=button], [aria-expanded], a[href]",
       ),
     ].map((element, index) => {
       const disclosureRoots = [];
@@ -269,6 +425,14 @@ export async function captureNovelStateInput({
       const ariaExpanded = element.getAttribute("aria-expanded");
       if (ariaExpanded === "true") disclosureExpanded = true;
       if (ariaExpanded === "false") disclosureExpanded = false;
+      const rawHref = element.getAttribute("href")?.trim() || "";
+      const navigationalAnchor =
+        element.tagName === "A" &&
+        rawHref !== "" &&
+        !rawHref.startsWith("#");
+      const navigationChrome = Boolean(
+        element.closest("nav, header, footer, [role='navigation']"),
+      );
       const controlledIds = clean(element.getAttribute("aria-controls"))
         .split(/\s+/)
         .filter(Boolean);
@@ -280,6 +444,13 @@ export async function captureNovelStateInput({
       if (targetSelector?.startsWith("#")) {
         const controlled = document.getElementById(targetSelector.slice(1));
         if (controlled) disclosureRoots.push(controlled);
+      }
+      if (
+        ariaExpanded !== null &&
+        disclosureRoots.length === 0 &&
+        element.nextElementSibling
+      ) {
+        disclosureRoots.push(element.nextElementSibling);
       }
       const blockedControlFactIds = [
         ...new Set(
@@ -310,12 +481,51 @@ export async function captureNovelStateInput({
         formMethod: element.form?.method?.toUpperCase?.() || null,
         formAction: element.form?.action || null,
         disclosureControl:
-          element.tagName === "SUMMARY" ||
-          ariaExpanded !== null,
-        disclosureExpanded,
+          !navigationChrome &&
+          (element.tagName === "SUMMARY" ||
+            (ariaExpanded !== null && !navigationalAnchor)),
+        disclosureExpanded:
+          navigationalAnchor || navigationChrome ? null : disclosureExpanded,
         blockedControlFactIds,
       };
     });
+
+    const scrollRegions = [...document.querySelectorAll("*")]
+      .filter((element) => {
+        if (["HTML", "BODY"].includes(element.tagName)) return false;
+        const style = getComputedStyle(element);
+        return (
+          visible(element) &&
+          element.scrollHeight > element.clientHeight + 8 &&
+          ["auto", "scroll"].includes(style.overflowY)
+        );
+      })
+      .slice(0, 80)
+      .map((element, index) => ({
+        factId: `scroll_region_${index}`,
+        tag: element.tagName.toLowerCase(),
+        role: element.getAttribute("role") || null,
+        rawLabel: clean(
+          element.getAttribute("aria-label") ||
+            element.getAttribute("title") ||
+            element.closest("section, fieldset")?.querySelector("legend, h1, h2, h3")
+              ?.textContent ||
+            "",
+        ),
+        textExcerpt: clean(element.textContent).slice(0, 800),
+        selectorCandidates: selectors(element),
+        scrollTop: Math.round(element.scrollTop),
+        clientHeight: Math.round(element.clientHeight),
+        scrollHeight: Math.round(element.scrollHeight),
+        atEnd:
+          element.scrollTop + element.clientHeight >=
+          element.scrollHeight - 2,
+        containedControlFactIds: controlElements
+          .flatMap((control, controlIndex) =>
+            element.contains(control) ? [`field_${controlIndex}`] : [],
+          )
+          .sort(),
+      }));
 
     const sections = [
       ...document.querySelectorAll("fieldset, section, [role=group]"),
@@ -360,11 +570,130 @@ export async function captureNovelStateInput({
       heading: clean(document.querySelector("h1")?.textContent),
       controls,
       actions,
+      scrollRegions,
       sections,
       guidance,
       challengeSignals,
     };
   });
+  const frameScrollRegions = [];
+  const childFrames = page
+    .frames()
+    .filter(
+      (frame) =>
+        frame !== page.mainFrame() && frame.parentFrame() === page.mainFrame(),
+    )
+    .slice(0, 24);
+  for (const [frameIndex, frame] of childFrames.entries()) {
+    try {
+      const frameElement = await frame.frameElement();
+      const frameSelectorCandidates = await frameElement.evaluate((element) => {
+        const cssEscape = (value) =>
+          window.CSS?.escape
+            ? window.CSS.escape(value)
+            : String(value).replace(/"/g, '\\"');
+        const candidates = [];
+        if (element.id) candidates.push(`#${cssEscape(element.id)}`);
+        for (const attribute of ["name", "title", "src"]) {
+          const value = element.getAttribute(attribute);
+          if (value) {
+            candidates.push(
+              `${element.tagName.toLowerCase()}[${attribute}="${cssEscape(value)}"]`,
+            );
+          }
+        }
+        const siblings = element.parentElement
+          ? [...element.parentElement.children].filter(
+              (item) => item.tagName === element.tagName,
+            )
+          : [element];
+        candidates.push(
+          `${element.tagName.toLowerCase()}:nth-of-type(${Math.max(siblings.indexOf(element) + 1, 1)})`,
+        );
+        return [...new Set(candidates)];
+      });
+      const regions = await frame.evaluate((prefix) => {
+        const clean = (value) =>
+          String(value || "").replace(/\s+/g, " ").trim();
+        const cssEscape = (value) =>
+          window.CSS?.escape
+            ? window.CSS.escape(value)
+            : String(value).replace(/"/g, '\\"');
+        const visible = (element) => {
+          if (!element?.isConnected) return false;
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return (
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            rect.width > 0 &&
+            rect.height > 0 &&
+            element.getAttribute("aria-hidden") !== "true"
+          );
+        };
+        const selectors = (element) => {
+          const candidates = [];
+          if (element.id) candidates.push(`#${cssEscape(element.id)}`);
+          const role = element.getAttribute("role");
+          const label = element.getAttribute("aria-label");
+          if (role && label) {
+            candidates.push(
+              `[role="${cssEscape(role)}"][aria-label="${cssEscape(label)}"]`,
+            );
+          }
+          const siblings = element.parentElement
+            ? [...element.parentElement.children].filter(
+                (item) => item.tagName === element.tagName,
+              )
+            : [element];
+          candidates.push(
+            `${element.tagName.toLowerCase()}:nth-of-type(${Math.max(siblings.indexOf(element) + 1, 1)})`,
+          );
+          return [...new Set(candidates)];
+        };
+        return [...document.querySelectorAll("*")]
+          .filter((element) => {
+            if (["HTML", "BODY"].includes(element.tagName)) return false;
+            const style = getComputedStyle(element);
+            return (
+              visible(element) &&
+              element.scrollHeight > element.clientHeight + 8 &&
+              ["auto", "scroll"].includes(style.overflowY)
+            );
+          })
+          .slice(0, 80)
+          .map((element, index) => ({
+            factId: `${prefix}_${index}`,
+            tag: element.tagName.toLowerCase(),
+            role: element.getAttribute("role") || null,
+            rawLabel: clean(
+              element.getAttribute("aria-label") ||
+                element.getAttribute("title") ||
+                "",
+            ),
+            textExcerpt: clean(element.textContent).slice(0, 800),
+            selectorCandidates: selectors(element),
+            scrollTop: Math.round(element.scrollTop),
+            clientHeight: Math.round(element.clientHeight),
+            scrollHeight: Math.round(element.scrollHeight),
+            atEnd:
+              element.scrollTop + element.clientHeight >=
+              element.scrollHeight - 2,
+            containedControlFactIds: [],
+          }));
+      }, `frame_scroll_region_${frameIndex}`);
+      frameScrollRegions.push(
+        ...regions.map((region) => ({
+          ...region,
+          frameUrl: frame.url(),
+          frameSelectorCandidates,
+        })),
+      );
+    } catch {
+      // Detached or inaccessible frames remain absent raw facts; generation
+      // must not invent a frame strategy without an observed region.
+    }
+  }
   const screenshot = await page.screenshot({ fullPage: true, type: "png" });
   const accessibilitySnapshot = await toolbox.senseAccessibility();
   return {
@@ -378,6 +707,7 @@ export async function captureNovelStateInput({
       heading: raw.heading,
       controls: raw.controls,
       actions: raw.actions,
+      scrollRegions: [...raw.scrollRegions, ...frameScrollRegions].slice(0, 160),
       sections: raw.sections,
       guidance: raw.guidance,
       challengeSignals: raw.challengeSignals,

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "name": "devrun-20260811-threegate7-rotating-06",
+  "seed": "formweave-threegate-2026-08-11:rotating-06",
+  "batchSize": 7,
+  "batchCount": 1,
+  "trials": 1,
+  "selectionAlgorithm": "complexity-stratified-v1",
+  "protocolBase": "https://testforms.dbolab.io/api/v1",
+  "appApiOrigin": "http://127.0.0.1:8788",
+  "executionGoal": "submit",
+  "appExecutionMode": "fixture_submit",
+  "browserMode": "headless",
+  "timeoutMs": 900000,
+  "freshGenerationRequired": true,
+  "scenarioKeys": [
+    "site_a_shelter/primary",
+    "site_ab_decoy_forms/primary",
+    "site_i_dynamic_form/primary",
+    "site_p_crosspage_echo/primary",
+    "site_r_edgecases/primary",
+    "site_t_challenges/image_challenge",
+    "site_ag_widget_maze/primary"
+  ]
+}

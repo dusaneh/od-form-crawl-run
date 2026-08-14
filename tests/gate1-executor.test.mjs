@@ -37,6 +37,22 @@ test("scalar readback compares the generic alphanumeric gist", () => {
   assert.equal(scalarReadbackEquivalent("Test.User", "test user"), true);
   assert.equal(scalarReadbackEquivalent("AB12345", "AB-123 46"), false);
   assert.equal(scalarReadbackEquivalent("---", "..."), false);
+  assert.equal(scalarReadbackEquivalent(true, "on"), true);
+  assert.equal(scalarReadbackEquivalent(true, "checked"), true);
+  assert.equal(scalarReadbackEquivalent(false, "off"), true);
+  assert.equal(scalarReadbackEquivalent(false, "on"), false);
+  assert.equal(scalarReadbackEquivalent(1, "on"), false);
+  assert.equal(
+    scalarReadbackEquivalent(["housing", "food"], ["food", "housing"]),
+    true,
+  );
+  assert.equal(
+    scalarReadbackEquivalent(
+      "housing",
+      { value: "housing", label: "Housing assistance" },
+    ),
+    true,
+  );
 });
 
 test("writeControl accepts site-formatted scalar readback", async () => {
@@ -64,6 +80,51 @@ test("writeControl accepts site-formatted scalar readback", async () => {
     );
     assert.equal(await page.locator("#account").inputValue(), "AB-123 45");
     assert.equal(result.verified, true);
+  } finally {
+    await page.close();
+    await browser.close();
+  }
+});
+
+test("novel-state capture inventories an input-less rating widget in DOM order", async () => {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  try {
+    await page.setContent(`
+      <label for="name">Name</label>
+      <input id="name" name="name" />
+      <h3>How satisfied are you?</h3>
+      <div id="satisfaction" aria-label="Satisfaction rating">
+        <span data-v="1">★</span>
+        <span data-v="2">★</span>
+        <span data-v="3">★</span>
+        <span data-v="4">★</span>
+        <span data-v="5">★</span>
+      </div>
+      <label for="notes">Notes</label>
+      <textarea id="notes" name="notes"></textarea>
+    `);
+    const toolbox = new PhysicsToolbox(page);
+    const captured = await captureNovelStateInput({ page, toolbox });
+    const controls = captured.observation.controls;
+    const rating = controls.find((item) => item.id === "satisfaction");
+    assert.ok(rating);
+    assert.equal(rating.virtual, true);
+    assert.equal(rating.actuationEligible, false);
+    assert.equal(rating.rawType, "custom");
+    assert.equal(rating.rawLabel, "How satisfied are you?");
+    assert.deepEqual(
+      rating.options.map((item) => item.label),
+      ["1 star", "2 stars", "3 stars", "4 stars", "5 stars"],
+    );
+    assert.ok(
+      controls.findIndex((item) => item.id === "name") <
+        controls.findIndex((item) => item.id === "satisfaction"),
+    );
+    assert.ok(
+      controls.findIndex((item) => item.id === "satisfaction") <
+        controls.findIndex((item) => item.id === "notes"),
+    );
   } finally {
     await page.close();
     await browser.close();
@@ -486,7 +547,7 @@ test(
 );
 
 test(
-  "semantic sensing follows a visible styled label across a conditional reveal",
+  "semantic sensing preserves collapsed disclosures until a declared action opens them",
   { timeout: 30_000 },
   async () => {
     const server = createServer((_request, response) => {
@@ -513,6 +574,13 @@ test(
           <summary>Eligibility questions</summary>
           <input id="closed-detail-field" name="closed_detail_field" type="text">
         </details>
+        <div id="custom-accordion" aria-expanded="false"
+          onclick="this.setAttribute('aria-expanded', 'true'); this.nextElementSibling.style.display = 'block'">
+          Optional schedule
+        </div>
+        <div style="display:none">
+          <select id="custom-hidden-field" name="custom_hidden_field"><option>Morning</option></select>
+        </div>
         <input id="semantic-submit" type="submit" value="Send application">
       `);
     });
@@ -538,7 +606,7 @@ test(
         before.observation.controls.find(
           (field) => field.id === "closed-detail-field",
         )?.visible,
-        true,
+        false,
       );
       assert.equal(
         before.observation.actions.find(
@@ -547,8 +615,19 @@ test(
             action.rawText === "Eligibility questions" &&
             action.visible,
         )?.disclosureExpanded,
-        true,
+        false,
       );
+      const customField = before.observation.controls.find(
+        (field) => field.id === "custom-hidden-field",
+      );
+      const customDisclosure = before.observation.actions.find(
+        (action) => action.rawText === "Optional schedule",
+      );
+      assert.equal(customField?.visible, false);
+      assert.equal(customDisclosure?.disclosureExpanded, false);
+      assert.deepEqual(customDisclosure?.blockedControlFactIds, [
+        customField.factId,
+      ]);
       assert.equal(
         before.observation.controls.some(
           (field) => field.id === "semantic-submit",
@@ -574,6 +653,10 @@ test(
           ?.visible,
         true,
       );
+      const disclosureAction = await toolbox.clickAction({
+        selectors: ["details > summary"],
+      });
+      assert.equal(disclosureAction.clicked, true);
       const expanded = await captureNovelStateInput({ page, toolbox });
       assert.equal(
         expanded.observation.actions.find(
@@ -697,13 +780,14 @@ test(
       assert.equal(result.verified, true);
       assert.deepEqual(result.readback, {
         marker: "[generated harmless upload]",
+        name: "formweave-test-upload.pdf",
         fileCount: 1,
         mimeType: "application/pdf",
         byteLength: result.readback.byteLength,
         synthetic: true,
       });
       assert.ok(result.readback.byteLength > 0);
-      assert.equal("name" in result.readback, false);
+      assert.equal(result.readback.name, "formweave-test-upload.pdf");
       assert.equal("path" in result.readback, false);
       assert.deepEqual(
         await page.locator("#document").evaluate((element) =>
@@ -764,7 +848,7 @@ test("script-declared inactive branch cleanup clears hidden native controls", as
   }
 });
 
-test("page onset deterministically moves the pointer, expands disclosures, and scrolls every frame once", async () => {
+test("page onset moves and document-scrolls without actuating disclosures or nested application regions", async () => {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 800, height: 500 } });
   try {
@@ -791,6 +875,21 @@ test("page onset deterministically moves the pointer, expands disclosures, and s
           More information
         </button>
         <div id="aria-panel" hidden>Revealed information</div>
+        <a id="fragment-disclosure" href="#fragment-panel" aria-expanded="false" aria-controls="fragment-panel"
+          onclick="event.preventDefault(); this.setAttribute('aria-expanded', 'true'); document.querySelector('#fragment-panel').hidden = false; window.fragmentClicks = (window.fragmentClicks || 0) + 1">
+          Eligibility details
+        </a>
+        <div id="fragment-panel" hidden>More eligibility information</div>
+        <a id="navigational-anchor" href="/about/our-story/" aria-expanded="false"
+          onclick="event.preventDefault(); window.navigationalClicks = (window.navigationalClicks || 0) + 1">
+          About Us
+        </a>
+        <nav>
+          <a id="navigation-menu" href="#" aria-expanded="false"
+            onclick="event.preventDefault(); this.setAttribute('aria-expanded', 'true'); window.navigationMenuClicks = (window.navigationMenuClicks || 0) + 1">
+            Services
+          </a>
+        </nav>
         <div id="scrollbox" onscroll="window.containerScrolls = (window.containerScrolls || 0) + 1">
           <div>nested</div>
         </div>
@@ -806,35 +905,101 @@ test("page onset deterministically moves the pointer, expands disclosures, and s
     assert.equal(result.pointerMotionProfile, "deterministic_varied_easing");
     assert.ok(result.framesPrimed >= 2);
     assert.ok(result.documentScrollSteps > 0);
-    assert.ok(result.scrollSurfacesPrimed > 0);
-    assert.equal(result.detailsOpened, 2);
-    assert.equal(result.disclosureButtonsOpened, 1);
-    assert.equal(await page.locator("#main-details").getAttribute("open"), "");
+    assert.equal(result.scrollSurfacesPrimed, 0);
+    assert.ok(result.scrollSurfacesDeferred > 0);
+    assert.equal(result.detailsOpened, 0);
+    assert.equal(result.disclosureButtonsOpened, 0);
+    assert.equal(await page.locator("#main-details").getAttribute("open"), null);
     assert.equal(
       await page.locator("#aria-disclosure").getAttribute("aria-expanded"),
-      "true",
+      "false",
     );
+    assert.equal(
+      await page.locator("#fragment-disclosure").getAttribute("aria-expanded"),
+      "false",
+    );
+    assert.equal(await page.evaluate(() => window.fragmentClicks || 0), 0);
+    assert.equal(
+      await page.evaluate(() => window.navigationalClicks || 0),
+      0,
+    );
+    assert.equal(
+      await page.evaluate(() => window.navigationMenuClicks || 0),
+      0,
+    );
+    const toolbox = new PhysicsToolbox(page);
+    const captured = await captureNovelStateInput({ page, toolbox });
+    assert.equal(
+      captured.observation.actions.find(
+        (action) => action.rawText === "Eligibility details",
+      )?.disclosureControl,
+      true,
+    );
+    assert.equal(
+      captured.observation.actions.find(
+        (action) => action.rawText === "About Us",
+      )?.disclosureControl,
+      false,
+    );
+    assert.equal(
+      captured.observation.actions.find(
+        (action) => action.rawText === "Services",
+      )?.disclosureControl,
+      false,
+    );
+    const deferredScrollRegion = captured.observation.scrollRegions.find(
+      (region) => region.selectorCandidates.includes("#scrollbox"),
+    );
+    assert.equal(deferredScrollRegion?.atEnd, false);
+    assert.equal(deferredScrollRegion?.scrollTop, 0);
+    assert.equal(deferredScrollRegion?.textExcerpt, "nested");
     assert.ok((await page.evaluate(() => window.pointerMoves)) >= 5);
     assert.ok((await page.evaluate(() => window.documentScrolls)) > 0);
-    assert.ok((await page.evaluate(() => window.containerScrolls || 0)) > 0);
+    assert.equal(await page.evaluate(() => window.containerScrolls || 0), 0);
     const childFrame = page.frames().find((frame) => frame !== page.mainFrame());
     assert.ok(await childFrame.evaluate(() => window.frameScrolls > 0));
-    assert.equal(await childFrame.locator("details").getAttribute("open"), "");
+    assert.equal(await childFrame.locator("details").getAttribute("open"), null);
 
     const second = await preparePageOnset(page);
     assert.equal(second.pageOnsetPerformed, false);
     assert.equal(second.pointerMoves, 0);
-    assert.equal(await page.evaluate(() => window.ariaClicks), 1);
-    assert.equal(await page.evaluate(() => window.mainDetailToggles), 1);
-    assert.equal(await childFrame.evaluate(() => window.frameDetailToggles), 1);
+    assert.equal(await page.evaluate(() => window.ariaClicks || 0), 0);
+    assert.equal(await page.evaluate(() => window.mainDetailToggles || 0), 0);
+    assert.equal(await childFrame.evaluate(() => window.frameDetailToggles), 0);
 
     await page.goto(
       "data:text/html,<title>Second document</title><details><summary>Next disclosure</summary>next</details>",
     );
     const nextDocument = await preparePageOnset(page);
     assert.equal(nextDocument.pageOnsetPerformed, true);
-    assert.equal(nextDocument.detailsOpened, 1);
-    assert.equal(await page.locator("details").getAttribute("open"), "");
+    assert.equal(nextDocument.detailsOpened, 0);
+    assert.equal(await page.locator("details").getAttribute("open"), null);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("page-onset priming reports a verified interaction-gate reveal", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <style>#application { display: none; }</style>
+      <script>
+        addEventListener("mousemove", () => {
+          document.querySelector("#application").style.display = "block";
+        }, { once: true });
+      </script>
+      <form id="application">
+        <label for="full-name">Full name</label>
+        <input id="full-name" name="full_name">
+      </form>
+    `);
+    const result = await preparePageOnset(page);
+    assert.equal(result.interactionGatePrepared, true);
+    assert.equal(result.revealedForms, 1);
+    assert.equal(result.revealedApplicantControls, 1);
+    assert.equal(await page.locator("#application").isVisible(), true);
   } finally {
     await browser.close();
   }

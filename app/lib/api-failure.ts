@@ -115,6 +115,56 @@ const FAILURE_GUIDANCE: Record<
     detail:
       "The rendered page, discovered fields, screenshot, and generation diagnostics were retained. The failure stopped further form interaction.",
   },
+  semantic_generation_failed: {
+    title: "AI could not produce a complete semantic plan",
+    detail:
+      "The rendered observation was retained, and no unvalidated plan was allowed to interact with the form.",
+  },
+  semantic_validation_blocked: {
+    title: "The semantic plan did not match the observed form",
+    detail:
+      "No form field was attempted. Review the listed field/action bindings, then regenerate or repair the semantic plan.",
+  },
+  actuator_generation_failed: {
+    title: "AI could not produce a complete site actuator",
+    detail:
+      "The semantic plan was retained, but no generated interaction code was allowed to run.",
+  },
+  actuator_shadow_circuit_open: {
+    title: "Shadow actuator generation was paused for this run",
+    detail:
+      "An earlier model transport request failed, so IntakeCR skipped redundant shadow requests while the proven compatibility traversal remained active.",
+  },
+  actuator_validation_blocked: {
+    title: "The generated site actuator failed safety or contract validation",
+    detail:
+      "No unvalidated actuator was allowed to interact with the form. Review the module and capability diagnostics.",
+  },
+  actuator_preflight_failed: {
+    title: "The generated site actuator could not verify the rendered form",
+    detail:
+      "Preflight stopped safely. Repair the listed handler, or reopen semantic repair if its field binding is wrong.",
+  },
+  runtime_actuation_failed: {
+    title: "A form interaction failed during deterministic replay",
+    detail:
+      "The report distinguishes attempted failures from fields that were never attempted. Review the failing handler and evidence.",
+  },
+  progression_failed: {
+    title: "The form did not reach its expected next state",
+    detail:
+      "Field results were retained, but traversal stopped because progression could not be verified.",
+  },
+  environment_failed: {
+    title: "The browser environment interrupted traversal",
+    detail:
+      "Retry after the browser or network environment recovers; this does not by itself indicate a semantic or actuator defect.",
+  },
+  drift_suspected: {
+    title: "The rendered form may have changed",
+    detail:
+      "Traversal stopped before guessing. Re-sense the form and compare it with the pinned semantic and actuator versions.",
+  },
   fetch_failed: {
     title: "The target page could not be processed",
     detail: "The browser could not fetch or extract usable content from the target page.",
@@ -392,6 +442,25 @@ export function apiFailureFrom(
 
   const value = entity?.value || root;
   if (value) {
+    if (text(value.failureStage)) {
+      const planned = Number(value.fieldsPlanned ?? 0);
+      const attempted = Number(value.fieldsAttempted ?? 0);
+      const verified = Number(value.fieldsVerified ?? 0);
+      add(
+        issueFrom(
+          {
+            code: value.failureStage,
+            detail:
+              text(value.haltReason ?? value.detail) ||
+              `${attempted} of ${planned} planned fields were attempted; ${verified} were verified.`,
+          },
+          `${entity?.key || "response"} failure stage`,
+        ),
+      );
+    }
+    for (const issue of array(value.failureIssues)) {
+      add(issueFrom(issue, "failure root cause"));
+    }
     if (text(value.failureCode)) {
       add(
         issueFrom(
@@ -433,6 +502,32 @@ export function apiFailureFrom(
       }
       for (const note of array(node.notes)) {
         if (looksLikeFailureText(note)) add(issueFrom(note, nodeSource));
+      }
+    }
+    const report = asObject(value.report) || asObject(root?.report);
+    for (const pageValue of [
+      ...array(value.pages),
+      ...array(report?.pages),
+    ]) {
+      const page = asObject(pageValue);
+      if (!page || !text(page.failureStage)) continue;
+      const source = text(page.title ?? page.finalUrl ?? page.requestedUrl) || "crawl page";
+      const attempted = Number(page.fieldsAttempted ?? page.fieldsEntered ?? 0);
+      const planned = Number(page.fieldsPlanned ?? 0);
+      const verified = Number(page.fieldsVerified ?? page.fieldsEntered ?? 0);
+      add(
+        issueFrom(
+          {
+            code: page.failureStage,
+            detail:
+              text(page.haltReason ?? page.error) ||
+              `${attempted} of ${planned} planned fields were attempted; ${verified} were verified.`,
+          },
+          source,
+        ),
+      );
+      for (const issue of array(page.failureIssues)) {
+        add(issueFrom(issue, `${source} root cause`));
       }
     }
     if (submission && hasFailureStatus(submission)) {

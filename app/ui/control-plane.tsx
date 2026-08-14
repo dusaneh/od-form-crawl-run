@@ -1427,7 +1427,15 @@ function ReportPanel({
         <div><span>Read-like init</span><strong>{report.stats.allowedReadLikeRequests ?? 0}</strong><small>Classified same-origin requests</small></div>
         <div><span>Writes blocked</span><strong>{report.stats.blockedWriteRequests ?? 0}</strong><small>Submission safety guard</small></div>
         <div><span>States captured</span><strong>{report.stats.statesCaptured ?? 0}</strong><small>Values visible before movement</small></div>
-        <div><span>Fields entered</span><strong>{report.stats.fieldsEntered ?? 0}</strong><small>{report.stats.entryFailures ?? 0} entry failures</small></div>
+        <div>
+          <span>Field actuation</span>
+          <strong>{report.stats.fieldsVerified ?? report.stats.fieldsEntered ?? 0}</strong>
+          <small>
+            {report.stats.fieldsAttempted ?? report.stats.fieldsEntered ?? 0} attempted of{" "}
+            {report.stats.fieldsPlanned ?? report.stats.fieldsFound ?? 0} planned ·{" "}
+            {report.stats.attemptedFieldFailures ?? report.stats.entryFailures ?? 0} attempted failures
+          </small>
+        </div>
         <div><span>Branch states</span><strong>{report.stats.branchStates ?? 0}</strong><small>Revealed dynamic states</small></div>
         <div>
           <span>Final submissions</span>
@@ -1621,9 +1629,18 @@ function ReportPanel({
                     {(page.journeyUrls?.length || 1) === 1 ? "" : "s"}
                   </span>
                   <span>
-                    <strong>Actuation:</strong> {page.fieldsEntered || 0} verified
-                    values · {page.entryFailures || 0} failures
+                    <strong>Actuation:</strong>{" "}
+                    {page.fieldsVerified ?? page.fieldsEntered ?? 0} verified ·{" "}
+                    {page.fieldsAttempted ?? page.fieldsEntered ?? 0} attempted of{" "}
+                    {page.fieldsPlanned ?? page.fields.length ?? 0} planned ·{" "}
+                    {page.attemptedFieldFailures ?? page.entryFailures ?? 0} attempted failures
                   </span>
+                  {page.blockedBeforeActuation && (
+                    <span className="halt-reason">
+                      <strong>Stopped before field actuation:</strong>{" "}
+                      {(page.failureStage || "pre_actuation_failure").replaceAll("_", " ")}
+                    </span>
+                  )}
                   {page.submissionResult && (
                     <>
                       <span>

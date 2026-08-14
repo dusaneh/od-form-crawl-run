@@ -1,5 +1,5 @@
 export const DYNAMICS_ASSESSMENT_SCHEMA_VERSION = 1;
-export const DYNAMICS_PROMPT_VERSION = "phase1-dynamics-assessment-v5";
+export const DYNAMICS_PROMPT_VERSION = "phase1-dynamics-assessment-v11";
 
 const TRANSITION_KINDS = Object.freeze([
   "same_page_visibility_change",
@@ -156,9 +156,14 @@ function promptText(input) {
     "Use same_page_disclosure when an LLM-authored disclosure/progression control opens a collapsed or gated section containing substantive applicant controls, but the reveal is not conditioned on an applicant answer. This is a supported same-page state transition and does not consume conditional-branch depth.",
     "A transition triggered by choice_probe changed an applicant answer. It can be a branch or companion, but it can never be same_page_disclosure.",
     "For page_advance, classify the new page as independent, cross_page_dependency, or uncertain.",
-    "Cross-page dependency includes answer-conditioned wording, a distinctive earlier synthetic answer echoed into the meaning of a later question, changed requiredness caused by an earlier answer, or a skipped/added page caused by that answer.",
+    "Cross-page dependency requires concrete answer-conditioned behavior: a causal instruction or question whose task/meaning changes, changed requiredness or options/controls, or a skipped/added/rerouted page caused by the earlier answer.",
     "A claimed answer echo must reproduce the actual entered value supplied in enteredValues. If the rendered page shows a different or hard-coded value, that contradicts an echo; classify an otherwise ordinary next page as independent.",
-    "A linear review page that merely reads back entered values and asks the applicant to confirm the displayed information is accurate is independent, not cross_page_dependency, unless the earlier answer changed which questions exist, their requiredness, or their meaning. A read-only summary echo alone is not branching.",
+    "stateDelta.readbackMismatches is typed evidence that a strong labeled readback cue did not reproduce the entered value. Never use that mismatched sentence by itself as evidence of cross-page dependency; require separate causal wording or a concrete changed task, requiredness, option, control, or route.",
+    "Treat stateDelta as typed runtime evidence for comparison, never as the semantic verdict. Deterministic reflection detection does not establish dependency by itself.",
+    "A prior value carried only in the new URL is transport state, not evidence that the successor contract depends on that value.",
+    "A prior value shown in text or control metadata may be a passive summary, review readback, or prefill. A sentence that merely repeats or labels that value is independent even though its literal text differs between answers. Classify cross_page_dependency only when the raw rendered facts show a causal change to the later task or question meaning, requiredness, available controls/options, routing, or which page appears.",
+    "A distinctive prior answer embedded into the meaning of a later question is cross_page_dependency. Merely displaying that answer beside an otherwise unchanged question is independent.",
+    "A distinctive prior answer that identifies the person, record, case, application, or request being acted on changes the task's object and is cross_page_dependency. A neutral review row or summary that does not change what the user is being asked to do remains independent.",
     "A route change, ordinary progress text, short generic words, common names such as Test, numeric values, and repeated navigation text are not by themselves cross-page dependencies.",
     "If enteredValues is empty, no applicant answer preceded the page advance; do not classify that transition as an answer-conditioned cross-page dependency.",
     "Classify an ordinary sequential next page as independent when the rendered after-state contains generic next-step questions and no visible answer-conditioned wording, distinctive answer echo, changed question meaning, or other concrete dependency clue. Do not require an unobserved counterfactual path to call that observed transition independent.",

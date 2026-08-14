@@ -97,7 +97,10 @@ export async function waitForStableState(
       ...(priming || {}),
     }
   );
-  return mutationResult;
+  return {
+    ...mutationResult,
+    priming,
+  };
 }
 
 export function sanitizedEndpoint(value) {
@@ -162,16 +165,34 @@ async function detectCaptchaInFrame(frame) {
           element.getClientRects().length > 0
         );
       };
+      const visibleText = String(document.body?.innerText || "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (
+        /recaptcha\s*v3|siteverify\s*v3|score-based|invisible verification/i.test(
+          visibleText,
+        ) &&
+        /no action is required|protected by|invisible verification/i.test(
+          visibleText,
+        )
+      ) {
+        return {
+          kind: "non_interactive",
+          evidence: visibleText.slice(0, 160),
+        };
+      }
       const structural = all(
         'iframe[src*="recaptcha"],iframe[src*="hcaptcha"],iframe[src*="challenges.cloudflare"],.g-recaptcha,.h-captcha,[data-sitekey]'
       ).find(visible);
       if (structural) {
-        return (
-          structural.getAttribute("title") ||
-          structural.getAttribute("src") ||
-          structural.className ||
-          "CAPTCHA widget"
-        );
+        return {
+          kind: "interactive",
+          evidence:
+            structural.getAttribute("title") ||
+            structural.getAttribute("src") ||
+            structural.className ||
+            "CAPTCHA widget",
+        };
       }
       const imageChallenge = all('img[src^="data:image/"]').find((image) => {
         if (!visible(image)) return false;
@@ -192,7 +213,10 @@ async function detectCaptchaInFrame(frame) {
         });
       });
       if (imageChallenge) {
-        return "Unlabelled distorted-image verification challenge";
+        return {
+          kind: "interactive",
+          evidence: "Unlabelled distorted-image verification challenge",
+        };
       }
       const textMatch = all(
         '[role="dialog"],[role="alert"],main,section,form,body'
@@ -210,17 +234,45 @@ async function detectCaptchaInFrame(frame) {
         /recaptcha\s*v3|score-based/i.test(fullMatchedText) &&
         /no action is required|protected by/i.test(fullMatchedText)
       ) {
-        return "";
+        return {
+          kind: "non_interactive",
+          evidence: fullMatchedText.slice(0, 160),
+        };
       }
-      return fullMatchedText.slice(0, 160);
+      return fullMatchedText
+        ? { kind: "interactive", evidence: fullMatchedText.slice(0, 160) }
+        : null;
     }, CAPTCHA_TEXT.source)
-    .catch(() => "");
+    .catch(() => null);
 }
 
 export async function detectCaptcha(page) {
+  let nonInteractive = null;
   for (const frame of page.frames()) {
-    const evidence = await detectCaptchaInFrame(frame);
-    if (evidence) return { detected: true, evidence, frameUrl: frame.url() };
+    const result = await detectCaptchaInFrame(frame);
+    if (!result) continue;
+    if (result.kind === "interactive") {
+      return {
+        detected: true,
+        nonInteractiveDetected: false,
+        kind: "interactive",
+        evidence: result.evidence,
+        frameUrl: frame.url(),
+      };
+    }
+    nonInteractive ||= {
+      detected: false,
+      nonInteractiveDetected: true,
+      kind: "invisible",
+      evidence: result.evidence,
+      frameUrl: frame.url(),
+    };
   }
-  return { detected: false };
+  return (
+    nonInteractive || {
+      detected: false,
+      nonInteractiveDetected: false,
+      kind: "none",
+    }
+  );
 }

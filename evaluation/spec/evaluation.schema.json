@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://testforms.dbolab.io/schemas/evaluation-v1.json",
+  "title": "Testforms evaluation allocation v1",
+  "oneOf": [
+    { "$ref": "#/$defs/createRequest" },
+    { "$ref": "#/$defs/createResponse" }
+  ],
+  "$defs": {
+    "createRequest": {
+      "title": "Create evaluation request",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "site_id", "scenario_id", "client_run_id", "execution_goal"],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "site_id": { "type": "string", "pattern": "^site_[a-z0-9_]+$" },
+        "scenario_id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "client_run_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "execution_goal": { "enum": ["probe", "dry_run", "submit"] },
+        "ttl_seconds": { "type": "integer", "minimum": 300, "maximum": 86400, "default": 3600 }
+      }
+    },
+    "createResponse": {
+      "title": "Create evaluation response",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "evaluation_id",
+        "client_run_id",
+        "site_id",
+        "scenario_id",
+        "execution_goal",
+        "entry_url",
+        "created_at",
+        "expires_at",
+        "fixture_revision"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "evaluation_id": { "type": "string", "pattern": "^eval_[A-Za-z0-9_-]{12,}$" },
+        "client_run_id": { "type": "string" },
+        "site_id": { "type": "string" },
+        "scenario_id": { "type": "string" },
+        "execution_goal": { "enum": ["probe", "dry_run", "submit"] },
+        "entry_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Opaque correlated URL supplied to the application. The server must preserve correlation through every scenario page."
+        },
+        "created_at": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "fixture_revision": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

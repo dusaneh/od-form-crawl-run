@@ -4,6 +4,7 @@ const BASE_PRE_ACTION_KINDS = new Set([
   "pre_advance",
   "blocked_final",
   "populated",
+  "pre_actuation_failure",
 ]);
 const FINAL_BRANCH_KIND = "selected_branch_populated";
 
@@ -83,6 +84,7 @@ export function shouldCaptureStateScreenshot(kind, fieldResults = []) {
   if (
     [
       "populated",
+      "pre_actuation_failure",
       "branch",
       "pre_advance",
       "post_advance",

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run FormWeave Evaluation"
+  short_description: "Run and improve FormWeave through preserved batch cycles"
+  default_prompt: "Use $run-formweave-evaluation to run a logged fix, regression, and rotating batch cycle while preserving holdout scenarios and prior successes."

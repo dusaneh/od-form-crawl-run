@@ -3,13 +3,15 @@
 | Document field | Value |
 | --- | --- |
 | FormWeave software version | `0.1.0` |
-| Document contract version | `1.0` |
-| Source revision reviewed | `0821dbf83cad45c898613e18efbee8d2c5553966` |
-| Semantic prompt version | `gate2-semantic-state-v4` |
+| Document contract version | `1.1` |
+| Source revision reviewed | working tree, 2026-08-08 |
+| Semantic prompt version | `gate2-semantic-state-v8` |
+| Actuator prompt version | `site-actuator-target-v10` |
 | D1 compiler version | `gate3-d1-compiler-v1` |
-| Generated-script interface | `13` |
+| Generated-script interface | `17` |
+| Actuator interface/protocol | `1` / `1` |
 | Result-envelope schema | `1` |
-| Last verified | 2026-07-30 |
+| Last verified | 2026-08-08 |
 
 This document describes the implemented contract at the source revision above.
 It is versioned with FormWeave `0.1.0`; a behavioral change to the model input,
@@ -18,7 +20,9 @@ document to be revised.
 
 ## 1. The important architectural distinction
 
-The LLM does **not** return arbitrary Playwright JavaScript.
+The semantic LLM does **not** return Playwright JavaScript. A separate actuator
+generation call may return site-specific ESM modules, but those modules are not
+trusted or executed as arbitrary Node programs.
 
 The implemented flow is:
 
@@ -29,14 +33,23 @@ The implemented flow is:
    action is progression or terminal submission.
 3. Deterministic validators reject unsafe, incomplete, contradictory, or
    schema-invalid proposals.
-4. The D1 compiler binds the LLM-selected source facts to observed selectors
-   and produces a closed, versioned module.
-5. The shared D3 executor uses Playwright to replay that compiled script.
+4. The actuator generator makes one bounded, concurrently scheduled model call
+   per validated semantic target. Deterministic code binds the returned module
+   to that target and assembles the per-site bundle.
+5. Static validation parses every module and checks exact hashes, imports,
+   declared capabilities, target coverage, and forbidden globals. Browser
+   preflight is required before enforced execution. It covers fields, probes,
+   and nonterminal progression, then restores the clean page before the full
+   script runs; terminal submit is never clicked during preflight.
+6. The shared executor sends strict, version-pinned semantic commands through
+   a capability facade. Generated code never receives raw filesystem, process,
+   secrets, arbitrary network access, or an unrestricted Playwright `Page`.
 
-Therefore, “LLM-generated Playwright script” means **LLM-authored decisions
-compiled into a restricted Playwright execution module**. Shared code may
-validate, canonicalize, compile, and replay those decisions. It may not invent
-a click, field choice, progression, or terminal action.
+Semantic repair and actuator repair are separate. A wrong field identity,
+source-fact binding, grouping, or progression meaning reopens typed semantic
+repair. A correct target with broken locator/event/readback mechanics replaces
+only the affected complete named actuator module. Repairs are never run as a
+sequence of patches against the live page.
 
 ## 2. Model and request configuration
 
@@ -55,8 +68,12 @@ Configuration:
 | Storage | `store: false` |
 | Screenshot detail | `high` |
 | Structured output | Strict JSON Schema |
-| Maximum output | 12,000 tokens |
-| Timeout | `FORMWEAVE_SEMANTIC_TIMEOUT_MS`, default 360 seconds, capped at 360 seconds |
+| Semantic maximum output | 60,000 tokens |
+| Initial actuator maximum output | 8,000 tokens per target |
+| Actuator repair maximum output | 12,000 tokens |
+| Semantic timeout | `FORMWEAVE_SEMANTIC_TIMEOUT_MS`, default 360 seconds, capped at 360 seconds |
+| Actuator timeout | `FORMWEAVE_ACTUATOR_TIMEOUT_MS`, default 120 seconds per request |
+| Total actuator repair budget | `FORMWEAVE_ACTUATOR_REPAIR_BUDGET_MS`, default 240 seconds |
 | Schema repair attempts | Up to 4 |
 
 The system message is:

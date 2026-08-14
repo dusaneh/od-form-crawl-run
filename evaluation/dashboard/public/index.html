@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>FormWeave Evaluation Observatory</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div>
+            <div class="eyebrow">Development framework</div>
+            <h1>Evaluation<br />Observatory</h1>
+          </div>
+        </div>
+
+        <div class="filter-stack" aria-label="Dashboard filters">
+          <label class="control">
+            <span>Development run</span>
+            <select id="development-run"></select>
+          </label>
+
+          <label class="control">
+            <span>Score lens</span>
+            <select id="metric"></select>
+          </label>
+
+          <fieldset class="control role-control">
+            <legend>Batch type</legend>
+            <div id="roles" class="role-options"></div>
+          </fieldset>
+
+          <div class="control">
+            <div class="control-heading">
+              <span>Complexity</span>
+              <output id="complexity-label"></output>
+            </div>
+            <div class="range-pair">
+              <input id="complexity-min" type="range" aria-label="Minimum complexity" />
+              <input id="complexity-max" type="range" aria-label="Maximum complexity" />
+            </div>
+          </div>
+
+          <label class="control">
+            <span>Find a test</span>
+            <input id="search" type="search" placeholder="Site, scenario, feature…" />
+          </label>
+        </div>
+
+        <div class="sidebar-note">
+          <span class="pulse"></span>
+          <div>
+            <strong>Read-only analytics</strong>
+            <p>Built from frozen evaluator artifacts. It is not part of the FormWeave application.</p>
+          </div>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <div class="eyebrow" id="run-kicker">All measured history</div>
+            <h2 id="view-title">Performance across the corpus</h2>
+            <p id="view-subtitle">Loading frozen measurements…</p>
+          </div>
+          <div class="top-actions">
+            <span class="asof" id="asof"></span>
+            <button id="reset" type="button">Reset view</button>
+          </div>
+        </header>
+
+        <section class="kpis" aria-label="Summary metrics">
+          <article class="kpi kpi-primary">
+            <div class="kpi-label">Selected score</div>
+            <div class="kpi-value" id="kpi-score">—</div>
+            <div class="kpi-foot" id="kpi-score-foot">—</div>
+          </article>
+          <article class="kpi">
+            <div class="kpi-label">Strict passes</div>
+            <div class="kpi-value" id="kpi-strict">—</div>
+            <div class="kpi-foot" id="kpi-strict-foot">—</div>
+          </article>
+          <article class="kpi">
+            <div class="kpi-label">Safety passes</div>
+            <div class="kpi-value" id="kpi-safety">—</div>
+            <div class="kpi-foot" id="kpi-safety-foot">—</div>
+          </article>
+          <article class="kpi">
+            <div class="kpi-label">Evidence</div>
+            <div class="kpi-value" id="kpi-evidence">—</div>
+            <div class="kpi-foot" id="kpi-evidence-foot">—</div>
+          </article>
+        </section>
+
+        <section class="dashboard-grid">
+          <article class="panel panel-trend">
+            <div class="panel-heading">
+              <div>
+                <div class="eyebrow">Experiments</div>
+                <h3>Score trajectory</h3>
+              </div>
+              <div class="legend" id="role-legend"></div>
+            </div>
+            <div id="trend-chart" class="chart chart-large" role="img" aria-label="Experiment score trajectory"></div>
+            <div class="chart-note">Lines are descriptive, not paired causal comparisons. Point color identifies batch type.</div>
+          </article>
+
+          <article class="panel panel-roles">
+            <div class="panel-heading">
+              <div>
+                <div class="eyebrow">Cohorts</div>
+                <h3>By batch type</h3>
+              </div>
+            </div>
+            <div id="role-chart" class="role-chart"></div>
+          </article>
+
+          <article class="panel panel-scatter">
+            <div class="panel-heading">
+              <div>
+                <div class="eyebrow">Generalization view</div>
+                <h3>Score × complexity</h3>
+              </div>
+              <div class="density-label" id="scatter-count"></div>
+            </div>
+            <div id="scatter-chart" class="chart chart-medium" role="img" aria-label="Trial scores by test complexity"></div>
+          </article>
+
+          <article class="panel panel-categories">
+            <div class="panel-heading">
+              <div>
+                <div class="eyebrow">Score anatomy</div>
+                <h3>Category profile</h3>
+              </div>
+            </div>
+            <div id="category-profile" class="category-profile"></div>
+          </article>
+        </section>
+
+        <section class="site-grid">
+          <article class="panel site-overview">
+            <div class="panel-heading site-heading">
+              <div>
+                <div class="eyebrow">Site aggregates</div>
+                <h3>One site against the corpus</h3>
+              </div>
+              <label class="inline-select">
+                <span>Site</span>
+                <select id="site-select"></select>
+              </label>
+            </div>
+            <div id="site-summary" class="site-summary"></div>
+            <div id="site-comparison" class="site-comparison"></div>
+          </article>
+
+          <article class="panel site-history">
+            <div class="panel-heading">
+              <div>
+                <div class="eyebrow">Per-site history</div>
+                <h3 id="site-history-title">Score over time</h3>
+              </div>
+              <div id="site-history-count" class="density-label"></div>
+            </div>
+            <div id="site-trend-chart" class="chart chart-site" role="img" aria-label="Selected site score over time"></div>
+            <div class="chart-note">Each point is one experiment containing this site. Compare identical cohorts before treating movement as causal.</div>
+          </article>
+        </section>
+
+        <section class="panel table-panel">
+          <div class="panel-heading table-heading">
+            <div>
+              <div class="eyebrow">Test-level evidence</div>
+              <h3>Every scored trial</h3>
+            </div>
+            <div id="table-count" class="table-count"></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Test</th>
+                  <th>Batch</th>
+                  <th>Complexity</th>
+                  <th>Overall</th>
+                  <th>Structure</th>
+                  <th>Journey</th>
+                  <th>Execution</th>
+                  <th>Safety</th>
+                  <th>Result</th>
+                </tr>
+              </thead>
+              <tbody id="trial-table"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <footer>
+          <span id="footer-counts"></span>
+          <span>Source: frozen Evaluation Protocol v1 artifacts</span>
+        </footer>
+      </main>
+    </div>
+
+    <div id="tooltip" class="tooltip" hidden></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1370,7 +1370,7 @@ function initialRun(
     evidence: "",
     evidenceAvailable: false,
     sourceUrl: url,
-    sensitiveMasks: 0,
+    sensitiveMasks: [],
     notes: ["The target has been queued for a real local browser render."],
   }));
   return {
@@ -1629,6 +1629,8 @@ async function executeCrawl(run) {
       ),
       artifactRunDirectory: artifacts.runDirectory,
       generatedScriptRoot: generatedScriptsRoot,
+      actuatorRepository: database,
+      actuatorMode: process.env.FORMWEAVE_ACTUATOR_MODE || "enforced",
       traversalSettings: run.traversalSettings,
       reconScriptResolver,
       onProgress: async ({ pages, queued }) => {
@@ -1895,24 +1897,75 @@ async function executeCrawl(run) {
           }
         );
       }
+      node.sensitiveMasks = reportStateEvidence.flatMap(
+        (state) => state.sensitiveMasks || [],
+      );
 
       const {
         screenshot,
         sensingScreenshots,
         html,
         stateEvidence,
+        journeyPages,
         ...reportPage
       } = page;
       void screenshot;
       void sensingScreenshots;
       void html;
       void stateEvidence;
-      reportPages.push({
-        ...reportPage,
-        stateEvidence: reportStateEvidence,
-        htmlArtifact,
-        screenshotArtifact,
-      });
+      const journeyRecords =
+        Array.isArray(journeyPages) && journeyPages.length > 0
+          ? journeyPages
+          : [
+              {
+                url: reportPage.finalUrl,
+                forms: reportPage.forms,
+                stateIds: reportStateEvidence.map((state) => state.id),
+              },
+            ];
+      for (const [journeyIndex, journeyPage] of journeyRecords.entries()) {
+        const isLastJourneyPage = journeyIndex === journeyRecords.length - 1;
+        const stateIds = new Set(journeyPage.stateIds || []);
+        const pageStateEvidence = reportStateEvidence.filter((state) =>
+          stateIds.has(state.id),
+        );
+        reportPages.push({
+          ...reportPage,
+          requestedUrl: journeyPage.url,
+          finalUrl: journeyPage.url,
+          normalizedUrl: journeyPage.url,
+          forms: Number(journeyPage.forms || 0),
+          stateEvidence: pageStateEvidence,
+          sensitiveMasks: pageStateEvidence.flatMap(
+            (state) => state.sensitiveMasks || [],
+          ),
+          fieldsEntered: isLastJourneyPage ? reportPage.fieldsEntered : 0,
+          fieldsPlanned: isLastJourneyPage ? reportPage.fieldsPlanned : 0,
+          fieldsAttempted: isLastJourneyPage ? reportPage.fieldsAttempted : 0,
+          fieldsVerified: isLastJourneyPage ? reportPage.fieldsVerified : 0,
+          attemptedFieldFailures: isLastJourneyPage
+            ? reportPage.attemptedFieldFailures
+            : 0,
+          entryFailures: isLastJourneyPage ? reportPage.entryFailures : 0,
+          branchStates: isLastJourneyPage ? reportPage.branchStates : 0,
+          submissionsAttempted: isLastJourneyPage
+            ? reportPage.submissionsAttempted
+            : 0,
+          submissionsSucceeded: isLastJourneyPage
+            ? reportPage.submissionsSucceeded
+            : 0,
+          finalSubmission: isLastJourneyPage
+            ? reportPage.finalSubmission
+            : "not_requested",
+          submissionResult: isLastJourneyPage
+            ? reportPage.submissionResult
+            : null,
+          htmlArtifact: isLastJourneyPage ? htmlArtifact : undefined,
+          screenshotArtifact: isLastJourneyPage
+            ? screenshotArtifact
+            : pageStateEvidence.at(-1)?.screenshotArtifact,
+        });
+      }
     }
 
     const fetchedPages = output.pages.filter((page) => !page.error);
@@ -1947,6 +2000,22 @@ async function executeCrawl(run) {
       ),
       fieldsEntered: output.pages.reduce(
         (sum, page) => sum + (page.fieldsEntered || 0),
+        0
+      ),
+      fieldsPlanned: output.pages.reduce(
+        (sum, page) => sum + (page.fieldsPlanned || 0),
+        0
+      ),
+      fieldsAttempted: output.pages.reduce(
+        (sum, page) => sum + (page.fieldsAttempted || 0),
+        0
+      ),
+      fieldsVerified: output.pages.reduce(
+        (sum, page) => sum + (page.fieldsVerified || 0),
+        0
+      ),
+      attemptedFieldFailures: output.pages.reduce(
+        (sum, page) => sum + (page.attemptedFieldFailures || 0),
         0
       ),
       entryFailures: output.pages.reduce(
@@ -2006,6 +2075,8 @@ async function executeCrawl(run) {
       targets: run.urls,
       stats,
       pages: reportPages,
+      nodes: output.nodes,
+      edges: output.edges,
       contract: output.contract,
       findings,
       browserMode: run.browserMode,
@@ -2078,6 +2149,7 @@ async function executeCrawl(run) {
     const needsReview = output.pages.some(
       (page) =>
         (!disqualified && page.unresolvedGate) ||
+        Boolean(page.failureStage) ||
         page.certificationStatus === "could_not_test" ||
         page.certificationStatus === "script_missing"
     ) || submissionNeedsReview;
@@ -2103,6 +2175,8 @@ async function executeCrawl(run) {
             ? "Observation complete · generated script required"
             : output.pages.some((page) => page.semanticGenerationError)
               ? "Observation retained · semantic script generation needs review"
+            : output.pages.some((page) => page.blockedBeforeActuation)
+              ? "Observation retained · traversal blocked before actuation"
             : submissionNeedsReview
               ? "Submission outcome requires review"
               : "Scripted traversal needs human review"

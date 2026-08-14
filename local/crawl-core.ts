@@ -4,6 +4,7 @@ import type {
   FlowEdge,
   FlowNode,
   GuidanceRecord,
+  SensitiveMask,
   SectionRecord,
 } from "../app/lib/models";
 import {
@@ -44,6 +45,7 @@ export type CrawlPage = ParsedPage & {
   screenshot?: Uint8Array;
   screenshotContentType?: string;
   screenshotProvider?: string;
+  sensitiveMasks?: SensitiveMask[];
   rendered?: boolean;
   renderEngine?: string;
   browserMode?: "headless" | "headful";
@@ -62,11 +64,14 @@ export type CrawlPage = ParsedPage & {
     stateId?: string;
     testValue?: string;
     outcome?: "landed" | "could_not_test";
+    branchClassification?: string;
     failureCode?: string;
     rationale?: string;
     error?: string;
   }[];
   captchaDetected?: boolean;
+  invisibleCaptchaDetected?: boolean;
+  interactionGatePrepared?: boolean;
   unresolvedGate?: string;
   stateExaminations?: number;
   stateEvidence?: {
@@ -79,6 +84,7 @@ export type CrawlPage = ParsedPage & {
     fingerprint: string;
     capturedAt: string;
     fieldsVisible: number;
+    forms?: number;
     values: {
       fieldKey: string;
       label: string;
@@ -95,8 +101,19 @@ export type CrawlPage = ParsedPage & {
     screenshot?: Uint8Array;
     screenshotContentType?: string;
     screenshotProvider?: string;
+    sensitiveMasks?: SensitiveMask[];
   }[];
   fieldsEntered?: number;
+  fieldsPlanned?: number;
+  fieldsAttempted?: number;
+  fieldsVerified?: number;
+  attemptedFieldFailures?: number;
+  actuatorWarnings?: {
+    code: string;
+    targetKey: string;
+    detail: string;
+    stage: string;
+  }[];
   entryFailures?: number;
   branchStates?: number;
   submissionsAttempted?: number;
@@ -151,13 +168,48 @@ export type CrawlPage = ParsedPage & {
     sourceHash: string;
     path: string;
     modelCalls: number;
+    modelCallsThisRun?: number;
     states: number;
+    actuatorMode?: "compatibility" | "shadow" | "enforced";
+    actuatorReleases?: {
+      artifactId: string;
+      releaseId: string;
+      releaseVersion: number;
+      semanticVersion: number;
+      actuatorVersion: number;
+    }[];
+    lifecycle?: string;
   } | null;
   journeyUrls?: string[];
+  journeyPages?: {
+    url: string;
+    forms: number;
+    stateIds: string[];
+  }[];
   entryMode?: "canonical" | "mid_flow" | "unknown";
   entryDetail?: string;
   journeyComplete?: boolean;
   haltReason?: string;
+  failureStage?:
+    | ""
+    | "script_missing"
+    | "semantic_generation_failed"
+    | "semantic_validation_blocked"
+    | "actuator_generation_failed"
+    | "actuator_validation_blocked"
+    | "actuator_preflight_failed"
+    | "runtime_actuation_failed"
+    | "progression_failed"
+    | "environment_failed"
+    | "drift_suspected";
+  blockedBeforeActuation?: boolean;
+  failureIssues?: {
+    code: string;
+    targetKey: string;
+    detail: string;
+    issueId: string;
+    controlType?: string;
+  }[];
   semanticGenerationError?: string;
   semanticInteractionOccurred?: boolean;
   error?: string;
@@ -658,6 +710,12 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
             : page.semanticGenerationError && page.semanticInteractionOccurred
               ? "The semantic traversal had already begun; the current rendered state was retained when later script generation failed."
             : "No control actuation occurred before extraction.",
+          page.failureStage
+            ? `${page.blockedBeforeActuation ? "Traversal stopped before field actuation" : "Traversal stopped after partial actuation"}: ${page.fieldsPlanned || 0} planned, ${page.fieldsAttempted || 0} attempted, ${page.fieldsVerified || 0} verified, and ${page.attemptedFieldFailures || 0} attempted failures.`
+            : "No traversal-stage failure was reported.",
+          (page.actuatorWarnings || []).length
+            ? `Shadow actuator generation recorded ${page.actuatorWarnings?.length || 0} issue${page.actuatorWarnings?.length === 1 ? "" : "s"}; compatibility traversal remained active.`
+            : "No shadow actuator degradation was reported.",
           page.fieldsEntered
             ? `${page.fieldsEntered} synthetic field entr${page.fieldsEntered === 1 ? "y was" : "ies were"} exercised across ${page.stateEvidence?.length || 0} captured states.`
             : page.semanticGenerationError && page.semanticInteractionOccurred
@@ -713,7 +771,7 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
       formActions: page.formActions,
       screenshotProvider: page.screenshotProvider,
       stateEvidence: [],
-      sensitiveMasks: 0,
+      sensitiveMasks: page.sensitiveMasks || [],
       notes,
     };
   });
@@ -784,7 +842,7 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
         pageTitle: state.title,
         screenshotProvider: state.screenshotProvider,
         stateEvidence: [],
-        sensitiveMasks: 0,
+        sensitiveMasks: state.sensitiveMasks || [],
         notes: [
           `${state.values.length} synthetic value${state.values.length === 1 ? "" : "s"} present at capture.`,
           ...(action?.failureCode
@@ -855,6 +913,60 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
         time: "now",
       });
     });
+  const failureStageTitles: Record<string, string> = {
+    script_missing: "No executable script was available",
+    semantic_generation_failed: "Semantic generation failed before replay",
+    semantic_validation_blocked: "Semantic validation blocked form actuation",
+    actuator_generation_failed: "Actuator generation failed before replay",
+    actuator_validation_blocked: "Actuator validation blocked form actuation",
+    actuator_preflight_failed: "Actuator preflight could not verify the rendered controls",
+    runtime_actuation_failed: "A field actuator failed during replay",
+    progression_failed: "The form could not progress to the expected state",
+    environment_failed: "The browser environment interrupted traversal",
+    drift_suspected: "The rendered form may have changed",
+  };
+  pages
+    .filter((page) => page.failureStage && !page.semanticGenerationError)
+    .forEach((page, index) => {
+      const uniqueIssues = [
+        ...new Map(
+          (page.failureIssues || []).map((issue) => [
+            `${issue.code}:${issue.targetKey}:${issue.detail}`,
+            issue,
+          ]),
+        ).values(),
+      ];
+      findings.push({
+        id: `${runId}_traversal_stage_failed_${index}`,
+        tone: "danger",
+        code: page.failureStage || "runtime_actuation_failed",
+        title:
+          failureStageTitles[page.failureStage || ""] ||
+          "Generated traversal stopped safely",
+        detail: `${page.blockedBeforeActuation ? "No form field was attempted." : "Some form fields were attempted before the stop."} Counts: ${page.fieldsPlanned || 0} planned, ${page.fieldsAttempted || 0} attempted, ${page.fieldsVerified || 0} verified, ${page.attemptedFieldFailures || 0} attempted failures.${uniqueIssues.length ? ` Root issues: ${uniqueIssues.map((issue) => `${issue.targetKey ? `${issue.targetKey}: ` : ""}${issue.detail}`).join(" ")}` : ` ${page.haltReason || "Review the retained evidence and event log."}`}`,
+        time: "now",
+      });
+    });
+  const actuatorWarnings = [
+    ...new Map(
+      pages
+        .flatMap((page) => page.actuatorWarnings || [])
+        .map((warning) => [
+          `${warning.stage}:${warning.code}:${warning.targetKey}:${warning.detail}`,
+          warning,
+        ]),
+    ).values(),
+  ];
+  if (actuatorWarnings.length > 0) {
+    findings.push({
+      id: `${runId}_actuator_shadow_degraded`,
+      tone: "warning",
+      code: "actuator_shadow_degraded",
+      title: "Shadow actuator validation degraded",
+      detail: `The proven compatibility traversal completed independently, but ${actuatorWarnings.length} shadow actuator issue${actuatorWarnings.length === 1 ? " was" : "s were"} recorded. ${actuatorWarnings.map((warning) => `${warning.targetKey}: ${warning.detail}`).join(" ")}`,
+      time: "now",
+    });
+  }
   if (pages.some((page) => page.hasScripts)) {
     findings.push({
       id: `${runId}_dynamic`,
@@ -999,6 +1111,67 @@ export function buildCrawlOutput(pages: CrawlPage[], runId: string): CrawlOutput
       title: "Interactive CAPTCHA or human challenge blocked traversal",
       detail:
         "The challenge was detected and retained as evidence. FormWeave does not solve or bypass interactive CAPTCHAs.",
+      time: "now",
+    });
+  }
+  if (pages.some((page) => page.invisibleCaptchaDetected)) {
+    findings.push({
+      id: `${runId}_invisible_captcha`,
+      tone: "info",
+      code: "invisible_captcha",
+      title: "Non-interactive CAPTCHA signal observed",
+      detail:
+        "A score-based or invisible verification marker was detected and reported. No challenge was solved, and the non-interactive marker did not block otherwise safe traversal.",
+      time: "now",
+    });
+  }
+  if (pages.some((page) => page.interactionGatePrepared)) {
+    findings.push({
+      id: `${runId}_interaction_gated_js`,
+      tone: "success",
+      code: "interaction_gated_js",
+      title: "Interaction-gated form surface prepared",
+      detail:
+        "A deterministic page-onset interaction revealed applicant controls or their owning form before semantic observation. The verified preparation was retained without granting any additional execution authority.",
+      time: "now",
+    });
+  }
+  const choiceProbeFailures = pages.filter((page) => {
+    if (
+      page.failureStage !== "actuator_preflight_failed" ||
+      page.blockedBeforeActuation !== true
+    ) {
+      return false;
+    }
+    return (page.failureIssues || []).some((issue) => {
+      const target = page.fields.find(
+        (field) =>
+          field.key === issue.targetKey ||
+          field.questionRef === issue.targetKey,
+      );
+      return (
+        (Boolean(target) &&
+          ["checkbox", "radio", "select"].includes(target.control) ||
+          ["checkbox", "radio", "select"].includes(
+            issue.controlType || "",
+          )) &&
+        [
+          "actuation_unverified",
+          "handler_contract_violation",
+          "locator_unresolved",
+          "readback_unverified",
+        ].includes(issue.code)
+      );
+    });
+  });
+  if (choiceProbeFailures.length > 0) {
+    findings.push({
+      id: `${runId}_probe_actuation_failed`,
+      tone: "danger",
+      code: "probe_actuation_failed",
+      title: "Choice probe actuation could not be verified",
+      detail:
+        "Bounded actuator preflight exhausted on a choice control. Traversal retained the diagnostic evidence and halted before applicant entry or terminal submission.",
       time: "now",
     });
   }

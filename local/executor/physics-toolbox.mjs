@@ -596,6 +596,7 @@ export class PhysicsToolbox {
       detail: null,
       readback: {
         marker: GENERATED_UPLOAD_MARKER,
+        name: payload.name,
         fileCount: 1,
         mimeType: payload.mimeType,
         byteLength: payload.byteLength,

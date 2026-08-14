@@ -10,12 +10,20 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { summarizeLlmTelemetry } from "../audit/llm-telemetry.mjs";
+import { assertActuatorBundle } from "../actuator/actuator-source.mjs";
+import {
+  validateActuatorRepairDocument,
+  validateArtifactRelease,
+  validateSemanticRepairDocument,
+} from "../contracts/semantic-actuator-schemas.mjs";
+import { validateSemanticProposal } from "../semantic/proposal-schema.mjs";
 
 const { Pool } = pg;
 const localDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(localDirectory, "..", "..");
 const migrationsRoot = path.join(projectRoot, "db", "migrations");
 const SAFE_SCRIPT_ID = /^form_[a-z0-9]+$/i;
+const SAFE_RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -35,6 +43,10 @@ function stableValue(value) {
 
 export function stableJson(value) {
   return `${JSON.stringify(stableValue(value), null, 2)}\n`;
+}
+
+export function jsonbParameter(value) {
+  return JSON.stringify(value);
 }
 
 function timestamp(value, fallback = new Date().toISOString()) {
@@ -1151,6 +1163,551 @@ export class FormWeaveDatabase {
     return result.rowCount;
   }
 
+  async nextSemanticCandidateVersion(artifactId) {
+    if (!SAFE_SCRIPT_ID.test(String(artifactId || ""))) {
+      throw new Error("Semantic candidate artifact id is invalid.");
+    }
+    const result = await this.pool.query(
+      `SELECT COALESCE(MAX(candidate_version), 0)::integer + 1 AS version
+       FROM formweave_semantic_candidates
+       WHERE artifact_id = $1`,
+      [artifactId],
+    );
+    return Number(result.rows[0].version);
+  }
+
+  async nextActuatorBundleVersion(artifactId) {
+    if (!SAFE_SCRIPT_ID.test(String(artifactId || ""))) {
+      throw new Error("Actuator bundle artifact id is invalid.");
+    }
+    const result = await this.pool.query(
+      `SELECT COALESCE(MAX(bundle_version), 0)::integer + 1 AS version
+       FROM formweave_actuator_bundles
+       WHERE artifact_id = $1`,
+      [artifactId],
+    );
+    return Number(result.rows[0].version);
+  }
+
+  async nextArtifactReleaseVersion(artifactId) {
+    if (!SAFE_SCRIPT_ID.test(String(artifactId || ""))) {
+      throw new Error("Artifact release id is invalid.");
+    }
+    const result = await this.pool.query(
+      `SELECT COALESCE(MAX(release_version), 0)::integer + 1 AS version
+       FROM formweave_artifact_releases
+       WHERE artifact_id = $1`,
+      [artifactId],
+    );
+    return Number(result.rows[0].version);
+  }
+
+  async putSemanticCandidate({
+    candidateId,
+    artifactId,
+    candidateVersion,
+    proposal,
+    existingContract = null,
+    observationHash,
+    parentCandidateId = null,
+    status = "draft",
+    provenance = {},
+  }) {
+    if (!SAFE_RECORD_ID.test(String(candidateId || ""))) {
+      throw new Error("Semantic candidate id is invalid.");
+    }
+    if (!SAFE_SCRIPT_ID.test(String(artifactId || ""))) {
+      throw new Error("Semantic candidate artifact id is invalid.");
+    }
+    if (!Number.isInteger(candidateVersion) || candidateVersion < 1) {
+      throw new Error("Semantic candidate version is invalid.");
+    }
+    if (!/^[a-f0-9]{64}$/.test(String(observationHash || ""))) {
+      throw new Error("Semantic candidate observation hash is invalid.");
+    }
+    if (!["draft", "rejected", "validated", "superseded"].includes(status)) {
+      throw new Error("Semantic candidate status is invalid.");
+    }
+    if (parentCandidateId && !SAFE_RECORD_ID.test(parentCandidateId)) {
+      throw new Error("Semantic candidate parent id is invalid.");
+    }
+    validateSemanticProposal(proposal, existingContract);
+    const candidateHash = sha256(stableJson(proposal));
+    await this.pool.query(
+      `INSERT INTO formweave_semantic_candidates(
+         candidate_id, artifact_id, candidate_version, candidate_sha256,
+         observation_sha256, parent_candidate_id, status, proposal, provenance
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (candidate_id) DO NOTHING`,
+      [
+        candidateId,
+        artifactId,
+        candidateVersion,
+        candidateHash,
+        observationHash,
+        parentCandidateId,
+        status,
+        jsonbParameter(proposal),
+        jsonbParameter(provenance),
+      ],
+    );
+    const stored = await this.pool.query(
+      `SELECT artifact_id, candidate_version, candidate_sha256,
+              observation_sha256, status
+       FROM formweave_semantic_candidates
+       WHERE candidate_id = $1`,
+      [candidateId],
+    );
+    const row = stored.rows[0];
+    if (
+      row?.artifact_id !== artifactId ||
+      row?.candidate_version !== candidateVersion ||
+      row?.candidate_sha256 !== candidateHash ||
+      row?.observation_sha256 !== observationHash ||
+      row?.status !== status
+    ) {
+      throw new Error(`Immutable semantic candidate conflict for ${candidateId}.`);
+    }
+    return {
+      candidateId,
+      artifactId,
+      candidateVersion,
+      candidateHash,
+      observationHash,
+      status,
+    };
+  }
+
+  async getSemanticCandidate(candidateId) {
+    const result = await this.pool.query(
+      `SELECT candidate_id, artifact_id, candidate_version,
+              candidate_sha256, observation_sha256, parent_candidate_id,
+              status, proposal, provenance, created_at
+       FROM formweave_semantic_candidates
+       WHERE candidate_id = $1`,
+      [candidateId],
+    );
+    if (!result.rowCount) return null;
+    const row = result.rows[0];
+    return {
+      candidateId: row.candidate_id,
+      artifactId: row.artifact_id,
+      candidateVersion: row.candidate_version,
+      candidateHash: row.candidate_sha256,
+      observationHash: row.observation_sha256,
+      parentCandidateId: row.parent_candidate_id,
+      status: row.status,
+      proposal: row.proposal,
+      provenance: row.provenance,
+      createdAt: row.created_at?.toISOString?.() || row.created_at,
+    };
+  }
+
+  async putActuatorBundle({
+    bundle,
+    semanticProposal,
+    semanticCandidateId,
+    status = "draft",
+    provenance = {},
+  }) {
+    if (!SAFE_RECORD_ID.test(String(semanticCandidateId || ""))) {
+      throw new Error("Actuator semantic candidate id is invalid.");
+    }
+    if (!["draft", "rejected", "validated", "superseded"].includes(status)) {
+      throw new Error("Actuator bundle status is invalid.");
+    }
+    const checked = assertActuatorBundle({ bundle, semanticProposal });
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const semantic = await client.query(
+        `SELECT artifact_id, candidate_sha256, observation_sha256
+         FROM formweave_semantic_candidates
+         WHERE candidate_id = $1`,
+        [semanticCandidateId],
+      );
+      if (
+        semantic.rows[0]?.artifact_id !== bundle.artifactId ||
+        semantic.rows[0]?.candidate_sha256 !== bundle.semanticCandidateHash ||
+        semantic.rows[0]?.observation_sha256 !== bundle.observationHash
+      ) {
+        throw new Error("Actuator bundle does not match its semantic candidate.");
+      }
+      const manifest = {
+        ...bundle,
+        modules: bundle.modules.map(({ modulePath, sourceHash }) => ({
+          modulePath,
+          sourceHash,
+        })),
+      };
+      await client.query(
+        `INSERT INTO formweave_actuator_bundles(
+           bundle_id, artifact_id, bundle_version, semantic_candidate_id,
+           semantic_candidate_sha256, observation_sha256, bundle_sha256,
+           status, manifest, provenance
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (bundle_id) DO NOTHING`,
+        [
+          bundle.bundleId,
+          bundle.artifactId,
+          bundle.bundleVersion,
+          semanticCandidateId,
+          bundle.semanticCandidateHash,
+          bundle.observationHash,
+          checked.bundleHash,
+          status,
+          jsonbParameter(manifest),
+          jsonbParameter(provenance),
+        ],
+      );
+      for (const actuatorModule of bundle.modules) {
+        const capabilities = [
+          ...new Set(
+            bundle.handlers
+              .filter(
+                (handler) =>
+                  handler.modulePath === actuatorModule.modulePath,
+              )
+              .flatMap((handler) => handler.capabilities),
+          ),
+        ].sort();
+        await client.query(
+          `INSERT INTO formweave_actuator_modules(
+             bundle_id, module_path, source_sha256, source_text, capabilities
+           ) VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (bundle_id, module_path) DO NOTHING`,
+          [
+            bundle.bundleId,
+            actuatorModule.modulePath,
+            actuatorModule.sourceHash,
+            actuatorModule.source,
+            jsonbParameter(capabilities),
+          ],
+        );
+      }
+      const stored = await client.query(
+        `SELECT bundle_sha256, semantic_candidate_sha256, status
+         FROM formweave_actuator_bundles
+         WHERE bundle_id = $1`,
+        [bundle.bundleId],
+      );
+      const storedModules = await client.query(
+        `SELECT module_path, source_sha256
+         FROM formweave_actuator_modules
+         WHERE bundle_id = $1`,
+        [bundle.bundleId],
+      );
+      const moduleHashes = new Map(
+        storedModules.rows.map((row) => [row.module_path, row.source_sha256]),
+      );
+      if (
+        stored.rows[0]?.bundle_sha256 !== checked.bundleHash ||
+        stored.rows[0]?.semantic_candidate_sha256 !==
+          bundle.semanticCandidateHash ||
+        stored.rows[0]?.status !== status ||
+        moduleHashes.size !== bundle.modules.length ||
+        bundle.modules.some(
+          (module) => moduleHashes.get(module.modulePath) !== module.sourceHash,
+        )
+      ) {
+        throw new Error(`Immutable actuator bundle conflict for ${bundle.bundleId}.`);
+      }
+      await client.query("COMMIT");
+      return {
+        bundleId: bundle.bundleId,
+        artifactId: bundle.artifactId,
+        bundleVersion: bundle.bundleVersion,
+        bundleHash: checked.bundleHash,
+        status,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getActuatorBundle(bundleId) {
+    const [bundleResult, modulesResult] = await Promise.all([
+      this.pool.query(
+        `SELECT bundle_id, artifact_id, bundle_version,
+                semantic_candidate_id, semantic_candidate_sha256,
+                observation_sha256, bundle_sha256, status, manifest,
+                provenance, created_at
+         FROM formweave_actuator_bundles
+         WHERE bundle_id = $1`,
+        [bundleId],
+      ),
+      this.pool.query(
+        `SELECT module_path, source_sha256, source_text, capabilities
+         FROM formweave_actuator_modules
+         WHERE bundle_id = $1
+         ORDER BY module_path`,
+        [bundleId],
+      ),
+    ]);
+    if (!bundleResult.rowCount) return null;
+    const row = bundleResult.rows[0];
+    const sources = new Map(
+      modulesResult.rows.map((module) => [module.module_path, module]),
+    );
+    const bundle = {
+      ...row.manifest,
+      modules: row.manifest.modules.map((module) => ({
+        ...module,
+        source: sources.get(module.modulePath)?.source_text || "",
+      })),
+    };
+    return {
+      bundle,
+      bundleHash: row.bundle_sha256,
+      semanticCandidateId: row.semantic_candidate_id,
+      status: row.status,
+      provenance: row.provenance,
+      createdAt: row.created_at?.toISOString?.() || row.created_at,
+    };
+  }
+
+  async putRepairAttempt({ artifactId, repair, status = "proposed", provenance = {} }) {
+    if (repair?.layer === "semantic") validateSemanticRepairDocument(repair);
+    else if (repair?.layer === "actuator") validateActuatorRepairDocument(repair);
+    else throw new Error("Repair attempt layer is invalid.");
+    if (!["proposed", "rejected", "applied", "superseded"].includes(status)) {
+      throw new Error("Repair attempt status is invalid.");
+    }
+    await this.pool.query(
+      `INSERT INTO formweave_repair_attempts(
+         repair_id, artifact_id, layer, base_semantic_sha256,
+         base_actuator_sha256, issue_ids, repair_document, status,
+         model_provenance
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (repair_id) DO NOTHING`,
+      [
+        repair.repairId,
+        artifactId,
+        repair.layer,
+        repair.baseCandidateHash || null,
+        repair.baseBundleHash || null,
+        jsonbParameter(repair.issueIds),
+        jsonbParameter(repair),
+        status,
+        jsonbParameter(provenance),
+      ],
+    );
+    const stored = await this.pool.query(
+      `SELECT artifact_id, layer, repair_document, status
+       FROM formweave_repair_attempts
+       WHERE repair_id = $1`,
+      [repair.repairId],
+    );
+    if (
+      stored.rows[0]?.artifact_id !== artifactId ||
+      stored.rows[0]?.layer !== repair.layer ||
+      stableJson(stored.rows[0]?.repair_document) !== stableJson(repair) ||
+      stored.rows[0]?.status !== status
+    ) {
+      throw new Error(`Immutable repair attempt conflict for ${repair.repairId}.`);
+    }
+    return { repairId: repair.repairId, artifactId, layer: repair.layer, status };
+  }
+
+  async putValidationRun({
+    artifactId,
+    semanticCandidateId = null,
+    actuatorBundleId = null,
+    validation,
+    validatorVersions = {},
+  }) {
+    if (!SAFE_RECORD_ID.test(String(validation?.validationId || ""))) {
+      throw new Error("Validation id is invalid.");
+    }
+    if (!['semantic', 'actuator_static', 'preflight', 'publication'].includes(validation.phase)) {
+      throw new Error("Validation phase is invalid.");
+    }
+    if (!['passed', 'failed', 'blocked'].includes(validation.outcome)) {
+      throw new Error("Validation outcome is invalid.");
+    }
+    await this.pool.query(
+      `INSERT INTO formweave_validation_runs(
+         validation_id, artifact_id, semantic_candidate_id,
+         actuator_bundle_id, phase, outcome, validator_versions,
+         issues, evidence_refs, timings
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (validation_id) DO NOTHING`,
+      [
+        validation.validationId,
+        artifactId,
+        semanticCandidateId,
+        actuatorBundleId,
+        validation.phase,
+        validation.outcome,
+        jsonbParameter(validatorVersions),
+        jsonbParameter(validation.issues || []),
+        jsonbParameter(validation.evidenceRefs || []),
+        jsonbParameter(validation.timings || {}),
+      ],
+    );
+    const stored = await this.pool.query(
+      `SELECT artifact_id, phase, outcome
+       FROM formweave_validation_runs
+       WHERE validation_id = $1`,
+      [validation.validationId],
+    );
+    if (
+      stored.rows[0]?.artifact_id !== artifactId ||
+      stored.rows[0]?.phase !== validation.phase ||
+      stored.rows[0]?.outcome !== validation.outcome
+    ) {
+      throw new Error(`Immutable validation conflict for ${validation.validationId}.`);
+    }
+    return {
+      validationId: validation.validationId,
+      artifactId,
+      phase: validation.phase,
+      outcome: validation.outcome,
+    };
+  }
+
+  async publishArtifactRelease(release) {
+    validateArtifactRelease(release);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const [semantic, actuator, validations] = await Promise.all([
+        client.query(
+          `SELECT artifact_id, candidate_version, candidate_sha256, status
+           FROM formweave_semantic_candidates
+           WHERE candidate_id = $1`,
+          [release.semanticCandidateId],
+        ),
+        client.query(
+          `SELECT artifact_id, bundle_version, bundle_sha256,
+                  semantic_candidate_id, status
+           FROM formweave_actuator_bundles
+           WHERE bundle_id = $1`,
+          [release.actuatorBundleId],
+        ),
+        client.query(
+          `SELECT validation_id, artifact_id, outcome
+           FROM formweave_validation_runs
+           WHERE validation_id = ANY($1::text[])`,
+          [release.validationIds],
+        ),
+      ]);
+      const semanticRow = semantic.rows[0];
+      const actuatorRow = actuator.rows[0];
+      if (
+        semanticRow?.artifact_id !== release.artifactId ||
+        semanticRow?.candidate_version !== release.semanticVersion ||
+        semanticRow?.candidate_sha256 !== release.semanticHash ||
+        semanticRow?.status !== "validated"
+      ) {
+        throw new Error("Release semantic candidate is not a validated exact match.");
+      }
+      if (
+        actuatorRow?.artifact_id !== release.artifactId ||
+        actuatorRow?.bundle_version !== release.actuatorVersion ||
+        actuatorRow?.bundle_sha256 !== release.actuatorHash ||
+        actuatorRow?.semantic_candidate_id !== release.semanticCandidateId ||
+        actuatorRow?.status !== "validated"
+      ) {
+        throw new Error("Release actuator bundle is not a validated exact match.");
+      }
+      if (
+        validations.rowCount !== release.validationIds.length ||
+        validations.rows.some(
+          (row) =>
+            row.artifact_id !== release.artifactId || row.outcome !== "passed",
+        )
+      ) {
+        throw new Error("Release validation set is incomplete or contains a failure.");
+      }
+      await client.query(
+        `INSERT INTO formweave_artifact_releases(
+           release_id, artifact_id, release_version, semantic_candidate_id,
+           semantic_version, semantic_sha256, actuator_bundle_id,
+           actuator_version, actuator_sha256, validation_ids,
+           supersedes_release_id, certification_status
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT (release_id) DO NOTHING`,
+        [
+          release.releaseId,
+          release.artifactId,
+          release.releaseVersion,
+          release.semanticCandidateId,
+          release.semanticVersion,
+          release.semanticHash,
+          release.actuatorBundleId,
+          release.actuatorVersion,
+          release.actuatorHash,
+          jsonbParameter(release.validationIds),
+          release.supersedesReleaseId,
+          release.certificationStatus,
+        ],
+      );
+      const stored = await client.query(
+        `SELECT semantic_sha256, actuator_sha256, release_version
+         FROM formweave_artifact_releases
+         WHERE release_id = $1`,
+        [release.releaseId],
+      );
+      if (
+        stored.rows[0]?.semantic_sha256 !== release.semanticHash ||
+        stored.rows[0]?.actuator_sha256 !== release.actuatorHash ||
+        stored.rows[0]?.release_version !== release.releaseVersion
+      ) {
+        throw new Error(`Immutable artifact release conflict for ${release.releaseId}.`);
+      }
+      await client.query(
+        `INSERT INTO formweave_artifact_release_heads(
+           artifact_id, release_id, release_version
+         ) VALUES ($1, $2, $3)
+         ON CONFLICT (artifact_id) DO UPDATE
+         SET release_id = EXCLUDED.release_id,
+             release_version = EXCLUDED.release_version,
+             updated_at = now()
+         WHERE EXCLUDED.release_version >
+               formweave_artifact_release_heads.release_version`,
+        [release.artifactId, release.releaseId, release.releaseVersion],
+      );
+      await client.query("COMMIT");
+      return release;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getLatestArtifactRelease(artifactId) {
+    const result = await this.pool.query(
+      `SELECT r.*
+       FROM formweave_artifact_release_heads h
+       JOIN formweave_artifact_releases r ON r.release_id = h.release_id
+       WHERE h.artifact_id = $1`,
+      [artifactId],
+    );
+    if (!result.rowCount) return null;
+    const row = result.rows[0];
+    return {
+      schemaVersion: 1,
+      releaseId: row.release_id,
+      artifactId: row.artifact_id,
+      releaseVersion: row.release_version,
+      semanticCandidateId: row.semantic_candidate_id,
+      semanticVersion: row.semantic_version,
+      semanticHash: row.semantic_sha256,
+      actuatorBundleId: row.actuator_bundle_id,
+      actuatorVersion: row.actuator_version,
+      actuatorHash: row.actuator_sha256,
+      validationIds: row.validation_ids,
+      supersedesReleaseId: row.supersedes_release_id,
+      certificationStatus: row.certification_status,
+    };
+  }
+
   async counts() {
     const names = [
       "formweave_runs",
@@ -1162,6 +1719,12 @@ export class FormWeaveDatabase {
       "formweave_executions",
       "formweave_lineages",
       "formweave_script_versions",
+      "formweave_semantic_candidates",
+      "formweave_actuator_bundles",
+      "formweave_actuator_modules",
+      "formweave_repair_attempts",
+      "formweave_validation_runs",
+      "formweave_artifact_releases",
       "formweave_objects",
       "formweave_blobs",
     ];

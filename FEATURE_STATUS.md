@@ -3,7 +3,7 @@
 Status snapshot for `FEATURES.md` under the binding architecture in
 `FEATURES_CONTRACT_V2.md`.
 
-- Snapshot: 2026-07-31, America/Los_Angeles
+- Snapshot: 2026-08-03, America/Los_Angeles
 - **Built** means implemented and verified through the active production path.
 - **Partial** means useful implementation exists but the complete requirement
   or acceptance gate has not passed.
@@ -32,6 +32,26 @@ The active production path now follows the required decision boundary:
 3. safety validation admits or rejects those actions before storage;
 4. a form-specific script records the accepted mechanics;
 5. deterministic Playwright replay executes only those recorded mechanics.
+
+The semantic/actuator migration foundation is now the default production
+boundary. New states produce strict semantic candidates and independently
+generated, human-readable per-target ESM actuator handlers that are assembled
+into a per-site bundle with separate hashes, versions, typed repairs,
+PostgreSQL records, and validation evidence. `enforced` is the production
+default and requires immutable candidate persistence plus browser preflight
+before field, choice-probe, and nonterminal progression commands use the
+per-site handlers. Progression preflight restores the clean state before the
+complete script runs. `shadow` remains an explicit diagnostic mode and
+`compatibility` an explicit legacy/conformance mode. The existing corpus has
+not yet been rerun in enforced mode, so canonical D1/D3 parity remains
+**Partial** rather than being claimed prematurely.
+
+Latest implementation verification (2026-08-03): the production build passed;
+the full suite reported 123 tests, 122 passed, zero failed, and one optional
+PostgreSQL integration test skipped because its dedicated test URI was not set.
+The configured managed PostgreSQL 17.9 connection applied migration `008` and
+verified 322 reports, 161 generated scripts, and 11,163 binary blobs with no
+hash or relational integrity failure.
 
 No keyword, hostname, link-text, fixture registry, or answer key may decide an
 action. A target with neither a retained script nor model access is
@@ -119,7 +139,7 @@ failure in the supported Phase 1 envelope.
 | `F1.4.8` option semantics | **Built** | Group legends and per-option labels/values remain distinct. |
 | `F1.4.9` consent semantics | **Partial — implementation generalized** | Consent/acknowledgement/review/signature are typed and LLM-authored synthetic actuation no longer depends on localhost component flags. The fresh three-page J crawl verified signature, review confirmation, and consent with all legacy flags false; equivalent public proof remains. |
 | `F1.5` uncertified states | **Built** | Unknown/protected/unsupported states fail loudly and are never certified. |
-| `F1.6` obstacles | **Partial** | Stable waits plus required fixed pointer and bounded document/frame/nested-container scrolling are shared physics. Cookie gates and every visible collapsed disclosure are LLM-authored actions; collapsed expandos block unrelated progression until opened once and re-sensed, while already-expanded controls cannot be reused. Generated-script interface 13 invalidates older retained scripts so recrawls regenerate under the current selection/discovery contract. Interactive CAPTCHA and required login produce explicit disqualified crawl/form eligibility; broader public proof remains. |
+| `F1.6` obstacles | **Partial** | Stable waits plus required fixed pointer and bounded document/frame scrolling are shared physics. Shared priming never clicks disclosures or scrolls application-gating nested regions; those remain raw observations for generated handlers to operate and verify. Cookie gates and every visible collapsed disclosure are LLM-authored actions; collapsed expandos block unrelated progression until opened once and re-sensed, while already-expanded controls cannot be reused. Generated-script interface 17 invalidates older retained scripts so recrawls regenerate under the current selection/discovery contract. Interactive CAPTCHA and required login produce explicit disqualified crawl/form eligibility; broader public proof remains. |
 | `F1.7.9 / F16.6–F16.13` same-page branching | **Built for exactly one level** | Clean-baseline exhaustive option probes, additions-only visible-control deltas, sibling replay, variant population, selected-branch restoration, and depth-exceeded halt are implemented. |
 | `F1.7.10 / F16.8–F16.13` cross-page branching | **Built as detection-only; execution intentionally unsupported** | Detected/uncertain dependence halts before dependent-page actuation or submit. Cross-page branch execution is outside the current product scope, not an outstanding implementation item. K and P passed this boundary. |
 | `F1.4.2.1–F1.4.2.4` browser/API input contract | **Built** | Published schemas retain native names, option labels, browser hints, read-only/multiple state, date/time encodings, numeric step, and client-ready synthetic values from the pinned crawl script. Approved execution rejects malformed browser-native values before Chromium starts; existing form records derive the current schema from their pinned script when read. |
@@ -129,7 +149,7 @@ failure in the supported Phase 1 envelope.
 | `F2.2.11` result confirmation | **Built** | Success requires exact terminal actuation and explicit LLM-authored rendered success markers. Normal forms also require submit/write transport; a client-side completion requires a material state change and reports its distinct basis. Decoy GET navigation fails. |
 | `F2.2.12–F2.3.5` evidence integrity | **Built** | Model-sensing screenshots are transient. Reports retain a compact, labeled proof set around pre-action, selected branch, post-action, terminal result, and final failure boundaries; retained screenshots remain clickable and cumulative across pages. |
 | `F2.5.4–F2.5.11` fingerprinting | **Built** | One versioned canonical DOM-fact implementation is used by production, lineage, harnesses, golden regression, and tests. |
-| `F3` control-plane UI | **Partial** | Runs, contracts, guidance, sections, choices, four-layer exchanges, scripts, diagnostics, result proof, and local evidence are visible. The API console also renders fetched reports as evidence thumbnails and sectioned form/field summaries. Version/certification browsing remains. |
+| `F3` control-plane UI | **Partial** | Runs, contracts, guidance, sections, choices, four-layer exchanges, scripts, diagnostics, result proof, and local evidence are visible. Failure responses are translated into human-readable root-cause lists, and reports distinguish planned, attempted, verified, and attempted-failure field counts. Version/certification browsing remains. |
 | `F3.11` headless/headful | **Built** | Both modes use the same production crawler locally. Hosted launch surfaces disable Headful and localhost-target controls, and the hosted API rejects bypass attempts. |
 | `F3.12` settings | **Partial** | Typed settings and locked safety boundaries persist; free-form instructions do not yet alter planning. |
 | `F3.13` crawl submit boundary | **Built** | The crawl API and API console independently expose `submit: false` traversal and `submit: true` synthetic terminal submission for public and allowed-local targets. Both use only LLM-authored scripts and include result confirmation. |
@@ -158,9 +178,9 @@ failure in the supported Phase 1 envelope.
 | `F9.14` certification | **Not built** | No human-only certification state machine or approved coverage record. |
 | `F9.15` crawl/form identity and approval | **Built initial API slice** | Every crawl has a unique crawl ID; every complete published journey gets a new form ID. Form approval pins artifact ID, script version, and source hash. The first approved execution passed 10/10 fields and verified submission. Full coverage certification/version UI remains. |
 | `F13` four-tier contract line | **Partial** | Typed contracts and isolated D3 exist; production retained-script replay is not yet routed exclusively through canonical D1/D3. |
-| `F14` generation/repair loop | **Partial** | Production has novel-state generation, schema repair, immutable state storage, branch expansion, complete-script assembly, and retained replay. General canonical N+1 lineage remains. |
+| `F14` generation/repair loop | **Partial** | Production has novel-state generation plus typed semantic-domain repair, independently replaceable complete actuator handlers, deterministic cross-layer routing, immutable PostgreSQL/source storage, branch expansion, complete-script assembly, and retained replay. Enforced-corpus parity and general canonical N+1 lineage remain. |
 | `F14.1.1` binding safety | **Built** | Only accepted model-authored actions enter executable scripts; protected authority is rechecked at replay. |
-| `F15` execution-based drift | **Not built** | Fault classification, re-crawl/regeneration verdicts, and stale-script enforcement remain. |
+| `F15` execution-based drift | **Partial** | Runtime/preflight faults now route deterministically among semantic, actuator, environment, and drift-suspicion layers, with LLM diagnosis only for ambiguous evidence. Re-crawl verdicts, staleness policy, and drift-driven version selection remain. |
 | `F16` dynamics | **Built for Phase 1 envelope** | Exactly one same-page level is supported. Cross-page branching has zero supported execution levels: it is detected, recorded, and halted. Unresolved coverage blocks submit. |
 
 ## Phase 2 status

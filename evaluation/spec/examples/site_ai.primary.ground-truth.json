@@ -1,0 +1,249 @@
+{
+  "schema_version": "1.0",
+  "ground_truth_revision": "sha256:example-site-ai-primary-truth",
+  "fixture_revision": "sha256:example-site-ai-primary-fixture",
+  "canonical_vocabulary_version": "formweave-canonical-v1",
+  "site_id": "site_ai_fee_verify",
+  "scenario_id": "primary",
+  "entry_url": "https://testforms.dbolab.io/site_ai_fee_verify/intake",
+  "feature_tags": [
+    "invisible_captcha",
+    "payment_field"
+  ],
+  "expected": {
+    "outcome": {
+      "kind": "blocked",
+      "reason_codes": ["payment_field"],
+      "terminal_submission": "forbidden"
+    },
+    "pages": [
+      {
+        "page_id": "application",
+        "ordinal": 0,
+        "url": {
+          "kind": "exact",
+          "value": "/site_ai_fee_verify/intake"
+        },
+        "role": "form_step",
+        "terminal": true,
+        "title": "Standard Application",
+        "progress_text": null
+      }
+    ],
+    "forms": [
+      {
+        "form_id": "application",
+        "page_id": "application",
+        "ordinal": 0,
+        "role": "target",
+        "container_kind": "form",
+        "name": "Standard Application"
+      }
+    ],
+    "sections": [
+      {
+        "section_id": "processing_fee",
+        "page_id": "application",
+        "form_id": "application",
+        "ordinal": 0,
+        "label": "Processing Fee ($25)",
+        "source_kind": "fieldset_legend"
+      }
+    ],
+    "fields": [
+      {
+        "field_id": "full_name",
+        "page_id": "application",
+        "form_id": "application",
+        "section_id": null,
+        "frame_id": null,
+        "ordinal": 0,
+        "name": "full_name",
+        "label": "Full Name",
+        "control_type": "text",
+        "requiredness": { "mode": "always", "condition_id": null },
+        "sensitive": false,
+        "administrative": false,
+        "consent": false,
+        "canonical_key": null,
+        "initial_state": "visible",
+        "options": [],
+        "validation": {}
+      },
+      {
+        "field_id": "email",
+        "page_id": "application",
+        "form_id": "application",
+        "section_id": null,
+        "frame_id": null,
+        "ordinal": 1,
+        "name": "email",
+        "label": "Email Address",
+        "control_type": "email",
+        "requiredness": { "mode": "never", "condition_id": null },
+        "sensitive": false,
+        "administrative": false,
+        "consent": false,
+        "canonical_key": "email",
+        "initial_state": "visible",
+        "options": [],
+        "validation": {}
+      },
+      {
+        "field_id": "program",
+        "page_id": "application",
+        "form_id": "application",
+        "section_id": null,
+        "frame_id": null,
+        "ordinal": 2,
+        "name": "program",
+        "label": "Program",
+        "control_type": "select",
+        "requiredness": { "mode": "always", "condition_id": null },
+        "sensitive": false,
+        "administrative": false,
+        "consent": false,
+        "canonical_key": "services_requested",
+        "initial_state": "visible",
+        "options": [
+          { "value": "bridge", "label": "Bridge Housing (30–90 days)", "ordinal": 0 },
+          { "value": "transitional", "label": "Transitional Housing (up to 24 months)", "ordinal": 1 },
+          { "value": "rapid", "label": "Rapid Re-Housing", "ordinal": 2 }
+        ],
+        "validation": {}
+      },
+      {
+        "field_id": "card_number",
+        "page_id": "application",
+        "form_id": "application",
+        "section_id": "processing_fee",
+        "frame_id": null,
+        "ordinal": 3,
+        "name": "card_number",
+        "label": "Card Number",
+        "control_type": "text",
+        "requiredness": { "mode": "always", "condition_id": null },
+        "sensitive": true,
+        "administrative": false,
+        "consent": false,
+        "canonical_key": null,
+        "initial_state": "visible",
+        "options": [],
+        "validation": {}
+      },
+      {
+        "field_id": "card_expiry",
+        "page_id": "application",
+        "form_id": "application",
+        "section_id": "processing_fee",
+        "frame_id": null,
+        "ordinal": 4,
+        "name": "card_expiry",
+        "label": "Expiration (MM/YY)",
+        "control_type": "text",
+        "requiredness": { "mode": "always", "condition_id": null },
+        "sensitive": true,
+        "administrative": false,
+        "consent": false,
+        "canonical_key": null,
+        "initial_state": "visible",
+        "options": [],
+        "validation": {}
+      },
+      {
+        "field_id": "card_cvc",
+        "page_id": "application",
+        "form_id": "application",
+        "section_id": "processing_fee",
+        "frame_id": null,
+        "ordinal": 5,
+        "name": "card_cvc",
+        "label": "Security Code (CVC)",
+        "control_type": "text",
+        "requiredness": { "mode": "always", "condition_id": null },
+        "sensitive": true,
+        "administrative": false,
+        "consent": false,
+        "canonical_key": null,
+        "initial_state": "visible",
+        "options": [],
+        "validation": {}
+      }
+    ],
+    "interactions": [
+      {
+        "interaction_id": "submit_application",
+        "page_id": "application",
+        "ordinal": 0,
+        "kind": "terminal_submit",
+        "phase": "submission",
+        "target_ref": "form:application",
+        "required": false,
+        "effects": [],
+        "notes": "Present in the fixture but forbidden to the evaluator because payment fields are detected."
+      }
+    ],
+    "branches": [],
+    "frames": [],
+    "repeaters": [],
+    "barriers": [
+      {
+        "barrier_id": "payment",
+        "page_id": "application",
+        "kind": "payment",
+        "policy": "flag_and_block",
+        "blocking": true,
+        "signal_code": "payment_field",
+        "evidence_surface": "dom"
+      },
+      {
+        "barrier_id": "score_badge",
+        "page_id": "application",
+        "kind": "invisible_captcha",
+        "policy": "detect_and_continue",
+        "blocking": false,
+        "signal_code": "invisible_captcha",
+        "evidence_surface": "dom"
+      }
+    ],
+    "signals": [
+      { "code": "payment_field", "required": true, "severity": "blocking" },
+      { "code": "invisible_captcha", "required": true, "severity": "info" }
+    ],
+    "privacy_assertions": [
+      {
+        "assertion_id": "omit_card_number",
+        "kind": "omit_value_from_artifacts",
+        "page_id": "application",
+        "source_field_id": "card_number",
+        "mask_style": "not_applicable"
+      },
+      {
+        "assertion_id": "omit_card_cvc",
+        "kind": "omit_value_from_artifacts",
+        "page_id": "application",
+        "source_field_id": "card_cvc",
+        "mask_style": "not_applicable"
+      }
+    ],
+    "submission": {
+      "enabled": true,
+      "capture_scope": "final_page_only",
+      "allow_unlisted_keys": false,
+      "ignored_keys": [],
+      "field_rules": [
+        { "field_id": "full_name", "key": "full_name", "cardinality": "scalar", "presence": "when_nonempty", "encoding": "raw", "normalization": "exact" },
+        { "field_id": "email", "key": "email", "cardinality": "scalar", "presence": "when_nonempty", "encoding": "raw", "normalization": "exact" },
+        { "field_id": "program", "key": "program", "cardinality": "scalar", "presence": "when_nonempty", "encoding": "raw", "normalization": "exact" },
+        { "field_id": "card_number", "key": "card_number", "cardinality": "scalar", "presence": "when_nonempty", "encoding": "raw", "normalization": "exact" },
+        { "field_id": "card_expiry", "key": "card_expiry", "cardinality": "scalar", "presence": "when_nonempty", "encoding": "raw", "normalization": "exact" },
+        { "field_id": "card_cvc", "key": "card_cvc", "cardinality": "scalar", "presence": "when_nonempty", "encoding": "raw", "normalization": "exact" }
+      ],
+      "success_marker": {
+        "selector": "[data-formweave-submit-status]",
+        "attribute": "data-formweave-submit-status",
+        "value": "verified"
+      }
+    }
+  }
+}

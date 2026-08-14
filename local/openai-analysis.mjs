@@ -131,6 +131,15 @@ function pageFacts(pages) {
       fieldsVisible: state.fieldsVisible,
       values: state.values,
     })),
+    branchStates: page.branchStates || 0,
+    automationActions: (page.automationActions || []).map((action) => ({
+      category: action.category,
+      label: action.label,
+      testValue: action.testValue ?? null,
+      outcome: action.outcome || null,
+      branchClassification: action.branchClassification || null,
+      failureCode: action.failureCode || null,
+    })),
     finalSubmission: page.finalSubmission || "not_requested",
   }));
 }
@@ -177,6 +186,7 @@ export async function analyzeCrawl(pages, log) {
         "Treat DOM-extracted fields as observed facts.",
         "Treat every supplied full-page image or legible page tile as a standard sensing input alongside the DOM.",
         "Use the recorded state evidence and verified entry outcomes to report what was actually filled, branched, advanced, or blocked.",
+        "Treat automationActions.branchClassification as the authoritative result for each tested option; do not claim that an option caused no change when its recorded classification says otherwise.",
         "Use the supplied first-class section tree, exact question membership, option labels, and scoped guidance records when interpreting questions; do not flatten section guidance into every field.",
         "For every inferred field, return an obviously synthetic defaultTestValue that could exercise it; use example.invalid for email and URL domains.",
         "Do not duplicate DOM fields in inferredFields unless the screenshot adds materially different information.",

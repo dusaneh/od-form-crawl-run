@@ -3,6 +3,11 @@ import {
   SEMANTIC_PROPOSAL_JSON_SCHEMA,
   validateSemanticProposal,
 } from "./proposal-schema.mjs";
+import {
+  conspicuouslySyntheticFallback,
+  isConspicuouslySynthetic,
+  isLegalAcceptanceField,
+} from "./proposal-safety.mjs";
 
 function outputText(response) {
   for (const item of response.output || []) {
@@ -32,6 +37,7 @@ function observedControlType(facts) {
   );
   if (rawTypes.has("radio")) return "radio";
   if (rawTypes.has("checkbox")) return "checkbox";
+  if (rawTypes.has("custom")) return "custom";
   if (tags.has("select")) return "select";
   if (tags.has("textarea")) return "textarea";
   const supported = [
@@ -80,13 +86,122 @@ function compiledFieldSelectors(sourceFacts) {
   ].filter(Boolean);
 }
 
+function mergeRepairCollection(prior = [], correction = [], identity) {
+  const correctedByIdentity = new Map();
+  const appended = [];
+  for (const item of correction || []) {
+    const key = identity(item);
+    if (key) correctedByIdentity.set(key, item);
+    else appended.push(item);
+  }
+  const priorIdentities = new Set();
+  const merged = (prior || []).map((item) => {
+    const key = identity(item);
+    if (key) priorIdentities.add(key);
+    return key && correctedByIdentity.has(key)
+      ? correctedByIdentity.get(key)
+      : item;
+  });
+  for (const item of correction || []) {
+    const key = identity(item);
+    if (key && !priorIdentities.has(key)) merged.push(item);
+  }
+  return [...merged, ...appended];
+}
+
+function composeTargetedRepairDraft(input, observation) {
+  const feedback = observation?.runtimeValidationFeedback;
+  const prior = feedback?.priorProposal;
+  if (
+    !prior ||
+    typeof prior !== "object" ||
+    Array.isArray(prior) ||
+    feedback?.kind
+  ) {
+    return { proposal: input, normalization: null };
+  }
+
+  const current = structuredClone(input);
+  const base = structuredClone(prior);
+  const proposal = {
+    ...base,
+    ...current,
+    state: current.state || base.state,
+    fields: mergeRepairCollection(
+      base.fields,
+      current.fields,
+      (item) => String(item?.key || ""),
+    ),
+    sections: mergeRepairCollection(
+      base.sections,
+      current.sections,
+      (item) => String(item?.key || ""),
+    ),
+    guidance: mergeRepairCollection(
+      base.guidance,
+      current.guidance,
+      (item) => String(item?.key || ""),
+    ),
+    mechanics: {
+      ...(base.mechanics || {}),
+      ...(current.mechanics || {}),
+      fieldTargets: mergeRepairCollection(
+        base.mechanics?.fieldTargets,
+        current.mechanics?.fieldTargets,
+        (item) => String(item?.fieldKey || ""),
+      ),
+      progressionTarget:
+        current.mechanics?.progressionTarget ??
+        base.mechanics?.progressionTarget ??
+        null,
+    },
+    proposedActions: mergeRepairCollection(
+      base.proposedActions,
+      current.proposedActions,
+      (item) => String(item?.targetKey || item?.proposalId || ""),
+    ),
+  };
+  return {
+    proposal,
+    normalization: {
+      path: "$",
+      kind: "compose_targeted_repair_with_prior_candidate",
+      issueTargetKeys: [
+        ...new Set(
+          (feedback.issues || [])
+            .map((issue) => String(issue?.targetKey || ""))
+            .filter(Boolean),
+        ),
+      ].sort(),
+      priorCounts: {
+        fields: base.fields?.length || 0,
+        fieldTargets: base.mechanics?.fieldTargets?.length || 0,
+        actions: base.proposedActions?.length || 0,
+      },
+      correctionCounts: {
+        fields: current.fields?.length || 0,
+        fieldTargets: current.mechanics?.fieldTargets?.length || 0,
+        actions: current.proposedActions?.length || 0,
+      },
+      composedCounts: {
+        fields: proposal.fields.length,
+        fieldTargets: proposal.mechanics.fieldTargets.length,
+        actions: proposal.proposedActions.length,
+      },
+    },
+  };
+}
+
 export function canonicalizeSemanticProposal(
   input,
   existingContract = null,
   observation = null,
 ) {
-  const proposal = structuredClone(input);
-  const normalizations = [];
+  const composed = composeTargetedRepairDraft(input, observation);
+  const proposal = structuredClone(composed.proposal);
+  const normalizations = composed.normalization
+    ? [composed.normalization]
+    : [];
   const normalize = (owner, key, path) => {
     if (!Array.isArray(owner?.[key])) return;
     const before = owner[key];
@@ -137,6 +252,52 @@ export function canonicalizeSemanticProposal(
     "selectors",
     "$.mechanics.progressionTarget.selectors",
   );
+
+  if (existingContract) {
+    const existingFieldKeys = new Set(
+      (existingContract.fields || []).map((field) => field.key),
+    );
+    const repeatedFieldKeys = new Set(
+      (proposal.fields || [])
+        .filter((field) => existingFieldKeys.has(field.key))
+        .map((field) => field.key),
+    );
+    if (repeatedFieldKeys.size > 0) {
+      const beforeCount = proposal.fields.length;
+      proposal.fields = proposal.fields.filter(
+        (field) => !repeatedFieldKeys.has(field.key),
+      );
+      proposal.mechanics.fieldTargets = (
+        proposal.mechanics?.fieldTargets || []
+      ).filter((target) => !repeatedFieldKeys.has(target.fieldKey));
+      proposal.proposedActions = (proposal.proposedActions || []).filter(
+        (action) => !repeatedFieldKeys.has(action.targetKey),
+      );
+      normalizations.push({
+        path: "$.fields",
+        kind: "drop_repeated_immutable_contract_fields",
+        fieldKeys: [...repeatedFieldKeys].sort(),
+        beforeCount,
+        afterCount: proposal.fields.length,
+      });
+    }
+    for (const collection of ["sections", "guidance"]) {
+      const existingKeys = new Set(
+        (existingContract[collection] || []).map((item) => item.key),
+      );
+      const before = proposal[collection] || [];
+      const after = before.filter((item) => !existingKeys.has(item.key));
+      if (after.length !== before.length) {
+        proposal[collection] = after;
+        normalizations.push({
+          path: `$.${collection}`,
+          kind: "drop_repeated_immutable_contract_records",
+          beforeCount: before.length,
+          afterCount: after.length,
+        });
+      }
+    }
+  }
 
   const observedFacts = new Map(
     (observation?.controls || []).map((fact) => [fact.factId, fact]),
@@ -198,6 +359,288 @@ export function canonicalizeSemanticProposal(
     });
   }
 
+  const fieldGroups = new Map();
+  for (const [index, field] of (proposal.fields || []).entries()) {
+    const current = fieldGroups.get(field.key) || [];
+    current.push({ field, index });
+    fieldGroups.set(field.key, current);
+  }
+  const mergedRadioFields = new Map();
+  for (const [fieldKey, group] of fieldGroups) {
+    if (group.length < 2) continue;
+    const factsByField = group.map(({ field }) =>
+      (field.sourceFactIds || [])
+        .map((factId) => observedFacts.get(factId))
+        .filter(Boolean),
+    );
+    const sourceFacts = factsByField.flat();
+    const groupNames = new Set(
+      sourceFacts.map((fact) => String(fact.name || "")).filter(Boolean),
+    );
+    if (
+      sourceFacts.length !== group.length ||
+      sourceFacts.some(
+        (fact) => String(fact.rawType || "").toLowerCase() !== "radio",
+      ) ||
+      groupNames.size !== 1
+    ) {
+      continue;
+    }
+    const options = [];
+    const optionValues = new Set();
+    for (const fact of sourceFacts) {
+      for (const option of fact.options || []) {
+        const value = String(option.value ?? "");
+        if (optionValues.has(value)) continue;
+        optionValues.add(value);
+        options.push({ value, label: String(option.label || value) });
+      }
+    }
+    if (options.length === 0) continue;
+    const selectedIndex = group.findIndex(
+      ({ field }) => field.testValue === true,
+    );
+    const authoredStringValue = group
+      .map(({ field }) => field.testValue)
+      .find(
+        (value) =>
+          typeof value === "string" && optionValues.has(value),
+      );
+    const selectedFact =
+      selectedIndex >= 0 ? factsByField[selectedIndex][0] : null;
+    const testValue =
+      authoredStringValue ??
+      selectedFact?.options?.[0]?.value ??
+      options[0].value;
+    const representative = group[0].field;
+    const merged = {
+      ...representative,
+      controlType: "radio",
+      required: group.some(({ field }) => field.required === true),
+      options,
+      guidanceRefs: canonicalStrings(
+        group.flatMap(({ field }) => field.guidanceRefs || []),
+      ),
+      testValue: String(testValue),
+      sensitive: group.some(({ field }) => field.sensitive === true),
+      administrative: group.every(
+        ({ field }) => field.administrative === true,
+      ),
+      resolutionHints: canonicalStrings(
+        group.flatMap(({ field }) => field.resolutionHints || []),
+      ),
+      sourceFactIds: canonicalStrings(sourceFacts.map((fact) => fact.factId)),
+    };
+    mergedRadioFields.set(fieldKey, {
+      firstIndex: group[0].index,
+      merged,
+      sourceFacts,
+    });
+    normalizations.push({
+      path: "$.fields",
+      kind: "merge_observed_radio_group",
+      fieldKey,
+      beforeCount: group.length,
+      afterCount: 1,
+      sourceFactIds: merged.sourceFactIds,
+    });
+  }
+  if (mergedRadioFields.size > 0) {
+    proposal.fields = proposal.fields.flatMap((field, index) => {
+      const merged = mergedRadioFields.get(field.key);
+      if (!merged) return [field];
+      return index === merged.firstIndex ? [merged.merged] : [];
+    });
+    const emittedTargets = new Set();
+    proposal.mechanics.fieldTargets = (
+      proposal.mechanics?.fieldTargets || []
+    ).flatMap((target) => {
+      const merged = mergedRadioFields.get(target.fieldKey);
+      if (!merged) return [target];
+      if (emittedTargets.has(target.fieldKey)) return [];
+      emittedTargets.add(target.fieldKey);
+      return [
+        {
+          ...target,
+          selectors:
+            compiledFieldSelectors(merged.sourceFacts).length > 0
+              ? compiledFieldSelectors(merged.sourceFacts)
+              : target.selectors,
+        },
+      ];
+    });
+    const emittedActions = new Set();
+    proposal.proposedActions = (proposal.proposedActions || []).flatMap(
+      (action) => {
+        const merged = mergedRadioFields.get(action.targetKey);
+        if (!merged || action.kind !== "field_actuation") return [action];
+        if (emittedActions.has(action.targetKey)) return [];
+        emittedActions.add(action.targetKey);
+        return [{ ...action, value: merged.merged.testValue }];
+      },
+    );
+  }
+
+  const observedRadioGroups = new Map();
+  for (const fact of observedFacts.values()) {
+    if (
+      !fact.visible ||
+      String(fact.rawType || "").toLowerCase() !== "radio" ||
+      !fact.name
+    ) {
+      continue;
+    }
+    const current = observedRadioGroups.get(fact.name) || [];
+    current.push(fact);
+    observedRadioGroups.set(fact.name, current);
+  }
+  for (const [rawName, sourceFacts] of observedRadioGroups) {
+    if (sourceFacts.length < 2) continue;
+    const factIds = new Set(sourceFacts.map((fact) => fact.factId));
+    const represented = (proposal.fields || [])
+      .map((field, index) => ({ field, index }))
+      .filter(({ field }) =>
+        (field.sourceFactIds || []).some((factId) => factIds.has(factId)),
+      );
+    if (represented.length === 0) continue;
+    const representative = represented[0];
+    const field = representative.field;
+    const representedKeys = new Set(
+      represented.map(({ field: candidate }) => candidate.key),
+    );
+    const removedKeys = new Set(
+      represented
+        .slice(1)
+        .map(({ field: candidate }) => candidate.key)
+        .filter((key) => key !== field.key),
+    );
+    const observedOptions = [];
+    const observedOptionValues = new Set();
+    for (const fact of sourceFacts) {
+      for (const option of fact.options || []) {
+        const value = String(option.value ?? "");
+        if (observedOptionValues.has(value)) continue;
+        observedOptionValues.add(value);
+        observedOptions.push({
+          value,
+          label: String(option.label || value),
+        });
+      }
+    }
+    if (observedOptions.length === 0) continue;
+    const completeFactIds = canonicalStrings(
+      sourceFacts.map((fact) => fact.factId),
+    );
+    const authoredValue = String(field.testValue ?? "");
+    const testValue = observedOptionValues.has(authoredValue)
+      ? authoredValue
+      : observedOptions[0].value;
+    const groupLegend = sourceFacts
+      .map((fact) => String(fact.groupLegend || "").trim())
+      .find(Boolean);
+    const changed =
+      represented.length !== 1 ||
+      field.controlType !== "radio" ||
+      JSON.stringify(field.sourceFactIds) !== JSON.stringify(completeFactIds) ||
+      JSON.stringify(field.options) !== JSON.stringify(observedOptions) ||
+      field.testValue !== testValue;
+    if (!changed) continue;
+    const beforeFactCount = field.sourceFactIds?.length || 0;
+    const beforeOptionCount = field.options?.length || 0;
+    field.controlType = "radio";
+    field.sourceFactIds = completeFactIds;
+    field.options = observedOptions;
+    field.testValue = testValue;
+    field.required = sourceFacts.some((fact) => fact.required === true);
+    field.guidanceRefs = canonicalStrings(
+      represented.flatMap(({ field: candidate }) => candidate.guidanceRefs || []),
+    );
+    field.sensitive = represented.some(
+      ({ field: candidate }) => candidate.sensitive === true,
+    );
+    field.administrative = represented.every(
+      ({ field: candidate }) => candidate.administrative === true,
+    );
+    field.resolutionHints = canonicalStrings([
+      ...represented.flatMap(
+        ({ field: candidate }) => candidate.resolutionHints || [],
+      ),
+      ...sourceFacts.flatMap((fact) => fact.selectorCandidates || []),
+    ]);
+    if (groupLegend) field.rawLabel = groupLegend;
+    const removedIndexes = new Set(
+      represented.slice(1).map(({ index }) => index),
+    );
+    proposal.fields = (proposal.fields || []).filter(
+      (_candidate, index) => !removedIndexes.has(index),
+    );
+
+    const compiledSelectors = compiledFieldSelectors(sourceFacts);
+    let emittedTarget = false;
+    proposal.mechanics.fieldTargets = (
+      proposal.mechanics?.fieldTargets || []
+    ).flatMap((target) => {
+      if (!representedKeys.has(target.fieldKey)) return [target];
+      if (emittedTarget) return [];
+      emittedTarget = true;
+      return [{
+        ...target,
+        fieldKey: field.key,
+        selectors:
+          compiledSelectors.length > 0
+            ? compiledSelectors
+            : target.selectors,
+      }];
+    });
+    let emittedAction = false;
+    proposal.proposedActions = (proposal.proposedActions || []).flatMap(
+      (candidate) => {
+        if (
+          candidate.kind !== "field_actuation" ||
+          !representedKeys.has(candidate.targetKey)
+        ) {
+          return [candidate];
+        }
+        if (emittedAction) return [];
+        emittedAction = true;
+        return [{ ...candidate, targetKey: field.key, value: testValue }];
+      },
+    );
+    proposal.state.visibleControlKeys = canonicalStrings(
+      (proposal.state?.visibleControlKeys || []).map((key) =>
+        removedKeys.has(key) ? field.key : key,
+      ),
+    );
+    proposal.sections = (proposal.sections || []).map((section) => ({
+      ...section,
+      fieldKeys: canonicalStrings(
+        (section.fieldKeys || []).map((key) =>
+          removedKeys.has(key) ? field.key : key,
+        ),
+      ),
+    }));
+    if (!proposal.state.visibleControlKeys.includes(field.key)) {
+      proposal.state.visibleControlKeys = canonicalStrings([
+        ...proposal.state.visibleControlKeys,
+        field.key,
+      ]);
+    }
+    normalizations.push({
+      path: "$.fields",
+      kind:
+        represented.length > 1
+          ? "merge_observed_radio_group_by_raw_name"
+          : "complete_observed_radio_group",
+      fieldKey: field.key,
+      rawName,
+      mergedFieldKeys: [...representedKeys].sort(),
+      beforeFactCount,
+      afterFactCount: completeFactIds.length,
+      beforeOptionCount,
+      afterOptionCount: observedOptions.length,
+    });
+  }
+
   const validGuidanceKeys = new Set([
     ...(proposal.guidance || []).map((item) => item.key),
     ...(existingContract?.guidance || []).map((item) => item.key),
@@ -213,6 +656,67 @@ export function canonicalizeSemanticProposal(
         before,
         after,
       });
+    }
+  }
+
+  const proposalActionsByTarget = new Map(
+    (proposal.proposedActions || []).map((action) => [action.targetKey, action]),
+  );
+  for (const [index, field] of (proposal.fields || []).entries()) {
+    const sourceFacts = (field.sourceFactIds || [])
+      .map((factId) => observedFacts.get(factId))
+      .filter(Boolean);
+    const fact = sourceFacts.find((item) => item.visible) || sourceFacts[0];
+    const action = proposalActionsByTarget.get(field.key);
+    if (!fact || !action) continue;
+    if (
+      action.kind === "field_actuation" &&
+      isLegalAcceptanceField(field, fact)
+    ) {
+      const before = { kind: action.kind, value: action.value };
+      action.kind = "legal_acceptance_interaction";
+      action.value = true;
+      field.testValue = true;
+      normalizations.push({
+        path: `$.proposedActions[${index}]`,
+        kind: "typed_acceptance_action_boundary",
+        before,
+        after: { kind: action.kind, value: true },
+      });
+      continue;
+    }
+    if (
+      action.kind === "legal_acceptance_interaction" &&
+      isLegalAcceptanceField(field, fact) &&
+      action.value !== true
+    ) {
+      const before = action.value;
+      action.value = true;
+      field.testValue = true;
+      normalizations.push({
+        path: `$.proposedActions[${index}].value`,
+        kind: "one_way_acceptance_value",
+        before,
+        after: true,
+      });
+      continue;
+    }
+    if (
+      action.kind === "field_actuation" &&
+      !isConspicuouslySynthetic(action.value, field, fact)
+    ) {
+      const fallback = conspicuouslySyntheticFallback(field, fact);
+      if (fallback !== null) {
+        const before = action.value;
+        action.value = fallback;
+        field.testValue = fallback;
+        normalizations.push({
+          path: `$.proposedActions[${index}].value`,
+          kind: "policy_synthetic_text_fallback",
+          before,
+          after: fallback,
+        });
+      }
     }
   }
   for (const [index, section] of (proposal.sections || []).entries()) {
@@ -233,6 +737,19 @@ export function canonicalizeSemanticProposal(
     ...(proposal.sections || []).map((section) => section.key),
     ...(existingContract?.sections || []).map((section) => section.key),
   ]);
+  if (Array.isArray(proposal.state?.sectionKeys)) {
+    const before = proposal.state.sectionKeys;
+    const after = before.filter((key) => validSectionKeys.has(key));
+    if (after.length !== before.length) {
+      proposal.state.sectionKeys = after;
+      normalizations.push({
+        path: "$.state.sectionKeys",
+        kind: "drop_unknown_section_references",
+        before,
+        after,
+      });
+    }
+  }
   for (const [index, field] of (proposal.fields || []).entries()) {
     if (field.sectionKey && !validSectionKeys.has(field.sectionKey)) {
       const before = field.sectionKey;
@@ -280,6 +797,69 @@ export function canonicalizeSemanticProposal(
         before,
         after: controlType,
       });
+    }
+    if (controlType === "select") {
+      const observedOptions = [
+        ...new Map(
+          sourceFacts
+            .flatMap((fact) => fact.options || [])
+            .map((option) => {
+              const canonical = {
+                value: String(option.value ?? ""),
+                label: String(option.label || option.value || ""),
+              };
+              return [
+                `${canonical.value}\u0000${canonical.label}`,
+                canonical,
+              ];
+            }),
+        ).values(),
+      ];
+      if (
+        observedOptions.length > 0 &&
+        JSON.stringify(field.options || []) !== JSON.stringify(observedOptions)
+      ) {
+        const beforeCount = field.options?.length || 0;
+        field.options = observedOptions;
+        normalizations.push({
+          path: `$.fields[${index}].options`,
+          kind: "dom_authoritative_select_options",
+          fieldKey: field.key,
+          sourceFactIds: [...(field.sourceFactIds || [])],
+          beforeCount,
+          afterCount: observedOptions.length,
+        });
+      }
+      if (observedOptions.length > 0) {
+        const selected = observedOptions.find(
+          (option) =>
+            option.value !== "" &&
+            String(option.value) === String(field.testValue ?? ""),
+        );
+        const fallback = observedOptions.find(
+          (option) => option.value !== "",
+        );
+        const exactValue = selected?.value ?? fallback?.value ?? null;
+        const action = proposalActionsByTarget.get(field.key);
+        const actionNeedsRebind =
+          action?.kind === "field_actuation" && action.value !== exactValue;
+        if (
+          exactValue !== null &&
+          (field.testValue !== exactValue || actionNeedsRebind)
+        ) {
+          const before = field.testValue;
+          field.testValue = exactValue;
+          if (action?.kind === "field_actuation") action.value = exactValue;
+          normalizations.push({
+            path: `$.fields[${index}].testValue`,
+            kind: "dom_authoritative_select_test_value",
+            fieldKey: field.key,
+            sourceFactIds: [...(field.sourceFactIds || [])],
+            beforeType: before === null ? "null" : typeof before,
+            after: exactValue,
+          });
+        }
+      }
     }
     const required = sourceFacts.some((fact) => fact.required === true);
     if (required && field.required !== true) {
@@ -452,6 +1032,42 @@ export function canonicalizeSemanticProposal(
     }
   }
 
+  const observedProgressionTarget = proposal.mechanics?.progressionTarget;
+  const progressionText = String(progressionFact?.rawText || "")
+    .trim()
+    .toLocaleLowerCase("en-US");
+  const observedTerminalSubmit =
+    String(progressionFact?.rawType || "").toLocaleLowerCase("en-US") ===
+      "submit" &&
+    /\b(submit|send|apply|finish|complete|confirm|place\s+order)\b/.test(
+      progressionText,
+    ) &&
+    !/\b(next|continue|review|preview|save|draft|back)\b/.test(
+      progressionText,
+    );
+  if (
+    observedTerminalSubmit &&
+    proposal.state?.progression?.kind !== "terminal_submit"
+  ) {
+    const before = proposal.state.progression.kind;
+    proposal.state.progression.kind = "terminal_submit";
+    if (observedProgressionTarget) {
+      observedProgressionTarget.kind = "terminal_submit";
+    }
+    for (const action of proposal.proposedActions || []) {
+      if (action.targetKey === proposal.state.progression.key) {
+        action.kind = "terminal_submit";
+      }
+    }
+    normalizations.push({
+      path: "$.state.progression.kind",
+      kind: "align_with_observed_terminal_submit",
+      before,
+      after: "terminal_submit",
+      sourceFactId: progressionFact.factId,
+    });
+  }
+
   const declaredProgressionKind = proposal.state?.progression?.kind;
   if (
     typeof proposal.state?.kind === "string" &&
@@ -518,9 +1134,10 @@ function promptText(observation) {
     "This is metadata generation only. Do not claim that any proposed action has happened.",
     "Use only the DOM facts, accessibility snapshot, screenshot, prior states, and existing expand-only contract supplied here.",
     "Never assume hidden fixture metadata, answer keys, expected test behavior, or facts not visible in the supplied observation.",
-    "Return only additions. Never repeat, rename, modify, or delete an existing contract key.",
+    "Return only additions. Never repeat, rename, modify, or delete an existing contract key. On a later state, fields/sections/guidance arrays contain only newly revealed records; state.visibleControlKeys and section membership may reference existingContract keys without redeclaring those records or their field actions/mechanics.",
     "Every state, progression, section, guidance, and field key must be globally unique across prior states and the existing contract.",
     "Preserve exact displayed option labels and raw option values.",
+    "For native select and radio controls, option values and labels are browser facts. Copy them exactly from the linked control facts; never trim punctuation, rewrite values, or invent a selectable option.",
     "Keep grouped option meaning separate from the group legend.",
     "Represent guidance once at form, section, or question scope with source fact IDs.",
     "Resolution hints must be selectors copied exactly from selectorCandidates in the raw facts.",
@@ -535,21 +1152,24 @@ function promptText(observation) {
     "This crawl serves OneDegree's resource-access mission. Select exactly one public form journey that most directly helps a person obtain an essential service or coordinate a referral: housing, food, healthcare, financial assistance, employment, education, legal aid, childcare, transportation, or another basic support service.",
     "Form-entry priority is: intake/application/enrollment/service-request/referral/eligibility form; then public registration that directly grants access to the resource; only when none is available, a contact or request-information form that can accelerate access. Prefer the form for the person seeking service over provider, partner, administrator, donation, volunteer, newsletter, survey, marketing, or general-feedback forms.",
     "A landing or introduction surface with no applicant controls may be a nonterminal form state only when the model selects one exact observed action that advances toward that single resource-access form. Once a form journey is selected, do not explore alternate forms, unrelated information pages, or other same-site links. Current-page links are observation facts, not permission for heuristic page discovery.",
-    "At the onset of each new page, before this model receives its observation, shared deterministic Playwright code performs approximately one second of varied-easing mouse movement, opens each recognized collapsed details, accordion, expando, disclosure, or aria-expanded control once across accessible frames, and scrolls the main document, child frames, and nested scroll containers. Do not generate actions for that onset process. If a visible collapsed disclosure remains in the observation because it appeared later or uses an unrecognized mechanism, select its exact observed fact as an advance before unrelated progression or terminal submission; never repeat an already-expanded disclosure.",
+    "At the onset of each new page, before this model receives its observation, shared deterministic Playwright code performs a fixed pointer sweep and reversibly scrolls the main document and accessible child-frame documents for lazy rendering. It never clicks a control and never scrolls a nested application region. Every visible collapsed details, accordion, expando, or disclosure therefore remains a semantic decision: select its exact observed fact as an advance before unrelated progression or terminal submission, then let the generated script actuate and verify it; never repeat an already-expanded disclosure.",
     "A link whose href already points to a confirmation, success, submitted, or thank-you route is terminal-looking, not a disclosure; never use such a link to bypass still-hidden applicant controls or a disabled real submit control.",
     "Cookie and consent-management banners are session traversal infrastructure, not applicant questions. When one blocks or obscures the form, select the exact observed reject-non-essential or necessary-only action when available; otherwise select the minimum acceptance action required to expose the public form. Do not add cookie choices to fields, sections, the applicant contract, or API inputs.",
-    "Treat deterministic page-onset preparation only as browser physics that exposes rendered page state before sensing. Do not invent mouse, scroll, or disclosure-preparation controls as model-authored form actions, and never describe this preparation as CAPTCHA or bot-detection bypass.",
-    "Canonical key vocabulary: first_name, middle_name, last_name, full_name, email, phone, date_of_birth, address_line_1, address_line_2, city, state, postal_code, household_size, monthly_income, annual_income, housing_status, services_requested, disability_status, veteran_status, immigration_status, ssn_last4. Use the supported canonical key when meaning is clear; otherwise use a stable snake_case key faithful to the raw question.",
+    "Treat deterministic page-onset pointer and document scrolling only as browser physics that exposes rendered state before sensing. A scrollRegions fact is intentionally unactuated evidence. If reaching the end of such a region is mechanically required to enable or complete an identified field/action, keep the semantic target unchanged; the generated per-site handler must implement and verify that page-specific scroll sequence. Never describe preparation as CAPTCHA or bot-detection bypass.",
+    "Canonical key vocabulary (formweave-canonical-v1): first_name, middle_name, last_name, full_name, email, phone, date_of_birth, current_address, city, state, zip_code, household_size, has_children, num_children, monthly_income, annual_income, housing_status, services_requested, disability_status, veteran_status, immigration_status, primary_language, referral_source, ssn_last4. Use the supported canonical key when meaning is clear; otherwise use a stable snake_case key faithful to the raw question.",
     "Sensitivity is narrow: mark credentials, government identifiers, financial values, health/disability, immigration, or similarly protected content sensitive. Names, ordinary contact fields, service selections, housing status, and veteran-service metadata are not automatically sensitive merely because the form has a privacy notice.",
     "Use @example.invalid for email, example.invalid for URLs, 555 numbers for telephone controls, 99999 (or 99999-9999 when required) for US postal/ZIP codes, 9999 for currency/income/rent controls rendered as text inputs, and conspicuous FORMWEAVE TEST text where the control format permits text. Never put letters into a numeric, date, postal-code, currency, or other format-strict value.",
     "When an observed pattern cannot contain FORMWEAVE TEST wording, format validity remains primary: use a reserved sentinel made of 9 for numeric positions and Z or X for letter positions (or FW when the pattern requires exactly two letters), such as 9999999999 or FW9999, only when it satisfies the observed pattern.",
     "Numeric test values must also be semantically plausible for the label, not merely accepted by HTML: prefer household size 2, age 35, a short duration such as 3 months, whole-dollar monthly income 2500, and whole-dollar annual income 30000 unless observed constraints require another value. Avoid unrealistic boundary fillers such as 99 for ordinary household size.",
-    "Mark credentials, login, payment, uploads, legal acceptance, CAPTCHA, and terminal submission as protected proposed-action kinds. A separate deterministic validator rejects them except narrowly authorized loopback fixture actions; never provide a file path, filename, or file content in an upload proposal.",
+    "Mark credentials, login, payment, uploads, legal acceptance, CAPTCHA, and terminal submission as protected proposed-action kinds. Treat an ordinary required confirmation that the displayed synthetic information is accurate as legal_acceptance_interaction too; deterministic policy decides whether it has review-confirmation authority. A separate deterministic validator rejects protected actions except narrowly authorized synthetic crawl actions; never provide a file path, filename, or file content in an upload proposal.",
     "A Next/Continue/Review action may be typed advance only when the evidence makes it nonterminal.",
     "A final Submit/Finish/Send/Apply action must be terminal_submit.",
+    "Journey progression is narrower than button execution. A local validate, check, calculate, preview, save-draft, advisory, or eligibility action is not an advance merely because it is clickable; select it as progression only when rendered evidence supports that it unlocks substantive controls or moves to another journey state.",
+    "An advance must be expected to produce a new URL/route or a substantive visible-control delta. A click alone, focus movement, cosmetic styling, or an unchanged rendered state is not evidence that the journey advanced.",
+    "A scrollRegions fact is never a form progression. Scrolling a terms/policy region is a prerequisite owned by the dependent field's generated actuator; bind state progression only to an observed action fact.",
     "A state with terminal_submit progression must use state.kind=terminal; every other state must use a nonterminal kind.",
     "Sort every string-array field canonically and remove duplicates.",
-    "Treat runtimeValidationFeedback, when present, as a required correction to the prior draft; never repeat a selector reported as ambiguous or missing.",
+    "Treat runtimeValidationFeedback, when present, as a required correction to the prior draft; correct every listed issue and never repeat a selector reported as ambiguous, missing, or observed no-effect. For nonterminal_no_effect_replan, the prior fields already belong to existingContract: generate only a new additive state decision, bind progression to a different observed source fact and selector predicate, and never repeat the excluded action. For pending_disclosure, preserve unrelated currently actionable fields but replace the current progression with kind advance, one matching proposed advance action, and mechanics.progressionTarget bound to the exact pendingDisclosures factId and unique selectorCandidates supplied by the validator. Do not keep terminal_submit as the current progression in that repaired state. Omit every field whose source fact appears in that disclosure's blockedControlFactIds from fields, state.visibleControlKeys, mechanics.fieldTargets, proposed field_actuation actions, and section question membership; those controls will be generated after the disclosure opens and the page is re-sensed.",
     "When runtimeBranchScope is present, this is a first-level same-page branch variant. Generate fields only for the listed scopedSourceFactIds, while still declaring the observed state and progression. Do not repeat parent or sibling-variant fields visible elsewhere in the screenshot.",
     "",
     JSON.stringify(observation),

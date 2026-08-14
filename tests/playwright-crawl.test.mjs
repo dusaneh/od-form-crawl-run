@@ -2,10 +2,53 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   crawlTargetsWithPlaywright,
+  structuralObservedFieldOrder,
   validatePlaywrightTarget,
 } from "../local/playwright-crawler.mjs";
+import { scopedControlsInDocumentOrder } from "../local/production-generated-traversal.mjs";
 import { reconScriptFor } from "../local/recon-scripts/registry.mjs";
 import { startFixtureServer } from "../test-sites/server.mjs";
+
+test("revealed-field chronology does not replace stable structural order", () => {
+  const fields = [
+    { key: "revealed", stateOrdinal: 0, documentOrdinal: 4 },
+    { key: "first", stateOrdinal: 0, documentOrdinal: 0 },
+    { key: "second_page", stateOrdinal: 1, documentOrdinal: 0 },
+    { key: "middle", stateOrdinal: 0, documentOrdinal: 2 },
+  ];
+  assert.deepEqual(
+    structuralObservedFieldOrder(fields).map((field) => field.key),
+    ["first", "middle", "revealed", "second_page"],
+  );
+});
+
+test("structural ordering preserves auxiliary and target controls in document order", () => {
+  const fields = [
+    { key: "target", stateOrdinal: 0, documentOrdinal: 20 },
+    { key: "header_search", stateOrdinal: 0, documentOrdinal: 2 },
+    { key: "footer_search", stateOrdinal: 0, documentOrdinal: 40 },
+  ];
+  assert.deepEqual(
+    structuralObservedFieldOrder(fields).map((field) => field.key),
+    ["header_search", "target", "footer_search"],
+  );
+});
+
+test("branch-local sensing retains absolute document ordinals", () => {
+  const controls = [
+    { factId: "first" },
+    { factId: "trigger" },
+    { factId: "revealed" },
+    { factId: "last" },
+  ];
+  assert.deepEqual(
+    scopedControlsInDocumentOrder(controls, ["revealed"]).map((control) => ({
+      factId: control.factId,
+      documentOrdinal: control.documentOrdinal,
+    })),
+    [{ factId: "revealed", documentOrdinal: 2 }],
+  );
+});
 
 test("loopback fixture targets require an explicit test-only opt in", () => {
   assert.throws(

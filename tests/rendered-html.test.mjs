@@ -215,3 +215,92 @@ test("retains rendered evidence when semantic script generation fails", () => {
     false,
   );
 });
+
+test("reports shadow actuator degradation without hiding compatibility success", () => {
+  const parsed = parsePageHtml(fixture, "https://services.example.gov/apply");
+  const output = buildCrawlOutput(
+    [
+      {
+        ...parsed,
+        requestedUrl: "https://services.example.gov/apply",
+        finalUrl: "https://services.example.gov/apply",
+        httpStatus: 200,
+        contentType: "text/html",
+        durationMs: 120,
+        bytesFetched: 2048,
+        fingerprint: fingerprintPage(parsed),
+        rendered: true,
+        certificationStatus: "generated_script_validated",
+        fieldsEntered: 3,
+        fieldsVerified: 3,
+        actuatorWarnings: [
+          {
+            code: "actuator_generation_failed",
+            targetKey: "state_01",
+            stage: "actuator_generation_failed",
+            detail: "fetch failed",
+          },
+        ],
+      },
+    ],
+    "run_shadow_warning",
+  );
+
+  assert.equal(
+    output.findings.some((finding) => finding.code === "actuator_shadow_degraded"),
+    true,
+  );
+  assert.match(output.nodes[0].notes.join(" "), /compatibility traversal remained active/i);
+});
+
+test("reports verified interaction preparation and fail-closed choice probes", () => {
+  const parsed = parsePageHtml(fixture, "https://services.example.gov/apply");
+  const choice = parsed.fields.find((field) => field.control === "select");
+  assert.ok(choice);
+  const output = buildCrawlOutput(
+    [
+      {
+        ...parsed,
+        requestedUrl: "https://services.example.gov/apply",
+        finalUrl: "https://services.example.gov/apply",
+        httpStatus: 200,
+        contentType: "text/html",
+        durationMs: 120,
+        bytesFetched: 2048,
+        fingerprint: fingerprintPage(parsed),
+        rendered: true,
+        interactionGatePrepared: true,
+        certificationStatus: "could_not_test",
+        failureStage: "actuator_preflight_failed",
+        blockedBeforeActuation: true,
+        fieldsPlanned: 3,
+        fieldsAttempted: 0,
+        fieldsVerified: 0,
+        failureIssues: [
+          {
+            code: "actuation_unverified",
+            targetKey: `${choice.key}_generated_option`,
+            controlType: "select",
+            detail: "The visible choice facade did not retain its state.",
+            issueId: "issue_1",
+          },
+        ],
+      },
+    ],
+    "run_typed_signals",
+  );
+  assert.equal(
+    output.findings.some((finding) => finding.code === "interaction_gated_js"),
+    true,
+  );
+  assert.equal(
+    output.findings.some((finding) => finding.code === "probe_actuation_failed"),
+    true,
+  );
+  assert.equal(
+    output.findings.some(
+      (finding) => finding.code === "terminal_submission_confirmed",
+    ),
+    false,
+  );
+});

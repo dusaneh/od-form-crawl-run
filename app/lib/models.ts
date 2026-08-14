@@ -48,8 +48,16 @@ export type FlowNode = {
   formActions?: string[];
   screenshotProvider?: string;
   stateEvidence?: StateEvidence[];
-  sensitiveMasks: number;
+  sensitiveMasks: SensitiveMask[];
   notes: string[];
+};
+
+export type SensitiveMask = {
+  fieldKey: string;
+  label?: string;
+  surface: string;
+  color: string;
+  matches?: number;
 };
 
 export type FlowEdge = {
@@ -174,6 +182,16 @@ export type CrawlStats = {
   captchaPages?: number;
   statesCaptured?: number;
   fieldsEntered?: number;
+  fieldsPlanned?: number;
+  fieldsAttempted?: number;
+  fieldsVerified?: number;
+  attemptedFieldFailures?: number;
+  actuatorWarnings?: {
+    code: string;
+    targetKey: string;
+    detail: string;
+    stage: string;
+  }[];
   entryFailures?: number;
   branchStates?: number;
   submissionsAttempted?: number;
@@ -231,6 +249,10 @@ export type CrawlReportPage = {
   stateExaminations?: number;
   stateEvidence?: StateEvidence[];
   fieldsEntered?: number;
+  fieldsPlanned?: number;
+  fieldsAttempted?: number;
+  fieldsVerified?: number;
+  attemptedFieldFailures?: number;
   entryFailures?: number;
   branchStates?: number;
   finalSubmission?:
@@ -285,10 +307,20 @@ export type CrawlReportPage = {
     modelCalls: number;
     modelCallsThisRun?: number;
     states: number;
+    actuatorMode?: "compatibility" | "shadow" | "enforced";
+    actuatorReleases?: {
+      artifactId: string;
+      releaseId: string;
+      releaseVersion: number;
+      semanticVersion: number;
+      actuatorVersion: number;
+    }[];
     lifecycle?:
       | "generated_and_validated"
       | "generated_and_published"
       | "generated_not_published"
+      | "generated_replay_failed"
+      | "retained_replay_failed"
       | "retained_replay";
   } | null;
   journeyUrls?: string[];
@@ -296,6 +328,26 @@ export type CrawlReportPage = {
   entryDetail?: string;
   journeyComplete?: boolean;
   haltReason?: string;
+  failureStage?:
+    | ""
+    | "script_missing"
+    | "semantic_generation_failed"
+    | "semantic_validation_blocked"
+    | "actuator_generation_failed"
+    | "actuator_shadow_circuit_open"
+    | "actuator_validation_blocked"
+    | "actuator_preflight_failed"
+    | "runtime_actuation_failed"
+    | "progression_failed"
+    | "environment_failed"
+    | "drift_suspected";
+  blockedBeforeActuation?: boolean;
+  failureIssues?: {
+    code: string;
+    targetKey: string;
+    detail: string;
+    issueId: string;
+  }[];
   error?: string;
 };
 
@@ -364,6 +416,13 @@ export type TraversalAction = {
     | "llm_generated_probe"
     | "conditional"
     | "human_review";
+  branchClassification?:
+    | "same_page_branch"
+    | "same_page_companion"
+    | "validation_only"
+    | "cosmetic"
+    | "uncertain"
+    | "no_change";
   rationale?: string;
   outcome?: "landed" | "could_not_test";
   failureCode?: ReasonCode;
@@ -375,6 +434,8 @@ export type StateEvidence = {
   sequence: number;
   kind:
     | "initial"
+    | "observation"
+    | "pre_actuation_failure"
     | "populated"
     | "branch"
     | "pre_advance"
@@ -410,6 +471,7 @@ export type StateEvidence = {
       | "conditional"
       | "human_review";
   }[];
+  sensitiveMasks?: SensitiveMask[];
   evidence?: string;
   evidenceAvailable?: boolean;
   screenshotArtifact?: string;

@@ -1,0 +1,403 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://testforms.dbolab.io/schemas/scenario-ground-truth-v1.json",
+  "title": "Testforms scenario ground truth v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "ground_truth_revision",
+    "fixture_revision",
+    "canonical_vocabulary_version",
+    "site_id",
+    "scenario_id",
+    "entry_url",
+    "feature_tags",
+    "expected"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "ground_truth_revision": { "$ref": "#/$defs/revision" },
+    "fixture_revision": { "$ref": "#/$defs/revision" },
+    "canonical_vocabulary_version": { "const": "formweave-canonical-v1" },
+    "site_id": { "type": "string", "pattern": "^site_[a-z0-9_]+$" },
+    "scenario_id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "entry_url": { "type": "string", "format": "uri" },
+    "feature_tags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+    },
+    "expected": { "$ref": "#/$defs/expected" },
+    "comparison": { "$ref": "#/$defs/comparison" }
+  },
+  "$defs": {
+    "revision": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Immutable content revision, preferably sha256:<hex>."
+    },
+    "entityId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "entityRef": {
+      "type": "string",
+      "pattern": "^(page|form|section|field|interaction|branch|frame|repeater|barrier):[a-z][a-z0-9_]*$"
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outcome",
+        "pages",
+        "forms",
+        "sections",
+        "fields",
+        "interactions",
+        "branches",
+        "frames",
+        "repeaters",
+        "barriers",
+        "signals",
+        "privacy_assertions",
+        "submission"
+      ],
+      "properties": {
+        "outcome": { "$ref": "#/$defs/outcome" },
+        "pages": { "type": "array", "items": { "$ref": "#/$defs/page" } },
+        "forms": { "type": "array", "items": { "$ref": "#/$defs/form" } },
+        "sections": { "type": "array", "items": { "$ref": "#/$defs/section" } },
+        "fields": { "type": "array", "items": { "$ref": "#/$defs/field" } },
+        "interactions": { "type": "array", "items": { "$ref": "#/$defs/interaction" } },
+        "branches": { "type": "array", "items": { "$ref": "#/$defs/branch" } },
+        "frames": { "type": "array", "items": { "$ref": "#/$defs/frame" } },
+        "repeaters": { "type": "array", "items": { "$ref": "#/$defs/repeater" } },
+        "barriers": { "type": "array", "items": { "$ref": "#/$defs/barrier" } },
+        "signals": { "type": "array", "items": { "$ref": "#/$defs/signal" } },
+        "privacy_assertions": { "type": "array", "items": { "$ref": "#/$defs/privacyAssertion" } },
+        "submission": { "$ref": "#/$defs/submissionContract" }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "reason_codes", "terminal_submission"],
+      "properties": {
+        "kind": { "enum": ["complete", "halt", "blocked", "no_form"] },
+        "reason_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+        },
+        "terminal_submission": { "enum": ["required", "allowed", "forbidden", "not_applicable"] }
+      }
+    },
+    "urlMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "enum": ["exact", "prefix", "regex"] },
+        "value": { "type": "string", "minLength": 1 }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page_id", "ordinal", "url", "role", "terminal"],
+      "properties": {
+        "page_id": { "$ref": "#/$defs/entityId" },
+        "ordinal": { "type": "integer", "minimum": 0 },
+        "url": { "$ref": "#/$defs/urlMatch" },
+        "role": { "enum": ["landing", "form_step", "review", "confirmation", "access_gate", "informational"] },
+        "terminal": { "type": "boolean" },
+        "title": { "type": ["string", "null"] },
+        "progress_text": { "type": ["string", "null"] }
+      }
+    },
+    "form": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["form_id", "page_id", "ordinal", "role", "container_kind"],
+      "properties": {
+        "form_id": { "$ref": "#/$defs/entityId" },
+        "page_id": { "$ref": "#/$defs/entityId" },
+        "ordinal": { "type": "integer", "minimum": 0 },
+        "role": { "enum": ["target", "decoy", "login", "payment", "search", "newsletter"] },
+        "container_kind": { "enum": ["form", "div", "iframe", "shadow_root", "custom"] },
+        "name": { "type": ["string", "null"] }
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["section_id", "page_id", "form_id", "ordinal", "label", "source_kind"],
+      "properties": {
+        "section_id": { "$ref": "#/$defs/entityId" },
+        "page_id": { "$ref": "#/$defs/entityId" },
+        "form_id": { "$ref": "#/$defs/entityId" },
+        "ordinal": { "type": "integer", "minimum": 0 },
+        "label": { "type": "string" },
+        "source_kind": { "enum": ["fieldset_legend", "heading", "container", "inferred"] }
+      }
+    },
+    "requiredness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["always", "never", "when_visible", "conditional"] },
+        "condition_id": { "type": ["string", "null"] }
+      }
+    },
+    "option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "label", "ordinal"],
+      "properties": {
+        "value": { "type": "string" },
+        "label": { "type": "string" },
+        "ordinal": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "field_id",
+        "page_id",
+        "form_id",
+        "ordinal",
+        "name",
+        "label",
+        "control_type",
+        "requiredness",
+        "sensitive",
+        "administrative",
+        "consent",
+        "canonical_key",
+        "initial_state",
+        "options"
+      ],
+      "properties": {
+        "field_id": { "$ref": "#/$defs/entityId" },
+        "page_id": { "$ref": "#/$defs/entityId" },
+        "form_id": { "$ref": "#/$defs/entityId" },
+        "section_id": { "type": ["string", "null"] },
+        "frame_id": { "type": ["string", "null"] },
+        "ordinal": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "label": { "type": "string" },
+        "control_type": {
+          "enum": [
+            "text", "textarea", "email", "tel", "number", "date",
+            "datetime-local", "month", "week", "time", "url", "select",
+            "radio", "checkbox", "file", "password", "hidden", "custom"
+          ]
+        },
+        "requiredness": { "$ref": "#/$defs/requiredness" },
+        "sensitive": { "type": "boolean" },
+        "administrative": { "type": "boolean" },
+        "consent": { "type": "boolean" },
+        "canonical_key": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+          ]
+        },
+        "initial_state": { "enum": ["visible", "hidden", "disabled", "readonly"] },
+        "options": { "type": "array", "items": { "$ref": "#/$defs/option" } },
+        "validation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pattern": { "type": ["string", "null"] },
+            "min": { "type": ["number", "string", "null"] },
+            "max": { "type": ["number", "string", "null"] },
+            "min_length": { "type": ["integer", "null"], "minimum": 0 },
+            "max_length": { "type": ["integer", "null"], "minimum": 0 },
+            "multiple": { "type": "boolean" },
+            "accept": { "type": ["string", "null"] },
+            "max_files": { "type": ["integer", "null"], "minimum": 1 },
+            "max_bytes": { "type": ["integer", "null"], "minimum": 1 }
+          }
+        }
+      }
+    },
+    "effect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target_ref"],
+      "properties": {
+        "kind": { "enum": ["reveals", "hides", "enables", "disables", "navigates_to", "adds_row", "posts_message", "sets_value"] },
+        "target_ref": { "$ref": "#/$defs/entityRef" },
+        "value": {}
+      }
+    },
+    "interaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interaction_id", "page_id", "ordinal", "kind", "phase", "target_ref", "required", "effects"],
+      "properties": {
+        "interaction_id": { "$ref": "#/$defs/entityId" },
+        "page_id": { "$ref": "#/$defs/entityId" },
+        "ordinal": { "type": "integer", "minimum": 0 },
+        "kind": {
+          "enum": [
+            "navigation_link", "interaction_nudge", "expand", "details_toggle",
+            "accordion_toggle", "scroll_to_end", "iframe_scroll_to_end",
+            "select_option", "toggle_choice", "choice_probe", "advance",
+            "add_row", "legal_acceptance", "terminal_submit"
+          ]
+        },
+        "phase": { "enum": ["discovery", "preparation", "branch_probe", "progression", "submission"] },
+        "target_ref": { "$ref": "#/$defs/entityRef" },
+        "required": { "type": "boolean" },
+        "effects": { "type": "array", "items": { "$ref": "#/$defs/effect" } },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+    "branchCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "operator", "values", "reveals_field_ids", "next_page_id", "echoes_field_ids"],
+      "properties": {
+        "case_id": { "$ref": "#/$defs/entityId" },
+        "operator": { "enum": ["equals", "contains", "checked", "unchecked"] },
+        "values": { "type": "array", "items": { "type": ["string", "boolean", "number"] } },
+        "reveals_field_ids": { "type": "array", "items": { "$ref": "#/$defs/entityId" } },
+        "next_page_id": { "type": ["string", "null"] },
+        "echoes_field_ids": { "type": "array", "items": { "$ref": "#/$defs/entityId" } }
+      }
+    },
+    "branch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["branch_id", "scope", "classification", "trigger_field_id", "max_depth", "cases"],
+      "properties": {
+        "branch_id": { "$ref": "#/$defs/entityId" },
+        "scope": { "enum": ["same_page", "cross_page"] },
+        "classification": { "enum": ["conditional_branch", "companion_specify", "readback_echo"] },
+        "trigger_field_id": { "$ref": "#/$defs/entityId" },
+        "max_depth": { "type": "integer", "minimum": 1 },
+        "cases": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/branchCase" } }
+      }
+    },
+    "frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame_id", "page_id", "ordinal", "title", "same_origin"],
+      "properties": {
+        "frame_id": { "$ref": "#/$defs/entityId" },
+        "page_id": { "$ref": "#/$defs/entityId" },
+        "ordinal": { "type": "integer", "minimum": 0 },
+        "title": { "type": ["string", "null"] },
+        "same_origin": { "type": "boolean" }
+      }
+    },
+    "repeater": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repeater_id", "page_id", "section_id", "initial_rows", "minimum_rows", "maximum_rows", "add_interaction_id", "row_field_ids"],
+      "properties": {
+        "repeater_id": { "$ref": "#/$defs/entityId" },
+        "page_id": { "$ref": "#/$defs/entityId" },
+        "section_id": { "$ref": "#/$defs/entityId" },
+        "initial_rows": { "type": "integer", "minimum": 0 },
+        "minimum_rows": { "type": "integer", "minimum": 0 },
+        "maximum_rows": { "type": ["integer", "null"], "minimum": 1 },
+        "add_interaction_id": { "type": ["string", "null"] },
+        "row_field_ids": { "type": "array", "items": { "$ref": "#/$defs/entityId" } }
+      }
+    },
+    "barrier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["barrier_id", "page_id", "kind", "policy", "blocking", "signal_code", "evidence_surface"],
+      "properties": {
+        "barrier_id": { "$ref": "#/$defs/entityId" },
+        "page_id": { "$ref": "#/$defs/entityId" },
+        "kind": { "enum": ["login", "payment", "interactive_captcha", "invisible_captcha", "scroll_gate", "interaction_gate", "probe_lockout"] },
+        "policy": { "enum": ["halt", "flag_and_block", "detect_and_continue", "prepare", "fail_closed"] },
+        "blocking": { "type": "boolean" },
+        "signal_code": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "evidence_surface": { "enum": ["dom", "image", "network", "behavior", "mixed"] }
+      }
+    },
+    "signal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "required", "severity"],
+      "properties": {
+        "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "required": { "type": "boolean" },
+        "severity": { "enum": ["info", "warning", "blocking"] }
+      }
+    },
+    "privacyAssertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assertion_id", "kind", "page_id", "source_field_id"],
+      "properties": {
+        "assertion_id": { "$ref": "#/$defs/entityId" },
+        "kind": { "enum": ["mask_echoed_value", "omit_value_from_artifacts", "omit_file_content"] },
+        "page_id": { "$ref": "#/$defs/entityId" },
+        "source_field_id": { "$ref": "#/$defs/entityId" },
+        "mask_style": { "enum": ["solid_black", "redacted", "not_applicable"] }
+      }
+    },
+    "successMarker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selector", "attribute", "value"],
+      "properties": {
+        "selector": { "type": "string", "minLength": 1 },
+        "attribute": { "type": "string", "minLength": 1 },
+        "value": { "type": "string" }
+      }
+    },
+    "submissionFieldRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field_id", "key", "cardinality", "presence", "encoding", "normalization"],
+      "properties": {
+        "field_id": { "$ref": "#/$defs/entityId" },
+        "key": { "type": "string", "minLength": 1 },
+        "cardinality": { "enum": ["scalar", "list"] },
+        "presence": { "enum": ["always", "when_active", "when_checked", "when_nonempty", "never"] },
+        "encoding": { "enum": ["raw", "filename"] },
+        "normalization": { "enum": ["exact", "trim", "line_endings", "numeric_string"] },
+        "value_match": { "enum": ["literal", "generated_filename"], "default": "literal" }
+      }
+    },
+    "submissionContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "capture_scope", "allow_unlisted_keys", "ignored_keys", "field_rules", "success_marker"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "capture_scope": { "enum": ["final_page_only", "whole_journey", "none"] },
+        "allow_unlisted_keys": { "type": "boolean" },
+        "ignored_keys": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+        "field_rules": { "type": "array", "items": { "$ref": "#/$defs/submissionFieldRule" } },
+        "success_marker": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/successMarker" }
+          ]
+        }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline_scenario_id", "expected_change", "expect_version_bump"],
+      "properties": {
+        "baseline_scenario_id": { "$ref": "#/$defs/entityId" },
+        "expected_change": { "enum": ["none", "cosmetic", "non_critical", "critical"] },
+        "expect_version_bump": { "type": "boolean" }
+      }
+    }
+  }
+}

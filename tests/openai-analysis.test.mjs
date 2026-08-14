@@ -48,6 +48,15 @@ const page = {
     },
   ],
   formActions: ["https://forms.example.test/submit"],
+  automationActions: [
+    {
+      category: "choice_probe",
+      label: "Eligibility: Example option",
+      testValue: "example",
+      outcome: "landed",
+      branchClassification: "same_page_branch",
+    },
+  ],
   screenshot: new Uint8Array([1, 2, 3]),
   screenshotContentType: "image/png",
 };
@@ -145,6 +154,7 @@ test("OpenAI success returns schema-constrained analysis and redacted events", a
       ).text;
       assert.match(suppliedFacts, /Use an address you check regularly/);
       assert.match(suppliedFacts, /section_0_0/);
+      assert.match(suppliedFacts, /same_page_branch/);
       assert.equal(body.store, false);
       assert.equal(body.text.format.type, "json_schema");
       assert.equal(body.text.format.strict, true);

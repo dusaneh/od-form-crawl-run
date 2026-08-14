@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "name": "devrun-20260811-threegate7-regression-01",
+  "seed": "formweave-threegate-2026-08-11:regression-01",
+  "batchSize": 7,
+  "batchCount": 1,
+  "trials": 1,
+  "selectionAlgorithm": "complexity-stratified-v1",
+  "protocolBase": "https://testforms.dbolab.io/api/v1",
+  "appApiOrigin": "http://127.0.0.1:8788",
+  "executionGoal": "submit",
+  "appExecutionMode": "fixture_submit",
+  "browserMode": "headless",
+  "timeoutMs": 900000,
+  "freshGenerationRequired": true,
+  "scenarioKeys": [
+    "site_f_veterans_required/primary",
+    "site_g_sensitive_nocaptcha/primary",
+    "site_m_login_gate/primary",
+    "site_s_variants/v1",
+    "site_t_challenges/primary",
+    "site_w_probe_lockout/primary",
+    "site_z_interaction_gated/primary"
+  ]
+}

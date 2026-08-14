@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "devrun-20260811-threegate7-v1-hardening-ad-retry",
+  "seed": "formweave-v1-hardening-2026-08-13:wizard-replacement-01",
+  "batchSize": 1,
+  "batchCount": 1,
+  "trials": 1,
+  "selectionAlgorithm": "fixed-replacement-v1",
+  "protocolBase": "https://testforms.dbolab.io/api/v1",
+  "appApiOrigin": "http://127.0.0.1:8788",
+  "executionGoal": "submit",
+  "appExecutionMode": "fixture_submit",
+  "browserMode": "headless",
+  "timeoutMs": 900000,
+  "freshGenerationRequired": true,
+  "scenarioKeys": [
+    "site_ad_wizard_links/primary"
+  ]
+}

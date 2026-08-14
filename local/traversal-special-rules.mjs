@@ -110,7 +110,21 @@ export function dependencyProbeExemption(field) {
 }
 
 export function expectedDependencyProbeValues(field) {
-  if (!field?.actuate || field.legalAcceptanceType) return [];
+  const identity = [
+    field?.key,
+    field?.label,
+    field?.rawLabel,
+    field?.rawIdentity?.id,
+    field?.rawIdentity?.name,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const oneWayAcceptance =
+    ["checkbox", "switch"].includes(field?.controlType) &&
+    field?.required === true &&
+    (Boolean(field?.legalAcceptanceType) ||
+      /agree|terms|consent|certif|authorize|signature|attest|acknowledge|confirm|review|accurate|correct|complete|declar/i.test(identity));
+  if (!field?.actuate || oneWayAcceptance) return [];
   if (["checkbox", "switch"].includes(field.controlType)) {
     return [false, true];
   }
